@@ -51,11 +51,15 @@ pub struct WindowSpec {
     pub start: UnixTimestamp,
     pub end: UnixTimestamp,
     pub interval: Seconds,       // sampling grid, e.g. 3600
+    // Copied at creation from the admin-written FeedConfig, never from the creator (3.3):
     pub tolerance: Seconds,      // sample must have publish_time in [boundary, boundary + tolerance]
-    pub max_age: Seconds,        // update older than this vs Clock is stale
+    pub max_age: Seconds,        // <= tolerance, see 4.1; update older than this vs Clock is stale
     pub max_conf: Bps,           // conf / price above this is rejected
     pub min_coverage: Bps,       // fraction of grid points that must be sampled
+    pub grace: Seconds,          // finalize waits until end + tolerance + max_age at least
 }
+// Stored with explicit padding and state as u8: `#[repr(u8)]` enums and implicit padding
+// cannot derive Pod. Sizes are computed from the final field order in milestone 3.
 
 #[repr(u8)]
 pub enum WindowState { Pending, Sampling, Finalized, Degraded }
@@ -105,7 +109,8 @@ pub enum VarswapError {
 | Account | Seeds | Owner | Size | Written by |
 | --- | --- | --- | --- | --- |
 | `Config` | `["config"]` | varswap | 8 + 32 + 32 + 8 | admin |
-| `Window` | `["window", feed_id, start_le, end_le, interval_le]` | varswap | 8 + spec 96 + state 64 = ~168 | `create_window` (anyone), `sample` (anyone), `finalize` (anyone) |
+| `FeedConfig` | `["feed", feed_id]` | varswap | ~64 | admin: risk parameters per feed (tolerance, max_age, max_conf, min_coverage, grace) |
+| `Window` | `["window", feed_id, start_le, end_le, interval_le]` | varswap | ~200, computed in M3 | `create_window` (anyone), `sample` (anyone), `finalize` (anyone) |
 | `Swap` | `["swap", window, long, short, swap_index_le]` | varswap | 8 + 32×3 + 8×4 + 1 = ~144 | `open_swap`, `settle_swap` |
 | Collateral vault | ATA of the `Swap` PDA for USDC | SPL Token | 165 | token CPIs only |
 
@@ -134,26 +139,34 @@ settlement; it is listed as an open question for UI use.
 | 2 | `sample` | anyone (payer of fee only) | window (w), price_update (Pyth receiver account), clock sysvar |
 | 3 | `finalize` | anyone | window (w), clock |
 | 4 | `open_swap` | long, short, payer | window, swap (w), vault (w), long_usdc (w), short_usdc (w), usdc_mint, token program, ATA program, system |
-| 5 | `settle_swap` | anyone | window, swap (w), vault (w), long_usdc (w), short_usdc (w), usdc_mint, token program |
+| 5 | `settle_swap` | anyone | window, swap (w): computes and stores both payouts, state `Settled`; moves no tokens |
+| 5b | `claim_long` / `claim_short` | anyone | swap (w), vault (w), that side's USDC account (w), usdc_mint, token program: pays one side only, so a frozen USDC account on one side never blocks the other |
 | 6 | `close_swap` | anyone after settle | swap (w), vault (w), rent receiver = payer recorded in swap |
 
 ### 3.3 Security checks
 
 - `create_window`: PDA from spec fields; `start < end`, `interval > 0`, `(end − start) %
-  interval == 0`, `tolerance < interval`, `feed` in the admin allowlist in `Config` (so windows
-  only exist on feeds we have vetted), `start` in the future.
+  interval == 0`, `feed` has a `FeedConfig` (so windows only exist on vetted feeds), risk
+  parameters copied from it (an anyone-can-create window must not let the first creator pick
+  a loose tolerance or confidence and own the PDA), `start` in the future.
 - `sample`: the `price_update` account is owned by the Pyth receiver program (address pinned
   in `Config`, verified at milestone 2), has the `PriceUpdateV2` discriminator,
-  `verification_level == Full`, `feed_id == window.spec.feed`, `exponent` equals the first
-  sample's exponent, `price > 0`, `conf × 10_000 <= price × max_conf`,
-  `now − publish_time <= max_age`, `publish_time` inside `[boundary_k, boundary_k + tolerance]`
-  for the grid index `k` it claims, and `k > last_index`. Clock from the sysvar, not args.
+  `verification_level == Full`, `feed_id == window.spec.feed`, `price > 0`,
+  `conf × 10_000 <= price × max_conf` computed in `u128`, `now − publish_time <= max_age`.
+  The grid index is derived, not taken from data: `k = (publish_time − start) / interval`,
+  remainder `<= tolerance`, and `k > last_index`. Each print converts to `Fixed` with its own
+  exponent (log returns are scale invariant), so a Pyth exponent change mid-window does not
+  brick it. Clock read with the Pinocchio syscall.
 - `open_swap`: both parties sign; window not finalized and `now < window.start` (no opening
   after sampling begins, so nobody trades on known returns); swap PDA; vault is the ATA of the
   swap PDA with the config's USDC mint; collateral amounts recomputed on-chain, not trusted
   from data.
-- `settle_swap`: window `Finalized` or `Degraded`; swap `Open`; destination token accounts
-  owned by `swap.long` / `swap.short` with the USDC mint; vault matches.
+- `finalize`: only when the last bucket is sampled or `now > end + grace` (with `grace >=
+  tolerance + max_age`, the latest a valid last sample can arrive), so nobody can degrade a
+  window by finalizing early. Fewer than 2 samples or `t_last == t_first`: unwind explicitly
+  (no division by zero).
+- `settle_swap`: window `Finalized` or `Degraded`; swap `Open`. `claim_*`: swap `Settled`,
+  destination owned by that side with the USDC mint, vault matches, claimed once.
 - Negative tests for each: forged price update owned by another program, Partial verification,
   other feed, stale, wide confidence, wrong grid, replayed bucket, vault of another swap,
   destination of another owner.
@@ -171,8 +184,15 @@ with the following limiting the pusher's choice:
   is tighter but more likely to miss.
 - **Minimum interval** is the grid itself; extra updates for the same bucket are rejected.
 - **Confidence filter** rejects prints during dislocations (`max_conf`).
+- **No hindsight**: `max_age <= tolerance`, so a sample for bucket `k` must land by
+  `boundary_k + 2 × tolerance`; a pusher cannot wait to see where price went and then pick
+  the print. Validated at window creation.
+- Pull updates via Hermes are the realistic path (sponsored push feeds update on heartbeat or
+  deviation, so a 10 s tolerance would often miss them), and they are exactly where the
+  pusher picks the print; hence the rules above.
 - Residual risk: the pusher's choice inside the tolerance window and the choice to skip a
-  bucket (one return over two intervals). Both are quantified in the plan's test suite with
+  bucket (one return over two intervals). The bias study models a pusher who picks
+  extremes and is always first to post. Both are quantified in the plan's test suite with
   simulated GBM paths: worst-case bias of a pusher picking extremes, reported in the README.
 
 ### 4.2 Running sums vs ring buffer
@@ -187,7 +207,7 @@ As in 3.1: running sums for settlement, events for auditability. **Recommended.*
   `end + grace`, the window is `Degraded`. Swaps on a degraded window settle at the variance
   estimated from the samples present (still elapsed-time normalized) only if coverage is above
   a hard floor (for example 50%); below the floor, swaps unwind: each side gets its collateral
-  back. Open question 2.
+  back. Open question 2 (the varswap session leans "always unwind" in v1).
 - Market closures (weekends for metals, see metalbook) must be excluded from the grid, or
   they appear as one long return across the weekend. v1: grid spec includes an optional
   "trading-hours calendar" for 24/7 feeds vs metals; first windows target SOL/USD (24/7).
@@ -200,14 +220,19 @@ market convention is 2.5² × strike variance, i.e. 2.5× strike vol); margin wi
 (realized variance zero); of the short, `notional × (cap_var − strike_var)`.
 
 Settlement: `pnl_long = notional × (min(realized, cap) − strike)`. `long_payout =
-long_collateral + pnl_long`, computed rounded down; `short_payout = total − long_payout`. Thus
+long_collateral + pnl_long`, computed rounded down and clamped to `[0, total]` as defense;
+`short_payout = total − long_payout`. Rounding collateral up adds at most 2 atoms beyond the
+theoretical maximum, all ending with the short. Thus
 rounding dust favors the short by at most one atom and the vault empties exactly. Documented
 as "rounding toward the short", a deliberate, symmetric-enough choice that keeps the
 conservation invariant trivial; open question 4.
 
 ### 4.5 Annualization
 
-`YEAR_SECONDS = 31_536_000` matching optfix `Years`. For metals, if the grid skips closed
+`YEAR_SECONDS = 31_536_000` matching optfix `Years`. Industry variance swaps annualize with
+252 / N trading days and quote the strike in variance points (vol² × 10,000) with a vega
+notional; elapsed-time normalization fits 24/7 SOL/USD, and the SDK exposes vega notional
+and variance points as conversions. For metals, if the grid skips closed
 hours, annualization uses trading time; that is a convention to fix with you (open question 3).
 
 ### 4.6 Pyth access without Anchor
@@ -247,8 +272,16 @@ to build test accounts and to cross-check the decoder.
 - `pyth-solana-receiver-sdk` 2.0.0, `pythnet-sdk` 3.0.0 on crates.io.
 - Crypto.SOL/USD feed id `ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d`
   (Hermes `/v2/price_feeds?query=SOL/USD&asset_type=crypto`).
-- Not yet verified, to do in milestone 2: the Pyth receiver program id, and whether sponsored
-  push feed accounts exist for the feeds we use.
+- Not yet verified, to do in milestone 2: the Pyth receiver program id (candidate from the
+  varswap session's memory, unverified: `rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ`; push
+  oracle `pythWSnswVUd12oZpeFP8e9CVaEqJg25g1Vtc2biRsT`), and whether sponsored push feed
+  accounts exist for the feeds we use.
+- To verify in milestone 1 with optfix: `i128` alignment. Since Rust 1.77, `i128` is
+  16-aligned on x86_64 hosts while account data is only guaranteed 8-aligned, so a
+  `bytemuck::from_bytes` over a struct holding `Fixed` may fail. Fallback: store `Fixed` as
+  `[u8; 16]` in accounts and convert at load.
+- optfix is consumed as a git dependency pinned by `rev` until it is on crates.io (a path
+  dependency would break CI).
 
 ## 6. Open questions
 
