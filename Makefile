@@ -78,6 +78,11 @@ lint-control:
 doc:
 	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 
+# Run the milestone 5 outage and pusher study and regenerate docs/study.md (fixed seeds)
+.PHONY: study
+study:
+	cargo run --release -p varswap-study > docs/study.md
+
 # Re-fetch the PriceUpdateV2 fixtures from mainnet (overwrites pyth-lite/fixtures)
 .PHONY: fixtures
 fixtures:

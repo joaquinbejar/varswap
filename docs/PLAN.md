@@ -294,6 +294,45 @@ So samples are **canonical**:
     unit of variance notional, and (b) the unwind frequency. Real SOL/USD history supplies
     only outage frequency and length, because the latent path inside a real outage is not
     observed; counting how often the guard fires does not measure the error.
+  - **Results (milestone 5, `docs/study.md`, `make study`, fixed seeds, 4,000 windows per
+    model, 30 days hourly, σ = 80%).** The outage regime is assumed, not historical (Hermes
+    and Benchmarks need an API key): exogenous outages at 1 per 168 h, exponential length of
+    mean 1 h; the halt models add halts that start during a 3 σ_h hourly move, cross the
+    boundary that ends it and last an exponential 2 h more, with a 1 σ_h per hour drift with
+    or against the move. Unwind frequency and mean error at the 6 h guard (latent variance
+    about 6,400 vp):
+
+    | Model | Unwind | Mean error | p99 error |
+    | --- | ---: | ---: | ---: |
+    | GBM, μ = 0 | 0.6% | +0.3 vp | +130 vp |
+    | GBM, μ = +100% | 0.5% | +1.2 vp | +136 vp |
+    | AR(1), ρ = +0.3 | 0.6% | +16 vp | +214 vp |
+    | AR(1), ρ = −0.3 | 0.8% | −12 vp | +71 vp |
+    | Halts, continuation | 10.3% | +212 vp | +1,250 vp |
+    | Halts, reversal | 10.2% | −115 vp | +123 vp (p5 −368 vp) |
+
+    The signs follow the theory: drift and positive autocorrelation favour the long,
+    negative autocorrelation and reversals favour the short, and only endogenous halts
+    move the mean materially (2 to 3% of the variance). The guard trades the two risks as
+    expected: in the halt models 3 h unwinds 43% of windows and 12 h 0.5%, while the
+    continuation mean error grows from 95 vp (3 h) to 212 vp (6 h) and 301 vp (12 h).
+  - **Recommendation: keep `tolerance = 6 h`** for SOL/USD hourly windows. Under exogenous
+    outages it unwinds under 1% of windows with mean errors within ±16 vp; a 3 h guard
+    unwinds 12% (43% with endogenous halts), which is the short's free option in stress
+    that the guard exists to limit; 12 h or more removes the unwinds but lets halts of
+    half a day settle as one return. Re-run the study on real outage frequency and length
+    in milestone 6, when keepers have a Hermes key, before changing it.
+  - **Pusher bias, the reason for canonical prints:** if any print within `w` seconds after
+    a boundary were acceptable, the hindsight optimum for a pusher over a discrete candidate
+    set (exact by dynamic programming over 7 candidate prints per boundary, chosen knowing the
+    whole path, so an online pusher gets less; candidates taken from one coherent fine-grained
+    GBM path, so a fixed shift of every
+    print is unbiased; the study's control column, always the last candidate, confirms it at
+    0 ± 6 vp, against the +1,066.67 vp analytic artifact of the first model) would move the
+    contract by +464 / −440 vp at `w` = 10 s, +1,175 / −1,039 vp at 60 s and +2,776 /
+    −2,131 vp at 300 s (mean, long / short), up to 43% of the variance. Canonical prints make
+    it zero. (A first version drew the candidates independently of the hourly path, which
+    adds `2σ²w / 3600` of spurious variance; codex review of #14.)
   - (metalbook keeps a short tolerance: its payoff is a mean of prices, where one reopening
     print filling many slots would bias the mean.)
 - Confidence: no tight filter. Canonicity and `Full` verification already remove the
@@ -557,6 +596,10 @@ to build test accounts and to cross-check the decoder.
 5. **Benchmarks and manipulation study.** *Done when* `docs/benchmarks.md` has CU for every
    instruction and the README has the pusher-bias table and the outage tables from 4.1
    (compression error and unwind frequency per model and per `tolerance`).
+   Status (2026-10-29): done. `docs/benchmarks.md` covers all ten instructions (`claim_short`
+   added); the `study` crate (off-chain, fixed seeds, `make study`) writes `docs/study.md`;
+   the README carries the pusher-bias and outage tables; results and the 6 h recommendation
+   are in 4.1.
 6. **SDK and devnet.** *Done when* a Rust SDK and a keeper example push samples on devnet for
    a live SOL/USD window and it finalizes, and a replay of 24 real canonical SOL/USD prints
    (fixtures fetched from Hermes, committed) finalizes to the off-chain value. Keepers read

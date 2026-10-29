@@ -1,5 +1,5 @@
 [workspace]
-members = ["varswap-core", "pyth-lite", "program", "lint-control"]
+members = ["varswap-core", "pyth-lite", "program", "study", "lint-control"]
 resolver = "2"
 
 [workspace.package]

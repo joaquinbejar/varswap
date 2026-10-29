@@ -1,0 +1,19 @@
+[package]
+name = "varswap-study"
+description = "Off-chain simulation study of outage compression, the outage guard and pusher bias (milestone 5)"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "varswap_study"
+
+[[bin]]
+name = "varswap-study"
+path = "src/main.rs"
+
+[lints]
+workspace = true
