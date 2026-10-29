@@ -150,7 +150,7 @@ buffer is needed.
 
 | # | Instruction | Signers | Accounts |
 | --- | --- | --- | --- |
-| 0 | `init_config` | admin, payer | config (w), system |
+| 0 | `init_config` | admin (the program's upgrade authority), payer | config (w), program_data, system |
 | 0b | `set_feed_config` | admin | config, feed_config (w), system: validates `max_conf`, `tolerance > 0`, `backfill_deadline > 0`, `max_buckets <= MAX_BUCKETS` (3.1) |
 | 1 | `create_window` | payer | config, window (w), system |
 | 2 | `sample` | anyone (payer of fee only) | window (w), price_update (Pyth receiver account), clock sysvar |
@@ -162,6 +162,12 @@ buffer is needed.
 
 ### 3.3 Security checks
 
+- `init_config` must not be front-runnable (cross-repo rule from quotebook milestone 2): it
+  takes the program's `ProgramData` account, which must be owned by `BPFLoaderUpgradeab1e`,
+  sit at the PDA of `[program_id]` under that loader, and have an `upgrade_authority` equal to
+  the signing admin. Negative tests with a forged `ProgramData`: wrong owner, wrong address,
+  a different authority, and no authority (immutable program). LiteSVM loads the program
+  through the upgradeable loader so the real `ProgramData` exists.
 - `create_window`: PDA from spec fields; `start < end`, `interval > 0`, `(end − start) %
   interval == 0`, `feed` has a `FeedConfig` (so windows only exist on vetted feeds),
   `interval >= feed_config.min_interval`, risk
@@ -376,7 +382,8 @@ to build test accounts and to cross-check the decoder.
    verified and cited, and the `prev_publish_time` canonical-print property of 4.1 is
    verified (or the fallback is chosen with you).
 3. **Window program.** `init_config`, `create_window`, `sample`, `finalize` with LiteSVM and a
-   negative test per rule in 3.3. *Done when* all pass and a 24-sample SOL/USD replay from
+   negative test per rule in 3.3, including the four forged-`ProgramData` cases of
+   `init_config`. *Done when* all pass and a 24-sample SOL/USD replay from
    fixtures finalizes to the off-chain value.
 4. **Swaps.** `open_swap`, `settle_swap`, `close_swap`. *Done when* conservation
    (`payouts == collateral`) holds in proptest across realized in `[0, 2 × cap]`, degraded and
