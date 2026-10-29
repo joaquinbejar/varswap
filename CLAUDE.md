@@ -2,9 +2,9 @@
 
 Realized variance accumulator from Pyth pull-oracle updates and fully collateralized, capped
 variance swaps settled against it. Crates: `varswap-core`, `pyth-lite` (no_std `PriceUpdateV2`
-reader, reused by metalbook), `program`, `sdk`. Pricing math from optfix, consumed as a git dependency pinned by `rev` until it is published.
-Oracle checks on every read: owner, discriminator, `Full` verification, feed id, exponent, staleness,
-confidence.
+reader, reused by metalbook), `program`, `sdk`. Pricing math from optfix, consumed as a git
+dependency pinned by `rev` until it is published. Oracle checks on every read: owner,
+discriminator, `Full` verification, feed id, positive price, staleness, confidence.
 
 ## Conventions shared with matchbook
 

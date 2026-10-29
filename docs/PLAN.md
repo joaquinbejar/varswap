@@ -111,7 +111,7 @@ pub enum VarswapError {
 | `Config` | `["config"]` | varswap | 8 + 32 + 32 + 8 | admin |
 | `FeedConfig` | `["feed", feed_id]` | varswap | ~64 | admin: risk parameters per feed (tolerance, max_age, max_conf, min_coverage, grace) |
 | `Window` | `["window", feed_id, start_le, end_le, interval_le]` | varswap | ~200, computed in M3 | `create_window` (anyone), `sample` (anyone), `finalize` (anyone) |
-| `Swap` | `["swap", window, long, short, swap_index_le]` | varswap | 8 + 32×3 + 8×4 + 1 = ~144 | `open_swap`, `settle_swap` |
+| `Swap` | `["swap", window, long, short, swap_index_le]` | varswap | 8 + 32×3 + 8×4 + 1 + 8×2 + 2 = ~162 | `open_swap`, `settle_swap`, `claim_*` (payouts and claimed flags, +18 bytes) |
 | Collateral vault | ATA of the `Swap` PDA for USDC | SPL Token | 165 | token CPIs only |
 
 ```rust
@@ -135,13 +135,14 @@ settlement; it is listed as an open question for UI use.
 | # | Instruction | Signers | Accounts |
 | --- | --- | --- | --- |
 | 0 | `init_config` | admin, payer | config (w), system |
+| 0b | `set_feed_config` | admin | config, feed_config (w), system: validates `max_age <= tolerance < min_interval` and `grace >= tolerance + max_age` |
 | 1 | `create_window` | payer | config, window (w), system |
 | 2 | `sample` | anyone (payer of fee only) | window (w), price_update (Pyth receiver account), clock sysvar |
 | 3 | `finalize` | anyone | window (w), clock |
 | 4 | `open_swap` | long, short, payer | window, swap (w), vault (w), long_usdc (w), short_usdc (w), usdc_mint, token program, ATA program, system |
 | 5 | `settle_swap` | anyone | window, swap (w): computes and stores both payouts, state `Settled`; moves no tokens |
 | 5b | `claim_long` / `claim_short` | anyone | swap (w), vault (w), that side's USDC account (w), usdc_mint, token program: pays one side only, so a frozen USDC account on one side never blocks the other |
-| 6 | `close_swap` | anyone after settle | swap (w), vault (w), rent receiver = payer recorded in swap |
+| 6 | `close_swap` | anyone after both sides claimed (a permanently frozen side leaves the rent locked; accepted) | swap (w), vault (w), rent receiver = payer recorded in swap |
 
 ### 3.3 Security checks
 
@@ -221,9 +222,9 @@ market convention is 2.5² × strike variance, i.e. 2.5× strike vol); margin wi
 
 Settlement: `pnl_long = notional × (min(realized, cap) − strike)`. `long_payout =
 long_collateral + pnl_long`, computed rounded down and clamped to `[0, total]` as defense;
-`short_payout = total − long_payout`. Rounding collateral up adds at most 2 atoms beyond the
-theoretical maximum, all ending with the short. Thus
-rounding dust favors the short by at most one atom and the vault empties exactly. Documented
+`short_payout = total − long_payout`. The vault empties exactly; in total at most 3 atoms of
+rounding end with the short (2 from rounding collateral up, 1 from rounding the long payout
+down). Documented
 as "rounding toward the short", a deliberate, symmetric-enough choice that keeps the
 conservation invariant trivial; open question 4.
 
