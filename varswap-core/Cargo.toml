@@ -9,11 +9,18 @@ repository.workspace = true
 keywords = ["variance", "pyth", "solana", "no-std"]
 categories = ["no-std", "finance"]
 
+[features]
+# The exact integer stand-in kernel (not a log return). Tests and the LiteSVM bench only:
+# a program built with it must never be deployed (docs/PLAN.md, milestone 3a).
+insecure-test-kernel = []
+
 [dependencies]
 bytemuck = { workspace = true }
 pyth-lite = { workspace = true }
 
 [dev-dependencies]
+# The crate's own tests use the integer kernel.
+varswap-core = { path = ".", features = ["insecure-test-kernel"] }
 proptest = { workspace = true }
 
 [lints]

@@ -23,6 +23,8 @@ mod types;
 mod window;
 
 pub use error::CoreError;
+#[cfg(feature = "insecure-test-kernel")]
+pub use kernel::IntegerKernel;
 pub use kernel::{ReturnKernel, SumSq};
 pub use print::{Print, StoredPrice};
 pub use spec::{BucketRun, RiskParams, WindowSpec};

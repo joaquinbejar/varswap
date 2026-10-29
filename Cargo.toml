@@ -1,5 +1,5 @@
 [workspace]
-members = ["varswap-core", "pyth-lite", "lint-control"]
+members = ["varswap-core", "pyth-lite", "program", "lint-control"]
 resolver = "2"
 
 [workspace.package]
@@ -15,6 +15,23 @@ pyth-lite = { path = "pyth-lite", version = "0.1" }
 varswap-core = { path = "varswap-core", version = "0.1" }
 bytemuck = { version = "1.25", default-features = false, features = ["derive"] }
 proptest = "1.12"
+# Pinocchio 0.11 generation: decided exception to the latest-stable rule (docs/PLAN.md).
+pinocchio = { version = "0.11", default-features = false, features = ["cpi"] }
+pinocchio-system = "0.6"
+# Approved 2026-10-29 for the sample events (docs/PLAN.md 3.1).
+pinocchio-log = { version = "0.5", default-features = false }
+# LiteSVM 0.18.1 (latest) pins `solana-address ~2.7` and these generations of the Solana client
+# crates, so the workspace uses them; approved exception to the latest-stable rule
+# (docs/PLAN.md, Dependencies), as in optfix and quotebook.
+solana-address = { version = "2.7", default-features = false }
+litesvm = "0.18"
+solana-account = "4.7"
+solana-clock = "3.2"
+solana-instruction = "3.5"
+solana-keypair = "3.1"
+solana-sdk-ids = "3.1"
+solana-signer = "3.0"
+solana-transaction = "4.3"
 # Dev only: cross-checks the pyth-lite decoder against the Anchor reference (docs/PLAN.md 4.6).
 pyth-solana-receiver-sdk = "2.0"
 # Dev only: the SDK does not re-export the Anchor traits the cross-check calls

@@ -115,8 +115,8 @@ pub enum VarswapError {
 
 | Account | Seeds | Owner | Size | Written by |
 | --- | --- | --- | --- | --- |
-| `Config` | `["config"]` | varswap | 8 + 32 + 32 + 8 | admin |
-| `FeedConfig` | `["feed", feed_id]` | varswap | ~64 | admin: risk parameters per feed (receiver program id, min_interval, tolerance, max_conf, backfill_deadline, max_buckets) |
+| `Config` | `["config"]` | varswap | 40: `Hdr` + admin (M3a; swap fields join in milestone 4) | admin |
+| `FeedConfig` | `["feed", feed_id]` | varswap | 96 (`program::layout::FeedConfigData`) | admin: risk parameters per feed (receiver program id, min_interval, tolerance, max_conf, backfill_deadline, max_buckets) |
 | `Window` | `["window", feed_id, start_le, end_le, interval_le]` | varswap | `144 + 8 × ceil((N + 1) / 64) + 9 × (N + 1)`: 6,729 bytes for 721 buckets (sketch, see below) | `create_window` (anyone), `sample` (anyone), `finalize` (anyone) |
 | `Swap` | `["swap", window, long, short, swap_index_le]` | varswap | 8 + 32×3 + 8×4 + 1 + 8×2 + 2 = ~162 | `open_swap`, `settle_swap`, `claim_*` (payouts and claimed flags, +18 bytes) |
 | Collateral vault | `["vault", swap]` PDA token account (system create + `initialize_account3`) | SPL Token | 165 | token CPIs only |
@@ -151,8 +151,10 @@ bytes(MAX_BUCKETS + 1)`. `set_feed_config` rejects `max_buckets > MAX_BUCKETS`;
 Every bucket's price is kept on-chain for the life of the window: buckets fill in any order,
 and filling bucket `k` adds the returns to whichever neighbours `k − 1` and `k + 1` are already
 filled, so their prices must be stored. Settlement reads only `sum_sq`; each accepted sample
-is also logged as an event (bucket range, publish_time, price, returns added) so anyone can
-recompute `sum_sq` off-chain. The stored price array also serves UIs, so no separate ring
+is also logged as an event (bucket range, publish_time, price mantissa, exponent) so anyone can
+recompute `sum_sq` off-chain. The `sum_sq` increment is not logged: clients recompute it from
+the bucket prices, and formatting the `u128` cost about 3,400 CU per sample (decided
+2026-10-29). The stored price array also serves UIs, so no separate ring
 buffer is needed.
 
 ### 3.2 Instructions
@@ -160,10 +162,10 @@ buffer is needed.
 | # | Instruction | Signers | Accounts |
 | --- | --- | --- | --- |
 | 0 | `init_config` | admin (the program's upgrade authority), payer | config (w), program_data, system |
-| 0b | `set_feed_config` | admin | config, feed_config (w), system: validates `max_conf`, `tolerance > 0`, `backfill_deadline > 0`, `max_buckets <= MAX_BUCKETS` (3.1) |
-| 1 | `create_window` | payer | config, window (w), system |
-| 2 | `sample` | anyone (payer of fee only) | window (w), price_update (Pyth receiver account), clock sysvar |
-| 3 | `finalize` | anyone | window (w), clock |
+| 0b | `set_feed_config` | admin, payer (on create) | config, feed_config (w), system: creates or overwrites; validates `max_conf`, `tolerance > 0`, `backfill_deadline > 0`, `max_buckets <= MAX_BUCKETS` (3.1) |
+| 1 | `create_window` | payer | feed_config, window (w), system (the feed and its risk parameters come from `feed_config`) |
+| 2 | `sample` | anyone (payer of fee only) | window (w), price_update (Pyth receiver account); clock from the syscall; return data and an event per accepted sample |
+| 3 | `finalize` | anyone | window (w); clock from the syscall |
 | 4 | `open_swap` | long, short, payer | window, swap (w), vault (w), long_usdc (w), short_usdc (w), usdc_mint, token program, system |
 | 5 | `settle_swap` | anyone | window, swap (w): computes and stores both payouts, state `Settled`; moves no tokens |
 | 5b | `claim_long` / `claim_short` | anyone | swap (w), vault (w), that side's USDC account (w), usdc_mint, token program: pays one side only, so a frozen USDC account on one side never blocks the other |
@@ -394,8 +396,8 @@ to build test accounts and to cross-check the decoder.
      and that any gap yields `Degraded`.
 
    The workspace carries the shared lint control (`rules/global_rules.md`,
-   synced from optfix `afb9d4d`; set up with milestone 2, which ran first, except the
-   entrypoint-module allow, which lands with the program in milestone 3):
+   synced from optfix `afb9d4d`; set up with milestone 2, which ran first; the
+   entrypoint-module allow landed with the program in milestone 3a):
    - `lint-control/` (`Cargo.toml`, `src/lib.rs`, `check.sh`) copied from optfix and added
      to the workspace members;
    - `cfg(lint_control)` in `unexpected_cfgs` `check-cfg`;
@@ -411,8 +413,31 @@ to build test accounts and to cross-check the decoder.
    verified (or the fallback is chosen with you).
 3. **Window program.** `init_config`, `create_window`, `sample`, `finalize` with LiteSVM and a
    negative test per rule in 3.3, including the four forged-`ProgramData` cases of
-   `init_config`. *Done when* all pass and a 24-sample SOL/USD replay from
-   fixtures finalizes to the off-chain value.
+   `init_config`. *Done when* all pass and a 24-sample SOL/USD replay finalizes to the
+   off-chain value. Split (coordinator, 2026-10-29):
+   - **3a, done:** the program (`program/`) with `init_config`, `set_feed_config`,
+     `create_window`, `sample`, `finalize`, running `varswap_core::IntegerKernel` (an exact
+     integer stand-in). Fail closed (codex review): the stand-in exists only behind the
+     `insecure-test-kernel` feature, and without it the program is a `compile_error!`, so no
+     deployable ELF can be built; `make sbf-control` requires the default `cargo build-sbf`
+     to fail with that error. Tests and the bench build with the feature; milestone 1b
+     removes the gate by making the optfix kernel the default. LiteSVM loads it
+     through the upgradeable loader. Negative tests with forged accounts for every rule of
+     3.3; the `FeedConfig` binding test; the 10,240-byte CPI cap exercised by creating a
+     `MAX_BUCKETS` window (10,233 bytes) through the system program CPI. The replay is a
+     **synthetic** 24-interval SOL-like tape built from the canonical-print definition
+     (same-second aggregates, failed-slot copies, intermediate aggregates, a 2 h halt),
+     submitted out of order, and byte-identical to the off-chain `varswap-core` window.
+     Error codes: 100 to 119 program validation, `120 +` `PythError`, `140 +`
+     `CoreError::code`, `200 +` kernel payload (`program/src/error.rs`). `sample` and
+     `finalize` check the window's owner and its header (`WINDOW_TAG`, which only
+     `create_window` writes) instead of re-deriving its PDA. Each accepted sample logs
+     `varswap:sample first= last= publish_time= price= expo=` (pinocchio-log); the event's
+     CU is measured separately in `docs/benchmarks.md`. The `added` field was dropped after
+     measuring it (4,131 CU for the event with it, most of it formatting the `u128`).
+   - **3b, after milestone 1b:** the optfix kernel on-chain, CU table regenerated.
+   - The replay from real SOL/USD prints moves to milestone 6, where keepers need Hermes
+     access anyway (verified facts, 2026-10-29).
 4. **Swaps.** `open_swap`, `settle_swap`, `close_swap`. *Done when* conservation
    (`payouts == collateral`) holds in proptest across realized in `[0, 2 × cap]`, degraded and
    unwind paths are tested, `claim_long` and `claim_short` are tested in both orders and with
@@ -422,7 +447,9 @@ to build test accounts and to cross-check the decoder.
    instruction and the README has the pusher-bias table and the outage tables from 4.1
    (compression error and unwind frequency per model and per `tolerance`).
 6. **SDK and devnet.** *Done when* a Rust SDK and a keeper example push samples on devnet for
-   a live SOL/USD window and it finalizes.
+   a live SOL/USD window and it finalizes, and a replay of 24 real canonical SOL/USD prints
+   (fixtures fetched from Hermes, committed) finalizes to the off-chain value. Keepers read
+   the Hermes API key from an environment variable; it is never committed.
 
 ## Verified facts (checked 2026-10-28)
 
@@ -477,6 +504,18 @@ to build test accounts and to cross-check the decoder.
   `[u8; 16]` in accounts and convert at load.
 - optfix is consumed as a git dependency pinned by `rev` until it is on crates.io (a path
   dependency would break CI).
+- Checked 2026-10-29 (milestone 3a): Hermes `GET /v2/updates/price/{t}` and
+  `/v2/updates/price/latest`, and Benchmarks `GET /v1/updates/price/{t}`, return HTTP 401
+  `unauthorized` without an API key; `GET /v2/price_feeds` still answers without one. Keepers
+  (milestone 6) need a Hermes API key, read from an environment variable and never
+  committed.
+- Checked 2026-10-29 (milestone 3a): `cargo build-sbf` 4.5.0 (platform-tools v1.57) prints
+  `Error: Function … overflows the maximum allowed frame space …` for a frame over 4 KiB and
+  still exits 0, and replays the message on cached builds; `scripts/sbf-build.sh` turns it
+  into a failure (`make sbf-control` proves it, and that a failing cargo fails the script).
+- Checked 2026-10-29 (milestone 3a): LiteSVM 0.18.1 does not compile against the agave 4.4
+  crates that a fresh resolution picks; the workspace `Cargo.lock` keeps the resolution
+  optfix uses (agave 4.3 generation), as quotebook does.
 
 ## Dependencies (latest stable on crates.io, checked 2026-10-29)
 
@@ -499,6 +538,9 @@ whenever it is added or touched.
 | `litesvm-token` (dev) | 0.18.1 | `0.18` |
 | `pyth-solana-receiver-sdk` (dev only, fixtures and cross-check) | 2.0.0 | `2.0` |
 | `anchor-lang` (dev only, pyth-lite cross-check; approved 2026-10-29) | 1.2.2 | `1.2` |
+| `pinocchio-log` (sample events, `default-features = false`; approved 2026-10-29) | 0.5.1 | `0.5` |
+| `solana-clock` (dev, LiteSVM clock) | 4.0.0 (3.2.1 used) | `3.2`, LiteSVM 0.18.1 pins `~3.2` |
+| `solana-account`, `solana-instruction`, `solana-keypair`, `solana-sdk-ids`, `solana-signer`, `solana-transaction` (dev) | 5.4, 4.0, 4.0, 3.1, 4.0, 6.0 | `4.7`, `3.5`, `3.1`, `3.1`, `3.0`, `4.3`: the generations LiteSVM 0.18.1 pins, recorded exception as in optfix and quotebook |
 
 **Version decision (Joaquin, 2026-10-29): option (b), the Pinocchio 0.11 generation.**
 `pinocchio-token` 0.7.0 and `pinocchio-associated-token-account` 0.4.0 are built on

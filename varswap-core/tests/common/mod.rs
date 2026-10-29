@@ -4,36 +4,14 @@
 
 use std::num::NonZeroU64;
 
-use varswap_core::{
-    Bps, CoreError, FeedId, Print, ReturnKernel, RiskParams, Seconds, StoredPrice, SumSq,
-    UnixTimestamp, WindowSpec, YEAR_SECONDS,
-};
+use varswap_core::{Bps, FeedId, Print, RiskParams, Seconds, UnixTimestamp, WindowSpec};
 
 pub const FEED: FeedId = FeedId::new([7; 32]);
 pub const OTHER_FEED: FeedId = FeedId::new([8; 32]);
 pub const RECEIVER: [u8; 32] = [9; 32];
 
-/// Exact integer stand-in for `ln(to / from)²`: `(to − from)²` with both prices rescaled to
-/// the smaller exponent. Not a log return, but exact, so any accumulation error shows up as
-/// an inequality, never as a tolerance.
-pub struct ExactKernel;
-
-pub fn value(p: StoredPrice, exp: i8) -> i128 {
-    let shift = u32::try_from(i32::from(p.exponent()) - i32::from(exp)).unwrap();
-    i128::from(p.price()) * 10i128.pow(shift)
-}
-
-impl ReturnKernel for ExactKernel {
-    fn squared_log_return(&self, from: StoredPrice, to: StoredPrice) -> Result<SumSq, CoreError> {
-        let e = from.exponent().min(to.exponent());
-        let d = value(to, e) - value(from, e);
-        Ok(SumSq::from_raw(u128::try_from(d * d).unwrap()))
-    }
-
-    fn annualize(&self, sum_sq: SumSq, span_seconds: u64) -> Result<u128, CoreError> {
-        Ok(sum_sq.raw() * u128::from(YEAR_SECONDS) / u128::from(span_seconds))
-    }
-}
+/// The tests' kernel is the crate's exact integer kernel; the alias keeps the test names.
+pub use varswap_core::IntegerKernel as ExactKernel;
 
 pub fn risk(tolerance: u32, backfill: u32) -> RiskParams {
     RiskParams {
