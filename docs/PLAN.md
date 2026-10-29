@@ -503,7 +503,7 @@ to build test accounts and to cross-check the decoder.
      CU is measured separately in `docs/benchmarks.md`. The `added` field was dropped after
      measuring it (4,131 CU for the event with it, most of it formatting the `u128`).
    - **3b, done with 1b:** the program runs `LnKernel`; the synthetic replay is byte-identical
-     between SBF and the host; `sample` with two kernel calls is 6,616 CU
+     between SBF and the host; `sample` with two kernel calls is 6,627 CU
      (`docs/benchmarks.md`).
    - The replay from real SOL/USD prints moves to milestone 6, where keepers need Hermes
      access anyway (verified facts, 2026-10-29).
