@@ -262,8 +262,12 @@ impl LnKernel {
         max_delta_exp: u8,
     ) -> Result<u128, CoreError> {
         let eps = Self::realized_var_error_bound(interval, cap_var, max_delta_exp)?;
-        // Clamp at zero explicitly: a variance below the bound settles as zero.
-        Ok(realized.checked_sub(eps).unwrap_or(0))
+        // Clamp at zero explicitly (no saturating arithmetic on financial values): a
+        // variance at or below the bound settles as zero.
+        if realized <= eps {
+            return Ok(0);
+        }
+        realized.checked_sub(eps).ok_or(CoreError::Overflow)
     }
 }
 
