@@ -25,7 +25,7 @@ mod swap;
 mod types;
 mod window;
 
-pub use accept::{accept_print, RawPrint};
+pub use accept::{accept_print, Accepted, RawPrint};
 pub use error::CoreError;
 #[cfg(feature = "insecure-test-kernel")]
 pub use kernel::IntegerKernel;

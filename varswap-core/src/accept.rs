@@ -29,6 +29,38 @@ pub struct RawPrint {
     pub prev_publish_time: UnixTimestamp,
 }
 
+/// A print a window accepted, with the run it fills; only [`accept_print`] builds one, for
+/// [`crate::Window::sample_accepted`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Accepted {
+    spec: WindowSpec,
+    print: Print,
+    run: BucketRun,
+}
+
+impl Accepted {
+    /// The window spec it was accepted for.
+    #[inline]
+    #[must_use]
+    pub const fn spec(&self) -> &WindowSpec {
+        &self.spec
+    }
+
+    /// The print.
+    #[inline]
+    #[must_use]
+    pub const fn print(&self) -> &Print {
+        &self.print
+    }
+
+    /// The bucket run it fills.
+    #[inline]
+    #[must_use]
+    pub const fn run(&self) -> BucketRun {
+        self.run
+    }
+}
+
 /// Whether `window` accepts `raw` as a canonical print, and the bucket run it fills: the
 /// window's feed, a positive price, `conf × 10,000 <= price × max_conf` (exact in `u128`), the
 /// [`Print`] rules (exponent within `i8`, price within `i64`, a previous aggregate), the
@@ -41,7 +73,7 @@ pub struct RawPrint {
 /// The first of [`CoreError::WrongFeed`], [`CoreError::NonPositivePrice`],
 /// [`CoreError::ConfidenceTooWide`], the [`Print::try_new`] errors,
 /// [`CoreError::ExponentMismatch`] and [`CoreError::NotOnGrid`] that applies.
-pub fn accept_print(window: &WindowSpec, raw: &RawPrint) -> Result<(Print, BucketRun), CoreError> {
+pub fn accept_print(window: &WindowSpec, raw: &RawPrint) -> Result<Accepted, CoreError> {
     if raw.feed != window.feed() {
         return Err(CoreError::WrongFeed);
     }
@@ -69,5 +101,9 @@ pub fn accept_print(window: &WindowSpec, raw: &RawPrint) -> Result<(Print, Bucke
         return Err(CoreError::ExponentMismatch);
     }
     let run = window.canonical_run(&print)?;
-    Ok((print, run))
+    Ok(Accepted {
+        spec: *window,
+        print,
+        run,
+    })
 }

@@ -5,6 +5,7 @@ use core::mem::size_of;
 
 use pyth_lite::UnixTimestamp;
 
+use crate::accept::Accepted;
 use crate::error::CoreError;
 use crate::kernel::{ReturnKernel, SumSq};
 use crate::layout::{Hdr, WindowHeader};
@@ -345,6 +346,43 @@ impl<'a> Window<'a> {
             return Err(CoreError::ExponentMismatch);
         }
         let run = self.spec.canonical_run(print)?;
+        self.fill(print, run, kernel)
+    }
+
+    /// [`Window::sample`] for a print [`crate::accept_print`] already accepted for this
+    /// window: the acceptance (feed, exponent, canonical run) is not recomputed. The program's
+    /// `sample` uses it, so one `canonical_run` serves both the acceptance and the fill.
+    ///
+    /// # Errors
+    ///
+    /// [`CoreError::SpecMismatch`] if `accepted` was computed for another window's spec, then
+    /// as [`Window::sample`] for the state, deadline and filled checks and the kernel.
+    pub fn sample_accepted<K: ReturnKernel>(
+        &mut self,
+        accepted: &Accepted,
+        now: UnixTimestamp,
+        kernel: &K,
+    ) -> Result<BucketRun, CoreError> {
+        if accepted.spec() != &self.spec {
+            return Err(CoreError::SpecMismatch);
+        }
+        if self.state()?.is_final() {
+            return Err(CoreError::WindowFinal);
+        }
+        if now > self.spec.deadline()? {
+            return Err(CoreError::BackfillClosed);
+        }
+        self.fill(accepted.print(), accepted.run(), kernel)
+    }
+
+    /// Fills `run` with `print` (acceptance already checked): no bucket of the run may be
+    /// filled, then the two edge returns, then the writes. Nothing is written on error.
+    fn fill<K: ReturnKernel>(
+        &mut self,
+        print: &Print,
+        run: BucketRun,
+        kernel: &K,
+    ) -> Result<BucketRun, CoreError> {
         for k in run.first()..=run.last() {
             if self.is_filled(k)? {
                 return Err(CoreError::BucketAlreadySampled);

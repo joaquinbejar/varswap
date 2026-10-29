@@ -64,6 +64,8 @@ pub enum CoreError {
     NonPositivePrice = 26,
     /// The print's `conf / price` exceeds the window's bound.
     ConfidenceTooWide = 27,
+    /// An accepted print was computed for another window's spec.
+    SpecMismatch = 28,
 }
 
 impl CoreError {
@@ -101,6 +103,7 @@ impl CoreError {
             Self::CollateralOverflow => 25,
             Self::NonPositivePrice => 26,
             Self::ConfidenceTooWide => 27,
+            Self::SpecMismatch => 28,
         }
     }
 }
@@ -136,6 +139,7 @@ impl fmt::Display for CoreError {
             Self::CollateralOverflow => "collateral does not fit in u64 atoms",
             Self::NonPositivePrice => "print price is not positive",
             Self::ConfidenceTooWide => "print confidence too wide",
+            Self::SpecMismatch => "accepted print is for another window",
         };
         f.write_str(s)
     }

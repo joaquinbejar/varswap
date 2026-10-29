@@ -69,3 +69,4 @@ once the program is deployed; they were re-ranged in milestone 4a, before any de
 | 185 | `CollateralOverflow` | `CoreError` (160 + 25) | The collateral does not fit in a `u64` of atoms. |
 | 186 | `NonPositivePrice` | `CoreError` (160 + 26) | The print's price is zero or negative. |
 | 187 | `ConfidenceTooWide` | `CoreError` (160 + 27) | The print's `conf / price` exceeds the window's bound. |
+| 188 | `SpecMismatch` | `CoreError` (160 + 28) | An accepted print was computed for another window's spec. |

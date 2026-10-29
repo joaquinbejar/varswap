@@ -142,5 +142,5 @@ fn accepted(spec: &WindowSpec, m: &PrintMsg) -> Option<(u32, u32)> {
     };
     accept_print(spec, &raw)
         .ok()
-        .map(|(_, run)| (run.first(), run.last()))
+        .map(|a| (a.run().first(), a.run().last()))
 }

@@ -272,7 +272,7 @@ pub fn sample(program_id: &Address, accounts: &mut [AccountView], payload: &[u8]
     let req = PriceRequirements::new(spec.feed(), None, spec.max_conf().get());
     let price = update.verify(&req, now).map_err(pyth)?;
     // The same acceptance rule off-chain keepers apply (varswap_core::accept_print).
-    let (print, _) = accept_print(
+    let accepted = accept_print(
         &spec,
         &RawPrint {
             feed: price.feed_id(),
@@ -285,7 +285,10 @@ pub fn sample(program_id: &Address, accounts: &mut [AccountView], payload: &[u8]
         },
     )
     .map_err(core)?;
-    let run = w.sample(&print, now, &Kernel::default()).map_err(core)?;
+    let run = w
+        .sample_accepted(&accepted, now, &Kernel::default())
+        .map_err(core)?;
+    let print = accepted.print();
 
     let result = SampleResult {
         price: print.stored().price(),
