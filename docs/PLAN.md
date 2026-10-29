@@ -342,7 +342,8 @@ whenever it is added or touched.
 `pinocchio-token` 0.7.0 and `pinocchio-associated-token-account` 0.4.0 depend on
 `solana-account-view ^2.0` (the Pinocchio 0.11 generation), while `pinocchio` 0.12.0 depends on
 `solana-account-view` 3.0; `pinocchio-system` 0.7.0 already targets `pinocchio ^0.12`. So the
-latest stable versions of all four cannot be combined today. Options: (a) Pinocchio 0.12 with
+latest stable versions of the three crates varswap uses (`pinocchio`, `pinocchio-system`,
+`pinocchio-token`) cannot be combined today. Options: (a) Pinocchio 0.12 with
 the three token CPIs varswap needs written in-crate (`transfer_checked`, `close_account`,
 `initialize_account3`; the vault is a PDA token account, so no ATA crate at all),
 replaced by `pinocchio-token` once a 0.12-compatible release exists; (b) the whole set one
