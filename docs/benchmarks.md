@@ -13,8 +13,8 @@ Milestone 3a: `sample` and `finalize` run the exact integer stand-in kernel (`va
 | `create_window (B = 25)` | 7833 | 7833 | 0 | 1 day hourly, 369 B |
 | `create_window (B = 721)` | 6861 | 6861 | 0 | 30 days hourly, 6,729 B |
 | `create_window (B = 1,105)` | 7149 | 7149 | 0 | MAX_BUCKETS, 10,233 B (CPI cap 10,240) |
-| `sample (no neighbour)` | 3496 | 2760 | 736 | B = 721, first bucket, no kernel call |
-| `sample (both neighbours)` | 8572 | 4441 | 4131 | B = 721, bucket 360 between two filled: 2 kernel calls |
-| `sample (outage run of 6)` | 9222 | 5091 | 4131 | B = 721, one print fills 6 buckets (the 6 h guard maximum), 2 kernel calls |
+| `sample (no neighbour)` | 3413 | 2760 | 653 | B = 721, first bucket, no kernel call |
+| `sample (both neighbours)` | 5172 | 4441 | 731 | B = 721, bucket 360 between two filled: 2 kernel calls |
+| `sample (outage run of 6)` | 5822 | 5091 | 731 | B = 721, one print fills 6 buckets (the 6 h guard maximum), 2 kernel calls |
 | `finalize (complete)` | 1073 | 1073 | 0 | B = 25, all filled: annualize |
 | `finalize (degraded)` | 1252 | 1252 | 0 | B = 721, empty after the deadline |

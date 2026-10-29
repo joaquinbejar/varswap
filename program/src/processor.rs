@@ -263,7 +263,6 @@ pub fn sample(program_id: &Address, accounts: &mut [AccountView], payload: &[u8]
     let req = PriceRequirements::new(spec.feed(), None, spec.max_conf().get());
     let price = update.verify(&req, now).map_err(pyth)?;
     let print = Print::try_from(&price).map_err(core)?;
-    let before = w.sum_sq();
     let run = w.sample(&print, now, &Kernel::default()).map_err(core)?;
 
     let result = SampleResult {
@@ -273,27 +272,18 @@ pub fn sample(program_id: &Address, accounts: &mut [AccountView], payload: &[u8]
         last: run.last(),
     };
     #[cfg(feature = "events")]
-    {
-        let added = w
-            .sum_sq()
-            .raw()
-            .checked_sub(before.raw())
-            .ok_or(VarswapError::InvalidAccountData)?;
-        log_sample(&result, print.stored().exponent(), added);
-    }
-    #[cfg(not(feature = "events"))]
-    let _ = before;
+    log_sample(&result, print.stored().exponent());
     set_return_data(bytemuck::bytes_of(&result));
     Ok(())
 }
 
-/// The sample event (`docs/PLAN.md` 3.1): enough to recompute `sum_sq` off-chain.
-/// `varswap:sample first=<k> last=<k> publish_time=<s> price=<mantissa> expo=<e>
-/// added=<raw sum_sq increment>`.
+/// The sample event (`docs/PLAN.md` 3.1):
+/// `varswap:sample first=<k> last=<k> publish_time=<s> price=<mantissa> expo=<e>`. The
+/// `sum_sq` increment is not logged: clients recompute it from the bucket prices.
 #[cfg(feature = "events")]
 #[inline(never)]
-fn log_sample(r: &SampleResult, exponent: i8, added: u128) {
-    let mut l = pinocchio_log::logger::Logger::<160>::default();
+fn log_sample(r: &SampleResult, exponent: i8) {
+    let mut l = pinocchio_log::logger::Logger::<128>::default();
     l.append("varswap:sample first=")
         .append(r.first)
         .append(" last=")
@@ -303,9 +293,7 @@ fn log_sample(r: &SampleResult, exponent: i8, added: u128) {
         .append(" price=")
         .append(r.price)
         .append(" expo=")
-        .append(i32::from(exponent))
-        .append(" added=")
-        .append(added);
+        .append(i32::from(exponent));
     l.log();
 }
 

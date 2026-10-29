@@ -632,7 +632,7 @@ fn test_sample_event_logged() {
         .expect("no sample event");
     assert!(
         line.ends_with(&format!(
-            "varswap:sample first=1 last=1 publish_time={} price=100000300 expo=-8 added=90000",
+            "varswap:sample first=1 last=1 publish_time={} price=100000300 expo=-8",
             b(1) + 1
         )),
         "{line}"

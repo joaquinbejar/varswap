@@ -151,8 +151,10 @@ bytes(MAX_BUCKETS + 1)`. `set_feed_config` rejects `max_buckets > MAX_BUCKETS`;
 Every bucket's price is kept on-chain for the life of the window: buckets fill in any order,
 and filling bucket `k` adds the returns to whichever neighbours `k − 1` and `k + 1` are already
 filled, so their prices must be stored. Settlement reads only `sum_sq`; each accepted sample
-is also logged as an event (bucket range, publish_time, price, returns added) so anyone can
-recompute `sum_sq` off-chain. The stored price array also serves UIs, so no separate ring
+is also logged as an event (bucket range, publish_time, price mantissa, exponent) so anyone can
+recompute `sum_sq` off-chain. The `sum_sq` increment is not logged: clients recompute it from
+the bucket prices, and formatting the `u128` cost about 3,400 CU per sample (decided
+2026-10-29). The stored price array also serves UIs, so no separate ring
 buffer is needed.
 
 ### 3.2 Instructions
@@ -426,9 +428,9 @@ to build test accounts and to cross-check the decoder.
      `CoreError::code`, `200 +` kernel payload (`program/src/error.rs`). `sample` and
      `finalize` check the window's owner and its header (`WINDOW_TAG`, which only
      `create_window` writes) instead of re-deriving its PDA. Each accepted sample logs
-     `varswap:sample first= last= publish_time= price= expo= added=` (pinocchio-log); the
-     event's CU is measured separately in `docs/benchmarks.md` (736 to 4,131 CU, most of it
-     formatting the `u128` increment).
+     `varswap:sample first= last= publish_time= price= expo=` (pinocchio-log); the event's
+     CU is measured separately in `docs/benchmarks.md`. The `added` field was dropped after
+     measuring it (4,131 CU for the event with it, most of it formatting the `u128`).
    - **3b, after milestone 1b:** the optfix kernel on-chain, CU table regenerated.
    - The replay from real SOL/USD prints moves to milestone 6, where keepers need Hermes
      access anyway (verified facts, 2026-10-29).
