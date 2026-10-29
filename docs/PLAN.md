@@ -52,7 +52,8 @@ pub struct WindowSpec {
     pub end: UnixTimestamp,
     pub interval: Seconds,       // sampling grid, e.g. 3600
     // Copied at creation from the admin-written FeedConfig, never from the creator (3.3):
-    pub max_conf: Bps,           // conf / price above this is rejected
+    pub tolerance: Seconds,      // halt bound: publish_time <= boundary + tolerance (4.1)
+    pub max_conf: Bps,           // loose sanity bound only (4.1)
     pub backfill_deadline: Seconds, // buckets can be filled until end + this (4.1, 4.3)
     pub receiver_program: Address,  // copied from FeedConfig; samples are checked against it
 }
@@ -106,7 +107,7 @@ pub enum VarswapError {
 | Account | Seeds | Owner | Size | Written by |
 | --- | --- | --- | --- | --- |
 | `Config` | `["config"]` | varswap | 8 + 32 + 32 + 8 | admin |
-| `FeedConfig` | `["feed", feed_id]` | varswap | ~64 | admin: risk parameters per feed (receiver program id, min_interval, max_conf, backfill_deadline) |
+| `FeedConfig` | `["feed", feed_id]` | varswap | ~64 | admin: risk parameters per feed (receiver program id, min_interval, tolerance, max_conf, backfill_deadline, max_buckets) |
 | `Window` | `["window", feed_id, start_le, end_le, interval_le]` | varswap | ~200, computed in M3 | `create_window` (anyone), `sample` (anyone), `finalize` (anyone) |
 | `Swap` | `["swap", window, long, short, swap_index_le]` | varswap | 8 + 32×3 + 8×4 + 1 + 8×2 + 2 = ~162 | `open_swap`, `settle_swap`, `claim_*` (payouts and claimed flags, +18 bytes) |
 | Collateral vault | `["vault", swap]` PDA token account (system create + `initialize_account3`) | SPL Token | 165 | token CPIs only |
@@ -131,7 +132,7 @@ settlement; it is listed as an open question for UI use.
 | # | Instruction | Signers | Accounts |
 | --- | --- | --- | --- |
 | 0 | `init_config` | admin, payer | config (w), system |
-| 0b | `set_feed_config` | admin | config, feed_config (w), system: validates `max_conf`, `min_interval > 0`, `backfill_deadline > 0` |
+| 0b | `set_feed_config` | admin | config, feed_config (w), system: validates `max_conf`, `0 < tolerance < min_interval`, `backfill_deadline > 0`, `max_buckets` fits 10 KiB |
 | 1 | `create_window` | payer | config, window (w), system |
 | 2 | `sample` | anyone (payer of fee only) | window (w), price_update (Pyth receiver account), clock sysvar |
 | 3 | `finalize` | anyone | window (w), clock |
@@ -146,7 +147,7 @@ settlement; it is listed as an open question for UI use.
   interval == 0`, `feed` has a `FeedConfig` (so windows only exist on vetted feeds),
   `interval >= feed_config.min_interval`, risk
   parameters copied from it (an anyone-can-create window must not let the first creator pick
-  a loose tolerance or confidence and own the PDA), `start` in the future.
+  loose risk parameters and own the PDA), `start` in the future.
 - `sample`: the `price_update` account is owned by the Pyth receiver program (address pinned
   in the window's `FeedConfig` copy, verified at milestone 2), has the `PriceUpdateV2` discriminator,
   `verification_level == Full`, `feed_id == window.spec.feed`, `price > 0`,
@@ -161,8 +162,8 @@ settlement; it is listed as an open question for UI use.
   for the swap's USDC mint; collateral amounts recomputed on-chain, not trusted
   from data.
 - `finalize`: immediately when all `N + 1` buckets are filled, otherwise only after
-  `end + backfill_deadline`, so nobody can degrade a window by finalizing early. Fewer than 2 samples or `t_last == t_first`: unwind explicitly
-  (no division by zero).
+  `end + backfill_deadline`, so nobody can degrade a window by finalizing early. `N >= 1`
+  is checked at `create_window`; the window is `Degraded` if any bucket is empty.
 - `settle_swap`: window `Finalized` or `Degraded`; swap `Open`. `claim_*`: swap `Settled`,
   destination owned by that side with the USDC mint, vault matches, claimed once.
 - Negative tests for each: forged price update owned by another program, Partial verification,
@@ -199,12 +200,29 @@ So samples are **canonical**:
 - Buckets are a bitmap, filled in any order; there is no `k > last_index` rule, so a later
   bucket can never lock out an earlier one. `k` is derived from `publish_time` and must be
   inside `[0, N]` (both grid endpoints included); samples after finalization are rejected.
-- Each bucket stores its normalized price (8 bytes × `N + 1`; 721 buckets for 30 days
-  hourly is 5.8 KB). When bucket `k` is filled, the returns to its filled neighbours `k − 1`
+- Each bucket stores the raw Pyth `price: i64` and `exponent: i8` (9 bytes; converted to
+  `Fixed` only to compute `ln`), so 721 buckets for 30 days hourly take about 6.5 KB with the
+  bitmap and header, under the 10 KiB limit for an account created through a CPI
+  (`MAX_PERMITTED_DATA_INCREASE`, to verify in milestone 3). `FeedConfig.max_buckets` caps
+  `N` at `create_window`. When bucket `k` is filled, the returns to its filled neighbours `k − 1`
   and `k + 1` are added to `sum_sq`, so a sample costs at most two `ln` calls and finalize
   costs none.
-- Confidence filter (`max_conf`) still rejects prints during dislocations; a rejected
-  canonical print leaves the bucket missing (handled by 4.3).
+- Halt bound: the canonical print must also satisfy `publish_time <= b_k + tolerance`;
+  otherwise the first print after an outage would be canonical for every boundary in the
+  gap and fill them all with one price (zero returns). A gap then leaves buckets empty.
+- Confidence: no tight filter. Canonicity and `Full` verification already remove the
+  pusher's choice, and a tight `max_conf` would make a missing bucket (hence an unwind) most
+  likely exactly when variance is high and the short is losing: a free option for the short
+  (varswap session). Only a loose sanity bound (proposed `conf / price > 10%`), documented as
+  an exceptional unwind; the bias study measures how often real SOL/USD history would have
+  unwound under it.
+- To verify in milestone 2: `publish_time` is in whole seconds while Pythnet aggregates about
+  every 400 ms, so consecutive prints can share a `publish_time`; uniqueness needs
+  `prev_publish_time` to be the previous aggregate's own `publish_time` including repeats
+  (fixture with two prints sharing a second); Hermes `/v2/updates/price/{t}` returns the
+  first aggregate at or after `t`; and whether the receiver rejects VAAs from an expired
+  guardian set (about 24 h after rotation), which could make a bucket unpostable within
+  `backfill_deadline`.
 
 ### 4.2 Running sums vs ring buffer
 
@@ -258,7 +276,8 @@ to build test accounts and to cross-check the decoder.
 
 1. **Domain and accumulator math.** `varswap-core` with types, errors, accumulator update and
    finalize as pure functions. *Done when* proptest against an f64 reference on simulated GBM
-   paths shows realized variance within the documented bound, including random gaps.
+   paths shows realized variance within the documented bound, and that any gap yields
+   `Degraded`.
 2. **`pyth-lite`.** *Done when* it decodes real `PriceUpdateV2` accounts fetched from mainnet
    (fixtures committed) for Full and Partial levels, rejects wrong owner/discriminator and
    malformed, truncated and unknown-verification-tag fixtures, the receiver program id is
