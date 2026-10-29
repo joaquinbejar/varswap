@@ -39,6 +39,8 @@ struct Fx {
     long: Keypair,
     short: Keypair,
     open: Open,
+    /// The payer's token account, where `close_swap` sends a donated vault balance.
+    payer_token: Address,
 }
 
 /// A 2-interval hourly window, both parties funded, terms: 1,000 USDC per unit variance,
@@ -49,6 +51,8 @@ fn fixture() -> Fx {
     let usdc = env.usdc;
     let long_src = env.funded(&usdc, &long.pubkey(), FUNDS);
     let short_src = env.funded(&usdc, &short.pubkey(), FUNDS);
+    let payer = env.payer.pubkey();
+    let payer_token = env.funded(&usdc, &payer, 0);
     let open = Open {
         window,
         long: long.pubkey(),
@@ -67,6 +71,7 @@ fn fixture() -> Fx {
         long,
         short,
         open,
+        payer_token,
     }
 }
 
@@ -593,25 +598,57 @@ fn test_close_swap_rules_and_refund() {
     let open = fx.open;
     let p = fx.env.payer.insecure_clone();
     expect_code(
-        &fx.env.send(&[ix_close(&open.swap(), &open.payer)], &[&p]),
+        &fx.env.send(
+            &[ix_close(
+                &open.swap(),
+                &open.payer,
+                &fx.payer_token,
+                &open.mint,
+            )],
+            &[&p],
+        ),
         code::NOT_CLAIMED,
     );
     claim(&mut fx, true, &open.long_src).unwrap();
     expect_code(
-        &fx.env.send(&[ix_close(&open.swap(), &open.payer)], &[&p]),
+        &fx.env.send(
+            &[ix_close(
+                &open.swap(),
+                &open.payer,
+                &fx.payer_token,
+                &open.mint,
+            )],
+            &[&p],
+        ),
         code::NOT_CLAIMED,
     );
     claim(&mut fx, false, &open.short_src).unwrap();
     let stranger = Address::new_unique();
     expect_code(
-        &fx.env.send(&[ix_close(&open.swap(), &stranger)], &[&p]),
+        &fx.env.send(
+            &[ix_close(
+                &open.swap(),
+                &stranger,
+                &fx.payer_token,
+                &open.mint,
+            )],
+            &[&p],
+        ),
         code::WRONG_RECEIVER,
     );
     let rent = fx.env.account(&open.swap()).lamports + fx.env.account(&open.vault()).lamports;
     let before = fx.env.svm.get_balance(&open.payer).unwrap();
     let meta = fx
         .env
-        .send(&[ix_close(&open.swap(), &open.payer)], &[&p])
+        .send(
+            &[ix_close(
+                &open.swap(),
+                &open.payer,
+                &fx.payer_token,
+                &open.mint,
+            )],
+            &[&p],
+        )
         .unwrap();
     let after = fx.env.svm.get_balance(&open.payer).unwrap();
     assert_eq!(after + meta.fee, before + rent);
@@ -638,7 +675,15 @@ fn test_close_with_frozen_side_stays_locked() {
     claim(&mut fx, false, &open.short_src).unwrap();
     let p = fx.env.payer.insecure_clone();
     expect_code(
-        &fx.env.send(&[ix_close(&open.swap(), &open.payer)], &[&p]),
+        &fx.env.send(
+            &[ix_close(
+                &open.swap(),
+                &open.payer,
+                &fx.payer_token,
+                &open.mint,
+            )],
+            &[&p],
+        ),
         code::NOT_CLAIMED,
     );
 }
@@ -668,4 +713,82 @@ fn test_full_cycle_payouts_match_core_across_paths() {
         claim(&mut fx, false, &open.short_src).unwrap();
         assert_eq!(fx.env.balance(&open.vault()), 0);
     }
+}
+
+fn close(fx: &mut Fx) -> Res {
+    let ix = ix_close(
+        &fx.open.swap(),
+        &fx.open.payer,
+        &fx.payer_token,
+        &fx.open.mint,
+    );
+    let p = fx.env.payer.insecure_clone();
+    fx.env.send(&[ix], &[&p])
+}
+
+/// Codex (#12): a stranger donating one atom to the vault after both claims must not trap
+/// the rents; the donation goes to the payer.
+#[test]
+fn test_close_after_donation_sends_excess_to_payer() {
+    let mut fx = settled(&[P100, P1001, P100]);
+    let open = fx.open;
+    claim(&mut fx, true, &open.long_src).unwrap();
+    claim(&mut fx, false, &open.short_src).unwrap();
+    let admin = fx.env.admin.insecure_clone();
+    let vault = open.vault();
+    litesvm_token::MintTo::new(&mut fx.env.svm, &admin, &open.mint, &vault, 1)
+        .send()
+        .unwrap();
+    assert_eq!(fx.env.balance(&vault), 1);
+    close(&mut fx).unwrap();
+    assert_eq!(fx.env.balance(&fx.payer_token), 1);
+    assert!(fx
+        .env
+        .svm
+        .get_account(&vault)
+        .is_none_or(|a| a.lamports == 0));
+    assert!(fx
+        .env
+        .svm
+        .get_account(&open.swap())
+        .is_none_or(|a| a.lamports == 0));
+}
+
+#[test]
+fn test_close_donation_before_claims_still_rejected() {
+    let mut fx = settled(&[P100, P1001, P100]);
+    let open = fx.open;
+    let admin = fx.env.admin.insecure_clone();
+    let vault = open.vault();
+    litesvm_token::MintTo::new(&mut fx.env.svm, &admin, &open.mint, &vault, 1)
+        .send()
+        .unwrap();
+    expect_code(&close(&mut fx), code::NOT_CLAIMED);
+    claim(&mut fx, true, &open.long_src).unwrap();
+    expect_code(&close(&mut fx), code::NOT_CLAIMED);
+    // The donation does not change what either side is paid.
+    claim(&mut fx, false, &open.short_src).unwrap();
+    assert_eq!(fx.env.balance(&vault), 1);
+    close(&mut fx).unwrap();
+}
+
+#[test]
+fn test_close_forged_payer_token_account_rejected() {
+    let mut fx = settled(&[P100, P1001, P100]);
+    let open = fx.open;
+    claim(&mut fx, true, &open.long_src).unwrap();
+    claim(&mut fx, false, &open.short_src).unwrap();
+    let p = fx.env.payer.insecure_clone();
+    // The long's token account, not the payer's.
+    let ix = ix_close(&open.swap(), &open.payer, &open.long_src, &open.mint);
+    expect_code(&fx.env.send(&[ix], &[&p]), code::INVALID_TOKEN_ACCOUNT);
+    // A payer token account of another mint.
+    let other = fx.env.new_mint();
+    let payer = open.payer;
+    let other_acc = fx.env.funded(&other, &payer, 0);
+    let ix = ix_close(&open.swap(), &open.payer, &other_acc, &open.mint);
+    expect_code(&fx.env.send(&[ix], &[&p]), code::INVALID_TOKEN_ACCOUNT);
+    let ix = ix_close(&open.swap(), &open.payer, &other_acc, &other);
+    expect_code(&fx.env.send(&[ix], &[&p]), code::INVALID_MINT);
+    close(&mut fx).unwrap();
 }

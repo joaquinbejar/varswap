@@ -261,7 +261,7 @@ const ROWS: &[Row] = &[
     },
     Row {
         name: "close_swap",
-        note: "close_account on the vault, close the swap, rent to the payer",
+        note: "empty vault: close_account, close the swap, rent to the payer",
         run: || {
             let (mut env, open) = settled_fixture();
             let p = env.payer.insecure_clone();
@@ -275,7 +275,18 @@ const ROWS: &[Row] = &[
                 &[&p],
             )
             .unwrap();
-            cu(env.send(&[ix_close(&open.swap(), &open.payer)], &[&p]))
+            let payer = open.payer;
+            let mint = open.mint;
+            let payer_token = env.funded(&mint, &payer, 0);
+            cu(env.send(
+                &[ix_close(
+                    &open.swap(),
+                    &open.payer,
+                    &payer_token,
+                    &open.mint,
+                )],
+                &[&p],
+            ))
         },
     },
 ];

@@ -62,7 +62,8 @@ pub enum Instruction {
     ClaimLong = 7,
     /// `claim_short`: swap, vault, the short's token account, mint, token program.
     ClaimShort = 8,
-    /// `close_swap`: swap, vault, rent receiver, token program. No payload.
+    /// `close_swap`: swap, vault, rent receiver, the receiver's token account, mint, token
+    /// program. No payload.
     CloseSwap = 9,
 }
 

@@ -598,7 +598,12 @@ pub fn ix_claim(long: bool, swap: &Address, dest: &Address, mint: &Address) -> I
     )
 }
 
-pub fn ix_close(swap: &Address, receiver: &Address) -> Instruction {
+pub fn ix_close(
+    swap: &Address,
+    receiver: &Address,
+    receiver_token: &Address,
+    mint: &Address,
+) -> Instruction {
     Instruction::new_with_bytes(
         PROGRAM_ID,
         &[9],
@@ -606,6 +611,8 @@ pub fn ix_close(swap: &Address, receiver: &Address) -> Instruction {
             AccountMeta::new(*swap, false),
             AccountMeta::new(vault_pda(swap), false),
             AccountMeta::new(*receiver, false),
+            AccountMeta::new(*receiver_token, false),
+            AccountMeta::new_readonly(*mint, false),
             AccountMeta::new_readonly(TOKEN, false),
         ],
     )

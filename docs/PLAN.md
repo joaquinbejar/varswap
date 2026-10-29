@@ -169,7 +169,7 @@ buffer is needed.
 | 4 | `open_swap` | long, short, payer | config, window, swap (w), vault (w), long_usdc (w), short_usdc (w), usdc_mint (the config's), token program (SPL Token), system |
 | 5 | `settle_swap` | anyone | window, swap (w): computes and stores both payouts, state `Settled`; moves no tokens |
 | 5b | `claim_long` / `claim_short` | anyone | swap (w), vault (w), that side's USDC account (w), usdc_mint, token program: pays one side only, so a frozen USDC account on one side never blocks the other |
-| 6 | `close_swap` | anyone after both sides claimed (a permanently frozen side leaves the rent locked; accepted) | swap (w), vault (w), rent receiver = payer recorded in swap, token program |
+| 6 | `close_swap` | anyone after both sides claimed, from the swap's flags (a permanently frozen side leaves the rent locked; accepted) | swap (w), vault (w), rent receiver = payer recorded in swap, the payer's token account of the swap's mint (w), mint, token program: any vault balance left (a donation, which would make SPL Token refuse the close) goes to the payer's token account first (codex review of #12) |
 
 ### 3.3 Security checks
 

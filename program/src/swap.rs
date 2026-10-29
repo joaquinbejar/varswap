@@ -332,15 +332,18 @@ pub fn claim(
         .invoke_signed(&[Signer::from(&signer_seeds)])
 }
 
-/// `close_swap`: anyone, after both sides claimed: closes the empty vault and the swap, and
-/// returns both rents to the payer recorded at opening.
+/// `close_swap`: anyone, after both sides claimed (from the swap's flags, never from the
+/// vault balance): sends any vault balance left (a donation, which would otherwise make SPL
+/// Token refuse to close the account) to the payer's token account, closes the vault and the
+/// swap, and returns both rents to the payer recorded at opening.
 ///
-/// Accounts: swap (writable), vault (writable), rent receiver (writable), token program.
+/// Accounts: swap (writable), vault (writable), rent receiver (writable), the receiver's token
+/// account of the swap's mint (writable), mint, token program.
 ///
 /// # Errors
 ///
-/// A forged swap, a side not yet paid, a wrong vault, receiver or token program, or a vault
-/// that is not empty.
+/// A forged swap, a side not yet paid, a wrong vault, receiver, receiver token account, mint
+/// or token program.
 #[inline(never)]
 pub fn close_swap(
     program_id: &Address,
@@ -350,12 +353,13 @@ pub fn close_swap(
     if !payload.is_empty() {
         return Err(VarswapError::InvalidInstructionData.into());
     }
-    let [swap, vault, receiver, token, ..] = accounts else {
+    let [swap, vault, receiver, receiver_token, mint, token, ..] = accounts else {
         return Err(VarswapError::NotEnoughAccounts.into());
     };
     writable(swap)?;
     writable(vault)?;
     writable(receiver)?;
+    writable(receiver_token)?;
     let (s, st) = state::load_swap(swap, program_id)?;
     if st != SwapState::Settled || s.long_claimed == 0 || s.short_claimed == 0 {
         return Err(VarswapError::NotClaimed.into());
@@ -366,12 +370,16 @@ pub fn close_swap(
     if token.address().to_bytes() != s.token_program {
         return Err(VarswapError::InvalidTokenProgram.into());
     }
+    if mint.address().to_bytes() != s.mint {
+        return Err(VarswapError::InvalidMint.into());
+    }
     pda::verify(
         &[VAULT_SEED, swap.address().as_ref(), &[s.vault_bump]],
         program_id,
         vault.address(),
     )
     .map_err(|_| VarswapError::InvalidVault)?;
+    token_account_of(receiver_token, mint.address(), receiver.address())?;
     let index = s.swap_index.to_le_bytes();
     let bump = [s.hdr.bump];
     let signer_seeds = [
@@ -382,6 +390,21 @@ pub fn close_swap(
         Seed::from(&index),
         Seed::from(&bump),
     ];
+    // Both payouts are out, so anything still in the vault was donated after settlement.
+    let excess = TokenAccount::from_account_view(vault)
+        .map(|t| t.amount())
+        .map_err(|_| VarswapError::InvalidVault)?;
+    if excess > 0 {
+        TransferChecked::<&AccountView>::new(
+            vault,
+            mint,
+            receiver_token,
+            swap,
+            excess,
+            decimals(mint)?,
+        )
+        .invoke_signed(&[Signer::from(&signer_seeds)])?;
+    }
     CloseAccount::<&AccountView>::new(vault, receiver, swap)
         .invoke_signed(&[Signer::from(&signer_seeds)])?;
     let rent = swap.lamports();
