@@ -227,17 +227,16 @@ proptest! {
                 "closed form {} below the per-term sum {}", eps, term_bounds
             );
         }
-        // The guarantee is on the capped values: ε(cap) bounds |min(V, cap) − min(V_exact,
-        // cap)|, so min(V_cons, cap) <= min(V_exact, cap). Above the cap the uncapped
-        // V_cons <= V_exact need not hold.
+        // Magnitude sanity in f64 (the directional proof is tests/vcons_exact.rs, against a
+        // 100-digit decimal reference): on the capped values min(V_cons, cap) stays at or
+        // below min(V_exact, cap) to f64 resolution.
         let cap_f = cap as f64;
         prop_assert!(
             (cons.min(cap) as f64) <= exact_hi.min(cap_f) * (1.0 + 2.0 * f64::EPSILON),
             "min(V_cons, cap) {} > min(V_exact, cap) {}", cons.min(cap), exact_hi.min(cap_f)
         );
-        // The budget (PLAN 4.4): at the largest notional the limit allows (notional × ε <
-        // 2^64), the long is never overpaid and the short's advantage is under 3 atoms
-        // (under 2 from ±ε then −ε, at most 1 from the floor). Strike 1.0, collateral exact.
+        // The budget's magnitude (PLAN 4.4), f64: at the largest notional the limit allows,
+        // the payout gap stays within (−resolution, 3 + resolution) atoms. Strike 1.0.
         let notional = (u128::MAX >> 64) / eps;
         let long_payout = (notional * cons.min(cap)) >> 64;
         let exact_payout = notional as f64 * exact_hi.min(cap_f) / TWO_64;

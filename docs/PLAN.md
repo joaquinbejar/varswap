@@ -417,9 +417,14 @@ conservative variance `V_cons = max(0, V − ε(window.interval, cap_var))`
   limit stays at `notional × ε < 2^64` (coordinator, 2026-10-29: capacity matters more than
   atoms of `10^-6` USDC), so **the short's advantage is under three atoms per swap**: under
   two from the bound, at most one from the floor.
-- Checked on the GBM proptest at the largest notional the limit allows: the long is never
-  overpaid against the f64 exact payout, and the short's advantage stays under three atoms (a
-  mutation subtracting `4ε` fails it at 4.5 atoms).
+- Checked exactly against a 100-digit decimal reference (`varswap-core/tools/vcons_fixtures.py`,
+  603 cases committed in `tests/fixtures/vcons.txt`, codex's three counterexamples included:
+  the atom crossing, an above-cap case where the uncapped `V_cons > V_exact`, and a 2-atom
+  short advantage), at the largest notional the limit allows: `|min(V, cap) − min(V_exact,
+  cap)| <= ε`, `min(V_cons, cap) <= min(V_exact, cap)`, the long never overpaid, the short's
+  advantage at most 2 whole atoms below the exact payout's floor (under 3 against the exact
+  payout), and `ε` equal to an independent Python replica. The GBM proptest checks the same
+  quantities' magnitudes in f64 (a mutation subtracting `4ε` fails it at 4.5 atoms).
 
 The directed parts of the kernel (`r²` and the annualization rounded down) also lower the
 realized variance.
