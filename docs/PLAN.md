@@ -600,7 +600,12 @@ to build test accounts and to cross-check the decoder.
    added); the `study` crate (off-chain, fixed seeds, `make study`) writes `docs/study.md`;
    the README carries the pusher-bias and outage tables; results and the 6 h recommendation
    are in 4.1.
-6. **SDK and devnet.** *Done when* a Rust SDK and a keeper example push samples on devnet for
+6. **SDK and devnet.** Status (2026-10-29): 6a `varswap-sdk` done (a builder per
+   instruction, PDAs, decoders on `varswap_core::layout`, which now holds every account and
+   payload layout; every builder equals the test harness's independent encoding byte for
+   byte, and a full lifecycle runs through the SDK only); 6b the keeper (`Chain` and
+   `PriceSource` traits, Hermes source with the key from the environment, redacted) and 6c the
+   admin CLI (`solana-rpc-client`) next; devnet after. *Done when* a Rust SDK and a keeper example push samples on devnet for
    a live SOL/USD window and it finalizes, and a replay of 24 real canonical SOL/USD prints
    (fixtures fetched from Hermes, committed) finalizes to the off-chain value. Keepers read
    the Hermes API key from an environment variable; it is never committed.

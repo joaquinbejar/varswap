@@ -1,0 +1,21 @@
+[package]
+name = "varswap-sdk"
+description = "Client SDK for varswap: instruction builders, PDA helpers and account decoders"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+bytemuck = { workspace = true }
+pyth-lite = { workspace = true }
+varswap-core = { workspace = true }
+# The generation LiteSVM uses, so SDK instructions go straight into the same VM (as quotebook
+# and metalbook); the recorded exception to the latest-stable rule (docs/PLAN.md).
+solana-address = { workspace = true, features = ["curve25519"] }
+solana-instruction = { workspace = true }
+
+[lints]
+workspace = true
