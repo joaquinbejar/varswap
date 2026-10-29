@@ -20,6 +20,7 @@ mod kernel;
 pub mod layout;
 mod print;
 mod spec;
+mod swap;
 mod types;
 mod window;
 
@@ -29,9 +30,11 @@ pub use kernel::IntegerKernel;
 pub use kernel::{LnKernel, ReturnKernel, SumSq, LN_10_RAW};
 pub use print::{Print, StoredPrice};
 pub use spec::{BucketRun, RiskParams, WindowSpec};
+pub use swap::{Settlement, SwapTerms, MAX_CAP_VAR};
 pub use types::{Address, Bps, Seconds, WindowState, YEAR_SECONDS};
 pub use window::{
-    window_size, Window, CPI_ACCOUNT_CREATION_LIMIT, MAX_BUCKETS, WINDOW_TAG, WINDOW_VERSION,
+    window_size, Window, WindowInfo, CPI_ACCOUNT_CREATION_LIMIT, MAX_BUCKETS, WINDOW_TAG,
+    WINDOW_VERSION,
 };
 
 pub use pyth_lite::{FeedId, UnixTimestamp};

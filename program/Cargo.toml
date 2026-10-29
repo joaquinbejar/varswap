@@ -23,6 +23,7 @@ events = ["dep:pinocchio-log"]
 bytemuck = { workspace = true }
 pinocchio = { workspace = true }
 pinocchio-system = { workspace = true }
+pinocchio-token = { workspace = true }
 pinocchio-log = { workspace = true, optional = true }
 pyth-lite = { workspace = true }
 varswap-core = { workspace = true }
@@ -35,6 +36,7 @@ solana-address = { workspace = true, features = ["decode", "curve25519"] }
 
 [dev-dependencies]
 litesvm = { workspace = true }
+litesvm-token = { workspace = true }
 solana-account = { workspace = true }
 solana-clock = { workspace = true }
 solana-instruction = { workspace = true }

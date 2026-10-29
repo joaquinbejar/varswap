@@ -49,6 +49,17 @@ pub enum CoreError {
     Kernel(u8) = 19,
     /// The print's exponent is not the one the window pinned (`docs/PLAN.md` 4.4).
     ExponentMismatch = 20,
+    /// `notional == 0`.
+    ZeroNotional = 21,
+    /// `strike_var == 0`.
+    InvalidStrike = 22,
+    /// `cap_var <= strike_var` or `cap_var` above [`crate::MAX_CAP_VAR`].
+    InvalidCap = 23,
+    /// `notional × ε >= 2^64`: the realized variance error bound could move a payout by an
+    /// atom or more (`docs/PLAN.md` 4.4).
+    NotionalAboveErrorBound = 24,
+    /// The collateral does not fit in a `u64` of atoms.
+    CollateralOverflow = 25,
 }
 
 impl CoreError {
@@ -79,6 +90,11 @@ impl CoreError {
             Self::Overflow => 18,
             Self::Kernel(_) => 19,
             Self::ExponentMismatch => 20,
+            Self::ZeroNotional => 21,
+            Self::InvalidStrike => 22,
+            Self::InvalidCap => 23,
+            Self::NotionalAboveErrorBound => 24,
+            Self::CollateralOverflow => 25,
         }
     }
 }
@@ -107,6 +123,11 @@ impl fmt::Display for CoreError {
             Self::Overflow => "arithmetic overflow",
             Self::Kernel(_) => "return kernel error",
             Self::ExponentMismatch => "print exponent differs from the feed's",
+            Self::ZeroNotional => "notional is zero",
+            Self::InvalidStrike => "strike variance is zero",
+            Self::InvalidCap => "cap variance not above the strike or too large",
+            Self::NotionalAboveErrorBound => "notional too large for the variance error bound",
+            Self::CollateralOverflow => "collateral does not fit in u64 atoms",
         };
         f.write_str(s)
     }

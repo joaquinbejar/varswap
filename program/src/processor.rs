@@ -40,19 +40,23 @@ fn now() -> Result<UnixTimestamp, pinocchio::error::ProgramError> {
 /// upgrade authority, so the first caller after deployment cannot take the program over.
 ///
 /// Accounts: admin (signer), payer (signer, writable), config (writable), program data,
-/// system program.
+/// system program. Payload [`crate::layout::InitConfigArgs`]: the collateral mint.
 ///
 /// # Errors
 ///
 /// Missing signature, not writable, wrong system program, the `ProgramData` gate
-/// ([`loader::check_upgrade_authority`]), wrong config PDA, or an existing config.
+/// ([`loader::check_upgrade_authority`]), wrong config PDA, a zero mint, or an existing
+/// config.
 #[inline(never)]
 pub fn init_config(
     program_id: &Address,
     accounts: &mut [AccountView],
     payload: &[u8],
 ) -> ProgramResult {
-    no_args(payload)?;
+    let a: crate::layout::InitConfigArgs = args(payload)?;
+    if a.collateral_mint == [0; 32] {
+        return Err(VarswapError::InvalidMint.into());
+    }
     let [admin, payer, config, program_data, system, ..] = accounts else {
         return Err(VarswapError::NotEnoughAccounts.into());
     };
@@ -79,6 +83,7 @@ pub fn init_config(
         &ConfigData {
             hdr: hdr(CONFIG_TAG, bump),
             admin: admin.address().to_bytes(),
+            collateral_mint: a.collateral_mint,
         },
     )
 }

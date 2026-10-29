@@ -54,6 +54,78 @@ fn bitmap_words(buckets: u32) -> Result<usize, CoreError> {
     usize::try_from(words).map_err(|_| CoreError::Overflow)
 }
 
+/// A validated window's spec, state and realized variance (raw, `Finalized` only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowInfo {
+    /// The window's spec.
+    pub spec: WindowSpec,
+    /// Its state.
+    pub state: WindowState,
+    /// Annualized realized variance when `Finalized`.
+    pub realized_var: Option<u128>,
+}
+
+fn word_at(data: &[u8], i: usize) -> Result<u64, CoreError> {
+    let off = i
+        .checked_mul(8)
+        .and_then(|o| o.checked_add(HEADER_LEN))
+        .ok_or(CoreError::Overflow)?;
+    data.get(off..)
+        .and_then(|s| s.first_chunk::<8>())
+        .map(|b| u64::from_le_bytes(*b))
+        .ok_or(CoreError::InvalidAccountData)
+}
+
+/// Header, spec and bitmap validation shared by [`Window::load`] and [`Window::inspect`]:
+/// tag, version, padding, spec (as [`WindowSpec::try_new`]), exact size, state, `filled`
+/// equal to the bits set (none past `B`), and the state consistent with `filled`. Linear in
+/// the bitmap words (at most 18), not in the buckets.
+fn validate(data: &[u8]) -> Result<(WindowHeader, WindowSpec, u32), CoreError> {
+    let head = data
+        .get(..HEADER_LEN)
+        .ok_or(CoreError::InvalidAccountData)?;
+    let header: WindowHeader = bytemuck::pod_read_unaligned(head);
+    if header.hdr.tag != WINDOW_TAG
+        || header.hdr.version != WINDOW_VERSION
+        || header.hdr._pad != [0; 5]
+        || header._pad != [0; 3]
+    {
+        return Err(CoreError::InvalidAccountData);
+    }
+    let spec = WindowSpec::from_raw(&header.spec).map_err(|_| CoreError::InvalidAccountData)?;
+    let buckets = spec.buckets()?;
+    if data.len() != window_size(buckets)? {
+        return Err(CoreError::InvalidAccountData);
+    }
+    let state = WindowState::try_from(header.state)?;
+    // A filled bucket's price is validated when it is read ([`Window::price`]).
+    let words = bitmap_words(buckets)?;
+    let mut set = 0u32;
+    for i in 0..words {
+        set = set
+            .checked_add(word_at(data, i)?.count_ones())
+            .ok_or(CoreError::Overflow)?;
+    }
+    // Bits past B in the last bitmap word must be clear.
+    let tail = buckets.checked_rem(WORD_BITS).ok_or(CoreError::Overflow)?;
+    if tail != 0 {
+        let last = word_at(data, words.checked_sub(1).ok_or(CoreError::Overflow)?)?;
+        if last.checked_shr(tail).unwrap_or(0) != 0 {
+            return Err(CoreError::InvalidAccountData);
+        }
+    }
+    let consistent = match state {
+        WindowState::Pending => set == 0,
+        WindowState::Sampling => set > 0,
+        WindowState::Finalized => set == buckets,
+        WindowState::Degraded => set < buckets,
+    };
+    if set != header.filled || !consistent {
+        return Err(CoreError::InvalidAccountData);
+    }
+    Ok((header, spec, buckets))
+}
+
 /// A window account opened over its bytes. Reads copy the header out (no alignment
 /// requirement on `data`); every mutation validates first and writes last, so a rejected
 /// call leaves the bytes untouched.
@@ -126,56 +198,32 @@ impl<'a> Window<'a> {
     ///
     /// [`CoreError::InvalidAccountData`] on any mismatch.
     pub fn load(data: &'a mut [u8]) -> Result<Self, CoreError> {
-        let head = data
-            .get(..HEADER_LEN)
-            .ok_or(CoreError::InvalidAccountData)?;
-        let header: WindowHeader = bytemuck::pod_read_unaligned(head);
-        if header.hdr.tag != WINDOW_TAG
-            || header.hdr.version != WINDOW_VERSION
-            || header.hdr._pad != [0; 5]
-            || header._pad != [0; 3]
-        {
-            return Err(CoreError::InvalidAccountData);
-        }
-        let spec = WindowSpec::from_raw(&header.spec).map_err(|_| CoreError::InvalidAccountData)?;
-        let buckets = spec.buckets()?;
-        if data.len() != window_size(buckets)? {
-            return Err(CoreError::InvalidAccountData);
-        }
-        let state = WindowState::try_from(header.state)?;
-        let w = Self {
+        let (header, spec, buckets) = validate(data)?;
+        Ok(Self {
             data,
             header,
             spec,
             buckets,
-        };
-        // O(words), not O(buckets): load runs on every instruction. A filled bucket's price
-        // is validated when it is read ([`Window::price`]).
-        let words = bitmap_words(buckets)?;
-        let mut set = 0u32;
-        for i in 0..words {
-            set = set
-                .checked_add(w.word(i)?.count_ones())
-                .ok_or(CoreError::Overflow)?;
-        }
-        // Bits past B in the last bitmap word must be clear.
-        let tail = buckets.checked_rem(WORD_BITS).ok_or(CoreError::Overflow)?;
-        if tail != 0 {
-            let last = w.word(words.checked_sub(1).ok_or(CoreError::Overflow)?)?;
-            if last.checked_shr(tail).unwrap_or(0) != 0 {
-                return Err(CoreError::InvalidAccountData);
-            }
-        }
-        let consistent = match state {
-            WindowState::Pending => set == 0,
-            WindowState::Sampling => set > 0,
-            WindowState::Finalized => set == buckets,
-            WindowState::Degraded => set < buckets,
-        };
-        if set != header.filled || !consistent {
-            return Err(CoreError::InvalidAccountData);
-        }
-        Ok(w)
+        })
+    }
+
+    /// Reads a window without borrowing it mutably, with the same validation as
+    /// [`Window::load`]: what swap instructions need from a window they do not write.
+    ///
+    /// # Errors
+    ///
+    /// [`CoreError::InvalidAccountData`] on any mismatch.
+    pub fn inspect(data: &[u8]) -> Result<WindowInfo, CoreError> {
+        let (header, spec, _) = validate(data)?;
+        let state = WindowState::try_from(header.state)?;
+        Ok(WindowInfo {
+            spec,
+            state,
+            realized_var: match state {
+                WindowState::Finalized => Some(u128::from_le_bytes(header.realized_var)),
+                _ => None,
+            },
+        })
     }
 
     /// The window's spec.

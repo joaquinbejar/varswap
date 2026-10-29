@@ -9,7 +9,7 @@
 use bytemuck::{Pod, Zeroable};
 use varswap_core::layout::Hdr;
 
-/// `Config` account at PDA `["config"]`, 40 bytes.
+/// `Config` account at PDA `["config"]`, 72 bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable)]
 #[repr(C)]
 pub struct ConfigData {
@@ -17,6 +17,76 @@ pub struct ConfigData {
     pub hdr: Hdr,
     /// The only signer allowed to write feed configs.
     pub admin: [u8; 32],
+    /// The only mint swaps collateralize in (USDC on mainnet).
+    pub collateral_mint: [u8; 32],
+}
+
+/// `init_config` payload, 32 bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable)]
+#[repr(C)]
+pub struct InitConfigArgs {
+    /// The collateral mint, nonzero.
+    pub collateral_mint: [u8; 32],
+}
+
+/// `Swap` account at PDA `["swap", window, long, short, swap_index_le]`, 288 bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable)]
+#[repr(C)]
+pub struct SwapData {
+    /// Prefix; tag [`crate::state::SWAP_TAG`], bump of the swap PDA.
+    pub hdr: Hdr,
+    /// The window the swap settles on.
+    pub window: [u8; 32],
+    /// The long party (receives `realized − strike`).
+    pub long: [u8; 32],
+    /// The short party.
+    pub short: [u8; 32],
+    /// Collateral mint, copied from `Config` at opening.
+    pub mint: [u8; 32],
+    /// Token program, copied at opening (SPL Token).
+    pub token_program: [u8; 32],
+    /// Who paid the rent; receives it back at `close_swap`.
+    pub payer: [u8; 32],
+    /// Atoms per 1.0 of annualized variance.
+    pub notional: u64,
+    /// Disambiguates several swaps between the same parties on the same window.
+    pub swap_index: u64,
+    /// Long collateral, atoms.
+    pub long_collateral: u64,
+    /// Short collateral, atoms.
+    pub short_collateral: u64,
+    /// Long payout, atoms, set at settlement.
+    pub long_payout: u64,
+    /// Short payout, atoms, set at settlement.
+    pub short_payout: u64,
+    /// Strike variance, Q64.64 raw `u128` little endian.
+    pub strike_var: [u8; 16],
+    /// Cap variance, Q64.64 raw `u128` little endian.
+    pub cap_var: [u8; 16],
+    /// [`crate::state::SwapState`] as `u8`.
+    pub state: u8,
+    /// 1 once the long's payout was transferred.
+    pub long_claimed: u8,
+    /// 1 once the short's payout was transferred.
+    pub short_claimed: u8,
+    /// Bump of the `["vault", swap]` PDA.
+    pub vault_bump: u8,
+    /// Explicit padding, zero.
+    pub _pad: [u8; 4],
+}
+
+/// `open_swap` payload, 48 bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable)]
+#[repr(C)]
+pub struct OpenSwapArgs {
+    /// Atoms per 1.0 of annualized variance.
+    pub notional: u64,
+    /// Swap index for the PDA.
+    pub swap_index: u64,
+    /// Strike variance, Q64.64 raw `u128` little endian.
+    pub strike_var: [u8; 16],
+    /// Cap variance, Q64.64 raw `u128` little endian.
+    pub cap_var: [u8; 16],
 }
 
 /// `FeedConfig` account at PDA `["feed", feed_id]`, 96 bytes: the admin's risk parameters for

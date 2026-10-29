@@ -52,6 +52,59 @@ fn window(n: u32, max_buckets: u32) -> (Env, solana_address::Address, u64) {
     (env, window_pda(SOL, START, end, H), c)
 }
 
+/// A funded 2-interval window and the terms of one swap on it (strike 0.01, cap 0.0625).
+fn swap_fixture() -> (Env, Open, [solana_keypair::Keypair; 2]) {
+    use solana_signer::Signer;
+    let (mut env, window) = Env::with_window(2);
+    let (long, short) = (
+        // Fixed keys: the swap PDA's bump search, and so its CU, depends on the parties.
+        solana_keypair::Keypair::new_from_array([0x11; 32]),
+        solana_keypair::Keypair::new_from_array([0x22; 32]),
+    );
+    let usdc = env.usdc;
+    let long_src = env.funded(&usdc, &long.pubkey(), 1_000_000_000_000);
+    let short_src = env.funded(&usdc, &short.pubkey(), 1_000_000_000_000);
+    let open = Open {
+        window,
+        long: long.pubkey(),
+        short: short.pubkey(),
+        payer: env.payer.pubkey(),
+        long_src,
+        short_src,
+        mint: usdc,
+        notional: 1_000_000_000,
+        strike: ONE_VAR / 100,
+        cap: ONE_VAR / 16,
+        index: 0,
+    };
+    (env, open, [long, short])
+}
+
+fn open_cu(env: &mut Env, open: &Open, keys: &[solana_keypair::Keypair; 2]) -> u64 {
+    let p = env.payer.insecure_clone();
+    cu(env.send(&[open.ix()], &[&p, &keys[0], &keys[1]]))
+}
+
+/// A settled swap on a finalized window (prices 100, 100.1, 100).
+fn settled_fixture() -> (Env, Open) {
+    let (mut env, open, keys) = swap_fixture();
+    open_cu(&mut env, &open, &keys);
+    env.set_time(b(2) + 5);
+    for (k, p) in [
+        (0u32, 10_000_000_000i64),
+        (1, 10_010_000_000),
+        (2, 10_000_000_000),
+    ] {
+        env.sample(&open.window, &PriceUpdate::sol(p, b(k) + 1, b(k) - 1))
+            .unwrap();
+    }
+    env.finalize(&open.window).unwrap();
+    let p = env.payer.insecure_clone();
+    env.send(&[ix_settle(&open.window, &open.swap())], &[&p])
+        .unwrap();
+    (env, open)
+}
+
 struct Row {
     name: &'static str,
     note: &'static str,
@@ -152,6 +205,88 @@ const ROWS: &[Row] = &[
             let (mut env, w, _) = window(720, MAX_BUCKETS);
             env.set_time(b(720) + i64::from(BACKFILL) + 1);
             cu(env.finalize(&w))
+        },
+    },
+    Row {
+        name: "open_swap",
+        note: "create swap 288 B and vault 165 B, initialize_account3, two transfer_checked",
+        run: || {
+            let (mut env, open, keys) = swap_fixture();
+            open_cu(&mut env, &open, &keys)
+        },
+    },
+    Row {
+        name: "settle_swap (finalized)",
+        note: "inspect window, V_cons, payouts",
+        run: || {
+            let (mut env, open, keys) = swap_fixture();
+            open_cu(&mut env, &open, &keys);
+            env.set_time(b(2) + 5);
+            for (k, p) in [
+                (0u32, 10_000_000_000i64),
+                (1, 10_010_000_000),
+                (2, 10_000_000_000),
+            ] {
+                env.sample(&open.window, &PriceUpdate::sol(p, b(k) + 1, b(k) - 1))
+                    .unwrap();
+            }
+            env.finalize(&open.window).unwrap();
+            let p = env.payer.insecure_clone();
+            cu(env.send(&[ix_settle(&open.window, &open.swap())], &[&p]))
+        },
+    },
+    Row {
+        name: "settle_swap (degraded)",
+        note: "unwind: each side's collateral",
+        run: || {
+            let (mut env, open, keys) = swap_fixture();
+            open_cu(&mut env, &open, &keys);
+            env.set_time(b(2) + i64::from(BACKFILL) + 1);
+            env.finalize(&open.window).unwrap();
+            let p = env.payer.insecure_clone();
+            cu(env.send(&[ix_settle(&open.window, &open.swap())], &[&p]))
+        },
+    },
+    Row {
+        name: "claim_long",
+        note: "vault PDA check, transfer_checked signed by the swap PDA",
+        run: || {
+            let (mut env, open) = settled_fixture();
+            let p = env.payer.insecure_clone();
+            cu(env.send(
+                &[ix_claim(true, &open.swap(), &open.long_src, &open.mint)],
+                &[&p],
+            ))
+        },
+    },
+    Row {
+        name: "close_swap",
+        note: "empty vault: close_account, close the swap, rent to the payer",
+        run: || {
+            let (mut env, open) = settled_fixture();
+            let p = env.payer.insecure_clone();
+            env.send(
+                &[ix_claim(true, &open.swap(), &open.long_src, &open.mint)],
+                &[&p],
+            )
+            .unwrap();
+            env.send(
+                &[ix_claim(false, &open.swap(), &open.short_src, &open.mint)],
+                &[&p],
+            )
+            .unwrap();
+            let payer = open.payer;
+            let mint = open.mint;
+            let payer_token = env.funded(&mint, &payer, 0);
+            cu(env.send(
+                &[ix_close(
+                    &open.swap(),
+                    &open.payer,
+                    &payer_token,
+                    &open.mint,
+                )],
+                &[&p],
+            ))
         },
     },
 ];

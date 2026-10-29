@@ -115,10 +115,10 @@ pub enum VarswapError {
 
 | Account | Seeds | Owner | Size | Written by |
 | --- | --- | --- | --- | --- |
-| `Config` | `["config"]` | varswap | 40: `Hdr` + admin (M3a; swap fields join in milestone 4) | admin |
+| `Config` | `["config"]` | varswap | 72: `Hdr` + admin + collateral mint (set by `init_config`) | admin |
 | `FeedConfig` | `["feed", feed_id]` | varswap | 96 (`program::layout::FeedConfigData`) | admin: risk parameters per feed (receiver program id, min_interval, tolerance, max_conf, backfill_deadline, max_buckets) |
 | `Window` | `["window", feed_id, start_le, end_le, interval_le]` | varswap | `144 + 8 × ceil((N + 1) / 64) + 9 × (N + 1)`: 6,729 bytes for 721 buckets (sketch, see below) | `create_window` (anyone), `sample` (anyone), `finalize` (anyone) |
-| `Swap` | `["swap", window, long, short, swap_index_le]` | varswap | 8 + 32×3 + 8×4 + 1 + 8×2 + 2 = ~162 | `open_swap`, `settle_swap`, `claim_*` (payouts and claimed flags, +18 bytes) |
+| `Swap` | `["swap", window, long, short, swap_index_le]` | varswap | 288 (`program::layout::SwapData`: window, long, short, mint, token program, payer; notional, index, collateral and payouts; strike and cap as Q64.64 bytes; state, claim flags, vault bump) | `open_swap`, `settle_swap`, `claim_*` |
 | Collateral vault | `["vault", swap]` PDA token account (system create + `initialize_account3`) | SPL Token | 165 | token CPIs only |
 
 ```rust
@@ -161,15 +161,15 @@ buffer is needed.
 
 | # | Instruction | Signers | Accounts |
 | --- | --- | --- | --- |
-| 0 | `init_config` | admin (the program's upgrade authority), payer | config (w), program_data, system |
+| 0 | `init_config` | admin (the program's upgrade authority), payer | config (w), program_data, system; payload: the collateral mint, immutable afterwards (no setter, by design) |
 | 0b | `set_feed_config` | admin, payer (on create) | config, feed_config (w), system: creates or overwrites; validates `max_conf`, `tolerance > 0`, `backfill_deadline > 0`, `max_buckets <= MAX_BUCKETS` (3.1) |
 | 1 | `create_window` | payer | feed_config, window (w), system (the feed and its risk parameters come from `feed_config`) |
 | 2 | `sample` | anyone (payer of fee only) | window (w), price_update (Pyth receiver account); clock from the syscall; return data and an event per accepted sample |
 | 3 | `finalize` | anyone | window (w); clock from the syscall |
-| 4 | `open_swap` | long, short, payer | window, swap (w), vault (w), long_usdc (w), short_usdc (w), usdc_mint, token program, system |
+| 4 | `open_swap` | long, short, payer | config, window, swap (w), vault (w), long_usdc (w), short_usdc (w), usdc_mint (the config's), token program (SPL Token), system |
 | 5 | `settle_swap` | anyone | window, swap (w): computes and stores both payouts, state `Settled`; moves no tokens |
 | 5b | `claim_long` / `claim_short` | anyone | swap (w), vault (w), that side's USDC account (w), usdc_mint, token program: pays one side only, so a frozen USDC account on one side never blocks the other |
-| 6 | `close_swap` | anyone after both sides claimed (a permanently frozen side leaves the rent locked; accepted) | swap (w), vault (w), rent receiver = payer recorded in swap |
+| 6 | `close_swap` | anyone after both sides claimed, from the swap's flags (a permanently frozen side leaves the rent locked; accepted) | swap (w), vault (w), rent receiver = payer recorded in swap, the payer's token account of the swap's mint (w), mint, token program: any vault balance left (a donation, which would make SPL Token refuse the close) goes to the payer's token account first (codex review of #12) |
 
 ### 3.3 Security checks
 
@@ -222,7 +222,10 @@ buffer is needed.
 Binding: a `Window` copies its `FeedConfig` (receiver program id, feed, risk parameters) at
 creation and a `Swap` stores its collateral mint and token program; `sample`, `settle_swap`
 and `claim_*` read only those copies, never mutable global config. Tested by mutating
-`Config` and `FeedConfig` mid-life.
+`FeedConfig` after a window's creation (receiver, guard, confidence and exponent). The
+collateral mint in `Config` is immutable by design (decided 2026-10-29): `init_config` sets it
+once and no instruction changes it, which is safer than a setter, so there is no `Config`
+mutation to test.
 
 ### 4.1 Who pushes samples, and manipulation resistance
 
@@ -523,7 +526,18 @@ to build test accounts and to cross-check the decoder.
      (`docs/benchmarks.md`).
    - The replay from real SOL/USD prints moves to milestone 6, where keepers need Hermes
      access anyway (verified facts, 2026-10-29).
-4. **Swaps.** `open_swap`, `settle_swap`, `close_swap`. *Done when* conservation
+4. **Swaps.** `open_swap`, `settle_swap`, `close_swap`. Status (milestone 4a, 2026-10-29):
+   done except plan (B) of 4.4, which waits for the optfix rev with the public widening
+   multiply. `varswap_core::SwapTerms` holds the math (collateral rounded up, the long's gain
+   floored and loss ceiled, clamped to `[0, total]`, unwind returns each collateral, the
+   error-bound gate); `settle_swap` pays on `LnKernel::conservative_realized_var`. Program
+   error codes are now 100 to 139, `140 +` `PythError`, `160 +` `CoreError::code`, `220 +`
+   kernel payload; the full table is `docs/errors.md`. Tests: core proptest (conservation, monotone payout, gain floored) over
+   realized in `[0, 2 × cap]` at notionals up to the gate, the decimal `V_cons` fixture run
+   through `SwapTerms::payouts`, and LiteSVM tests for every account rule (forged config,
+   window, mint, token accounts, swap and vault PDAs, token and system programs), the gate at
+   the limit and above, claims in both orders and with either side frozen, close with the
+   rent refund, and full cycles on calm, volatile and above-cap paths. *Done when* conservation
    (`payouts == collateral`) holds in proptest across realized in `[0, 2 × cap]`, degraded and
    unwind paths are tested, `claim_long` and `claim_short` are tested in both orders and with
    either side's USDC account frozen (the other side still claims), every forged account

@@ -2,21 +2,21 @@
 //!
 //! | Range | Source |
 //! | --- | --- |
-//! | 100..=119 | [`VarswapError`] (account and instruction validation) |
-//! | 120..=139 | `120 +` the [`PythError`] discriminant |
-//! | 140..=199 | `140 +` [`CoreError::code`] |
-//! | 200..=255 | `200 +` the payload of [`CoreError::Kernel`] |
+//! | 100..=139 | [`VarswapError`] (account and instruction validation) |
+//! | 140..=159 | `140 +` the [`PythError`] discriminant |
+//! | 160..=219 | `160 +` [`CoreError::code`] |
+//! | 220..=255 | `220 +` the payload of [`CoreError::Kernel`] |
 
 use pinocchio::error::ProgramError;
 use pyth_lite::PythError;
 use varswap_core::CoreError;
 
 /// First code of the `PythError` range.
-pub const PYTH_BASE: u32 = 120;
+pub const PYTH_BASE: u32 = 140;
 /// First code of the `CoreError` range.
-pub const CORE_BASE: u32 = 140;
+pub const CORE_BASE: u32 = 160;
 /// First code of the kernel error range.
-pub const KERNEL_BASE: u32 = 200;
+pub const KERNEL_BASE: u32 = 220;
 
 /// Account and instruction validation errors of the program.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -48,6 +48,30 @@ pub enum VarswapError {
     InvalidFeedConfig = 111,
     /// `create_window` interval below the feed's `min_interval`.
     IntervalBelowMinimum = 112,
+    /// `settle_swap` on a window that is neither `Finalized` nor `Degraded`.
+    WindowNotFinal = 113,
+    /// `open_swap` once the window's sampling started (`now >= start`) or it is final.
+    WindowStarted = 114,
+    /// `settle_swap` on a swap already settled.
+    SwapAlreadySettled = 115,
+    /// A claim on a swap not settled yet.
+    SwapNotSettled = 116,
+    /// That side already claimed.
+    AlreadyClaimed = 117,
+    /// `close_swap` before both sides claimed.
+    NotClaimed = 118,
+    /// The mint is not the configured collateral mint, or not the swap's.
+    InvalidMint = 119,
+    /// The token program is not SPL Token, or not the swap's.
+    InvalidTokenProgram = 120,
+    /// A token account of the wrong mint or owner.
+    InvalidTokenAccount = 121,
+    /// The vault is not the swap's `["vault", swap]` PDA.
+    InvalidVault = 122,
+    /// The window is not the swap's.
+    WrongWindow = 123,
+    /// The rent receiver is not the payer recorded in the swap.
+    WrongReceiver = 124,
 }
 
 impl From<VarswapError> for ProgramError {

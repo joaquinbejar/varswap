@@ -17,7 +17,7 @@
 mod common;
 
 use common::*;
-use varswap_core::{LnKernel, Seconds, UnixTimestamp, Window, WindowState};
+use varswap_core::{LnKernel, Seconds, Settlement, SwapTerms, UnixTimestamp, Window, WindowState};
 
 struct Case {
     interval: u32,
@@ -70,10 +70,18 @@ fn realized(c: &Case) -> u128 {
     w.realized_var().unwrap().unwrap()
 }
 
-/// The milestone 4 long payout with strike 1.0 and exact collateral:
-/// floor(notional × min(V, cap) / 2^64).
+/// The long payout of the production settlement, [`SwapTerms::payouts`], strike 1.0 (exact
+/// collateral `notional`): it equals floor(notional × min(V, cap) / 2^64), which the test
+/// also asserts.
 fn long_payout(c: &Case, v: u128) -> u128 {
-    (c.notional * v.min(c.cap)) >> 64
+    let notional = u64::try_from(c.notional).unwrap();
+    let terms = SwapTerms::try_new(notional, 1 << 64, c.cap, Seconds::new(c.interval)).unwrap();
+    assert_eq!(u128::from(terms.long_collateral()), c.notional);
+    let (long, short) = terms.payouts(Settlement::Realized(v)).unwrap();
+    assert_eq!(long + short, terms.total().unwrap());
+    let long = u128::from(long);
+    assert_eq!(long, (c.notional * v.min(c.cap)) >> 64);
+    long
 }
 
 #[test]
