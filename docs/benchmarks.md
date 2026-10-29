@@ -8,13 +8,13 @@ Toolchain: cargo-build-sbf 4.5.0, Default platform-tools: v1.57, Default Rust: 1
 | Instruction | CU | Without events | Event log | Scenario |
 | --- | ---: | ---: | ---: | --- |
 | `init_config` | 7605 | 7605 | 0 | find_program_address, ProgramData gate, create 40 B |
-| `set_feed_config (create)` | 4735 | 4735 | 0 | find_program_address, create 96 B |
+| `set_feed_config (create)` | 4733 | 4733 | 0 | find_program_address, create 96 B |
 | `set_feed_config (update)` | 3501 | 3501 | 0 | re-derive with stored bump |
-| `create_window (B = 25)` | 7833 | 7833 | 0 | 1 day hourly, 369 B |
-| `create_window (B = 721)` | 6861 | 6861 | 0 | 30 days hourly, 6,729 B |
-| `create_window (B = 1,105)` | 7149 | 7149 | 0 | MAX_BUCKETS, 10,233 B (CPI cap 10,240) |
-| `sample (no neighbour)` | 3413 | 2760 | 653 | B = 721, first bucket, no kernel call |
-| `sample (both neighbours)` | 6616 | 5885 | 731 | B = 721, bucket 360 between two filled: 2 kernel calls |
-| `sample (outage run of 6)` | 7266 | 6535 | 731 | B = 721, one print fills 6 buckets (the 6 h guard maximum), 2 kernel calls |
-| `finalize (complete)` | 1073 | 1073 | 0 | B = 25, all filled: annualize |
-| `finalize (degraded)` | 1252 | 1252 | 0 | B = 721, empty after the deadline |
+| `create_window (B = 25)` | 7850 | 7850 | 0 | 1 day hourly, 369 B |
+| `create_window (B = 721)` | 6878 | 6878 | 0 | 30 days hourly, 6,729 B |
+| `create_window (B = 1,105)` | 7166 | 7166 | 0 | MAX_BUCKETS, 10,233 B (CPI cap 10,240) |
+| `sample (no neighbour)` | 3425 | 2770 | 655 | B = 721, first bucket, no kernel call |
+| `sample (both neighbours)` | 6627 | 5894 | 733 | B = 721, bucket 360 between two filled: 2 kernel calls |
+| `sample (outage run of 6)` | 7277 | 6544 | 733 | B = 721, one print fills 6 buckets (the 6 h guard maximum), 2 kernel calls |
+| `finalize (complete)` | 1080 | 1080 | 0 | B = 25, all filled: annualize |
+| `finalize (degraded)` | 1260 | 1260 | 0 | B = 721, empty after the deadline |

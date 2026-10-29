@@ -343,3 +343,52 @@ fn test_realized_var_error_bound_worst_case_numbers() {
         Err(varswap_core::CoreError::ZeroInterval)
     );
 }
+
+/// Codex's counterexample (coordinator #36437): a one-year interval, `N = 1`, exponent 0.
+/// The computed variance is 0.2 raw units above the exact one, and that is enough for the
+/// floored long payout to cross an atom boundary: +1 atom against the short on `V`, none on
+/// `V_cons = max(0, V − ε)`.
+#[test]
+fn test_regression_ln_error_crosses_atom_boundary_without_v_cons() {
+    const P0: u64 = 2_501_942_101_381_778_875;
+    const P1: u64 = 5_161_686_394_897_806_096;
+    const NOTIONAL: u128 = 399_829_521_432_443_555; // atoms per unit variance
+    const STRIKE: u128 = 1 << 64; // strike variance 1.0
+    const CAP: u128 = 25 << 64;
+    // Exact V raw = 9_674_578_593_639_773_023.798… (80-digit decimal); the exact long payout
+    // floor(NOTIONAL × V_exact / 2^64):
+    const EXACT_PAYOUT: u128 = 209_694_573_400_002_746;
+
+    let year = YEAR_SECONDS as u32;
+    let s = spec_exp(1_000_000, year, 1, year, 86_400, 0);
+    let mut data = vec![0u8; varswap_core::window_size(2).unwrap()];
+    let mut w = Window::init(&mut data, s, 0).unwrap();
+    let now = s.deadline().unwrap();
+    for (k, p) in [(0, P0), (1, P1)] {
+        let bk = s.boundary(k).unwrap().get();
+        w.sample(&print(p, 0, bk + 1, bk - 1), now, &LnKernel)
+            .unwrap();
+    }
+    w.finalize(UnixTimestamp::new(now.get() + 1), &LnKernel)
+        .unwrap();
+    let v = w.realized_var().unwrap().unwrap();
+    assert_eq!(v, 9_674_578_593_639_773_024);
+    let eps = LnKernel::realized_var_error_bound(Seconds::new(year), CAP, 0).unwrap();
+    assert_eq!(eps, 46);
+
+    // The milestone 4 payout: long collateral NOTIONAL × STRIKE (exact here), plus
+    // NOTIONAL × (min(V, cap) − STRIKE), floored; with STRIKE = 1 that is
+    // floor(NOTIONAL × min(V, cap) / 2^64).
+    let long_payout = |var: u128| {
+        let v = var.min(CAP);
+        let collateral = NOTIONAL * STRIKE;
+        (collateral + NOTIONAL * v - NOTIONAL * STRIKE) >> 64
+    };
+    // On the computed V the long gets one atom more than on the exact variance.
+    assert_eq!(long_payout(v), EXACT_PAYOUT + 1);
+    // On V_cons it never exceeds the exact payout.
+    let cons = LnKernel::conservative_realized_var(v, Seconds::new(year), CAP, 0).unwrap();
+    assert_eq!(cons, v - 46);
+    assert!(long_payout(cons) <= EXACT_PAYOUT);
+    assert_eq!(long_payout(cons), EXACT_PAYOUT);
+}
