@@ -1993,6 +1993,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
+name = "optfix"
+version = "0.1.0"
+source = "git+https://github.com/joaquinbejar/optfix?rev=fd1e81c5726c0b0a0e6e252f497f821cbcf92b97#fd1e81c5726c0b0a0e6e252f497f821cbcf92b97"
+dependencies = [
+ "bytemuck",
+]
+
+[[package]]
 name = "pairing"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4690,6 +4698,7 @@ name = "varswap-core"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "optfix",
  "proptest",
  "pyth-lite",
  "varswap-core",

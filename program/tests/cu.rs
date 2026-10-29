@@ -183,9 +183,8 @@ fn cu_table() {
     writeln!(out).unwrap();
     writeln!(
         out,
-        "Milestone 3a: `sample` and `finalize` run the exact integer stand-in kernel \
-         (`varswap_core::IntegerKernel`); their rows change when milestone 1b plugs in optfix \
-         `ln`. \"Without events\" is the same program built with `--no-default-features` (no \
+        "`sample` runs `varswap_core::LnKernel` (two optfix `ln` calls per squared log \
+         return). \"Without events\" is the same program built with `--no-default-features` (no \
          `sample` event log); the event column is the difference. PDA creation costs vary with \
          the number of bumps `find_program_address` tries for that address."
     )

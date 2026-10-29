@@ -16,6 +16,7 @@ insecure-test-kernel = []
 
 [dependencies]
 bytemuck = { workspace = true }
+optfix = { workspace = true }
 pyth-lite = { workspace = true }
 
 [dev-dependencies]

@@ -93,6 +93,7 @@ pub mod code {
     pub const BACKFILL_CLOSED: u32 = 154;
     pub const WINDOW_FINAL: u32 = 155;
     pub const FINALIZE_TOO_EARLY: u32 = 156;
+    pub const EXPONENT_MISMATCH: u32 = 160;
     pub const CORE_INVALID_ACCOUNT_DATA: u32 = 157;
 }
 
@@ -259,7 +260,8 @@ pub fn feed_args(feed: [u8; 32]) -> SetFeedConfigArgs {
         backfill_deadline: BACKFILL,
         max_buckets: MAX_BUCKETS,
         max_conf: MAX_CONF,
-        _pad: [0; 2],
+        exponent: -8,
+        _pad: [0; 1],
     }
 }
 

@@ -200,9 +200,10 @@ buffer is needed.
   return over 4 intervals.
   Floors and ceilings use `checked_div_euclid` (`prev_publish_time − start` is negative for
   the print that fills `b_0`; truncating division would be off by one; test `b_0`), and
-  `k_lo > k_hi` is the typed error `NotOnGrid`, never a no-op. Each print converts to `Fixed` with its own
-  exponent (log returns are scale invariant), so a Pyth exponent change mid-window does not
-  brick it. Clock read with the Pinocchio syscall.
+  `k_lo > k_hi` is the typed error `NotOnGrid`, never a no-op. The print's exponent must equal the
+  exponent the window copied from its `FeedConfig` (`ExponentMismatch` otherwise; 4.4): an
+  exponent change, which only a Pyth admin re-init causes, degrades the window instead of
+  widening the error bound. Clock read with the Pinocchio syscall.
 - `open_swap`: both parties sign; window not finalized and `now < window.start` (no opening
   after sampling begins, so nobody trades on known returns); swap PDA; vault is the `["vault", swap]` PDA token account
   for the swap's USDC mint; collateral amounts recomputed on-chain, not trusted
@@ -330,7 +331,14 @@ needed: the price array already holds the whole window.
 ### 4.3 Missing data
 
 With canonical backfill, a bucket is missing only if nobody posts it before
-`end + backfill_deadline` or its canonical print failed the confidence filter. v1 policy is
+`end + backfill_deadline`, or it has no acceptable canonical print. The unwind triggers are:
+- no canonical print within the outage guard (a halt longer than `tolerance`, 4.1);
+- the canonical print fails the confidence sanity bound (4.1);
+- the canonical print is the first after a Pyth `init_price` (`prev_publish_time = 0`, 3.3);
+- the canonical print's exponent differs from the one the window pinned, which only a Pyth
+  admin re-init causes (3.3, 4.4);
+- a VAA that nobody verified within 24 h of a guardian set rotation (4.1);
+- nobody posts the print before the deadline. v1 policy is
 strict and honest about the payoff: the contract is "sum of squared log returns between
 consecutive grid points from `b_0` to `b_N`". If any bucket (including either endpoint) is
 missing at the deadline, the window is `Degraded` and every swap on it unwinds: each side
@@ -354,6 +362,74 @@ rounding end with the short (2 from rounding collateral up, 1 from rounding the 
 down). Documented
 as "rounding toward the short", a deliberate, symmetric-enough choice that keeps the
 conservation invariant trivial; open question 4.
+
+Realized variance error (milestone 1b, decided 2026-10-29). optfix `ln` is within 2 ulp
+(`2^-64`) and rounds to nearest, so its error is undirected. Per squared log return the error
+is at most `2 |r| δr + 3` raw units, `δr = 4 + |Δe|` (two `ln` calls plus the half-ulp
+`ln 10` constant scaled by the exponent change; `LnKernel::term_error_bound`, checked per term
+by the GBM proptest). Over a complete window, by Cauchy–Schwarz, the realized variance error
+is at most
+
+`ε(interval, cap) = 2 δr √(cap × Y) + 3 Y + 2` raw units, `Y = ceil(YEAR_SECONDS / interval)`,
+
+independent of the number of buckets (`LnKernel::realized_var_error_bound`; derivation in its
+docs). The payoff reads `min(realized, cap_var)`, so the bound is evaluated at `cap_var`.
+
+The exponent is pinned (coordinator, 2026-10-29): `FeedConfig` records the feed's Pyth
+exponent, every window copies it, and `sample` rejects a print with another one
+(`ExponentMismatch`), so `Δe = 0` and `δr = 4`. Pyth changes a feed's exponent only through an
+admin `init_price` (feed creation or re-init; the same event that yields the
+`prev_publish_time = 0` print rejected in 3.3). After such a change no print can fill the
+window's remaining buckets, so it degrades and its swaps unwind; the admin updates
+`FeedConfig` for new windows. A liveness cost on a rare admin event, not a safety one. With
+`cap_var = 25` (500% vol):
+
+| Interval | ε (raw) | ε (variance) | Max notional for ε < 1 atom (atoms per unit variance) |
+| --- | ---: | ---: | ---: |
+| 1 s | 94,832,630 | `5.1 × 10^-12` | `1.95 × 10^11` (195k USDC) |
+| 60 s | 1,605,802 | `8.7 × 10^-14` | `1.15 × 10^13` (11.5M USDC) |
+| 3,600 s | 30,026 | `1.6 × 10^-15` | `6.14 × 10^14` (614M USDC) |
+
+Unpinned (`Δe` up to 255) the 60 s row would be 3,454,508 raw (5.3M USDC). At short intervals
+the `3 Y` term dominates: one raw unit of `mul_down` truncation per term plus the bound's own
+round-up.
+
+**Milestone 4 plan (B), approved 2026-10-29:** accumulate `sum_sq` at `2^-96` instead of
+`2^-64`: each term is the 256-bit product `r × r` shifted to `2^-96` (rounded down), so the
+per-term truncation falls from `2^-64` to `2^-96` and the `3 Y` term to about `2^-32 × 3 Y`;
+the `u128` sum still holds `2^32` units of `Σ r²`. `annualize` converts back to Q64.64
+(rounded down). The widening multiply-and-shift comes from optfix as a public, reviewed
+function (requested by the coordinator), not a copy; milestone 4 pins that optfix rev and
+regenerates this table with exact limits from `realized_var_error_bound`.
+
+**Which case applies: the bound is applied in the short's favour (codex review of #11).**
+A payoff error under one atom is not enough by itself: the payout is floored in atoms, and a
+tiny positive `ln` error can still push the long's payout across an atom boundary, one atom
+against the short (codex's counterexample, now a regression test). So payouts settle on the
+conservative variance `V_cons = max(0, V − ε(window.interval, cap_var))`
+(`LnKernel::conservative_realized_var`), taken before the cap and before the floor.
+
+- Guarantee, on the capped values: `min(V_cons, cap) <= min(V_exact, cap)`: **the long is
+  never overpaid**. When `V_exact < cap`, the kernel's uncapped bound `|V − V_exact| <= ε(cap)`
+  gives `V_cons <= V_exact`; when `V_exact >= cap` the right side is `cap` and the inequality
+  is immediate (a capped absolute-error bound alone would not give the direction). Above the cap the
+  uncapped `V_cons <= V_exact` need not hold; the payout never reads it.
+- Budget: the `ln` error is within `±ε` and `ε` is then subtracted, so the short gains at most
+  `2ε × notional` from the bound, plus at most one atom from the payout's floor. The notional
+  limit stays at `notional × ε < 2^64` (coordinator, 2026-10-29: capacity matters more than
+  atoms of `10^-6` USDC), so **the short's advantage is under three atoms per swap**: under
+  two from the bound, at most one from the floor.
+- Checked exactly against a 100-digit decimal reference (`varswap-core/tools/vcons_fixtures.py`,
+  603 cases committed in `tests/fixtures/vcons.txt`, codex's three counterexamples included:
+  the atom crossing, an above-cap case where the uncapped `V_cons > V_exact`, and a 2-atom
+  short advantage), at the largest notional the limit allows: `|min(V, cap) − min(V_exact,
+  cap)| <= ε`, `min(V_cons, cap) <= min(V_exact, cap)`, the long never overpaid, the short's
+  advantage at most 2 whole atoms below the exact payout's floor (under 3 against the exact
+  payout), and `ε` equal to an independent Python replica. The GBM proptest checks the same
+  quantities' magnitudes in f64 (a mutation subtracting `4ε` fails it at 4.5 atoms).
+
+The directed parts of the kernel (`r²` and the annualization rounded down) also lower the
+realized variance.
 
 ### 4.5 Annualization
 
@@ -391,9 +467,15 @@ to build test accounts and to cross-check the decoder.
      brute-force reference exactly in filled buckets, prices, `sum_sq`, final state and
      realized variance; canonical runs match brute force; a coverage test checks the
      strategy produces complete and degraded windows, multi-bucket runs and guarded prints.
-   - **1b, after optfix `ln`:** the optfix kernel. *Done when* proptest against an f64
-     reference on simulated GBM paths shows realized variance within the documented bound,
-     and that any gap yields `Degraded`.
+   - **1b, done:** `LnKernel` on optfix `ln` (git dependency pinned at `fd1e81c`, Q64.64):
+     `r = ln(p_to) − ln(p_from) + (e_to − e_from) × ln 10`, each `ln` on a price mantissa,
+     so no ratio can overflow whatever the exponents; `r²` rounded down, annualization
+     rounded down. Error bound per term in 4.4. *Done:* a proptest on GBM paths (σ 5% to
+     300%, drift ±100%, intervals 1 min to 1 day, up to 720 intervals, four price scales)
+     checks every squared return against an f64 `ln_1p` reference within the documented
+     bound plus the reference's own `4 × 2^-53` relative error, that `sum_sq` and the
+     realized variance are exactly the sum of those terms and its annualization, and that
+     dropping any one bucket yields `Degraded`. A mutation of 50 raw units per term fails it.
 
    The workspace carries the shared lint control (`rules/global_rules.md`,
    synced from optfix `afb9d4d`; set up with milestone 2, which ran first; the
@@ -421,7 +503,8 @@ to build test accounts and to cross-check the decoder.
      `insecure-test-kernel` feature, and without it the program is a `compile_error!`, so no
      deployable ELF can be built; `make sbf-control` requires the default `cargo build-sbf`
      to fail with that error. Tests and the bench build with the feature; milestone 1b
-     removes the gate by making the optfix kernel the default. LiteSVM loads it
+     removed the gate by making the optfix kernel the default (the integer kernel stays
+     behind the feature, for `varswap-core`'s own tests). LiteSVM loads it
      through the upgradeable loader. Negative tests with forged accounts for every rule of
      3.3; the `FeedConfig` binding test; the 10,240-byte CPI cap exercised by creating a
      `MAX_BUCKETS` window (10,233 bytes) through the system program CPI. The replay is a
@@ -435,14 +518,22 @@ to build test accounts and to cross-check the decoder.
      `varswap:sample first= last= publish_time= price= expo=` (pinocchio-log); the event's
      CU is measured separately in `docs/benchmarks.md`. The `added` field was dropped after
      measuring it (4,131 CU for the event with it, most of it formatting the `u128`).
-   - **3b, after milestone 1b:** the optfix kernel on-chain, CU table regenerated.
+   - **3b, done with 1b:** the program runs `LnKernel`; the synthetic replay is byte-identical
+     between SBF and the host; `sample` with two kernel calls is 6,627 CU
+     (`docs/benchmarks.md`).
    - The replay from real SOL/USD prints moves to milestone 6, where keepers need Hermes
      access anyway (verified facts, 2026-10-29).
 4. **Swaps.** `open_swap`, `settle_swap`, `close_swap`. *Done when* conservation
    (`payouts == collateral`) holds in proptest across realized in `[0, 2 × cap]`, degraded and
    unwind paths are tested, `claim_long` and `claim_short` are tested in both orders and with
-   either side's USDC account frozen (the other side still claims), and every forged account
-   is rejected.
+   either side's USDC account frozen (the other side still claims), every forged account
+   is rejected, and `open_swap` rejects `notional × LnKernel::realized_var_error_bound(
+   window.interval, cap_var, 0) >= 2^64` (the realized variance error bound of 4.4, exponent
+   pinned), with a test at the limit and one just above it; `settle_swap` pays on
+   `LnKernel::conservative_realized_var` (`V − ε`, before the cap and the floor), with tests
+   that the long's payout never exceeds the payout on the exact capped variance and that the
+   short's advantage stays under three atoms; `sum_sq` is accumulated at
+   `2^-96` per plan (B) of 4.4 and the 4.4 table is regenerated from it.
 5. **Benchmarks and manipulation study.** *Done when* `docs/benchmarks.md` has CU for every
    instruction and the README has the pusher-bias table and the outage tables from 4.1
    (compression error and unwind frequency per model and per `tolerance`).
@@ -534,7 +625,7 @@ whenever it is added or touched.
 | `pinocchio-system` | 0.7.0 (0.6.1 used) | `0.6`, decided exception below |
 | `pinocchio-token` | 0.7.0 | `0.7`, see conflict below |
 | `rust_decimal` (SDK conversions) | 1.43.0 | `1.43` |
-| `optfix` | unpublished | git, pinned `rev` |
+| `optfix` | unpublished | git, pinned `rev = fd1e81c5726c0b0a0e6e252f497f821cbcf92b97` (optfix M3) |
 | `litesvm-token` (dev) | 0.18.1 | `0.18` |
 | `pyth-solana-receiver-sdk` (dev only, fixtures and cross-check) | 2.0.0 | `2.0` |
 | `anchor-lang` (dev only, pyth-lite cross-check; approved 2026-10-29) | 1.2.2 | `1.2` |

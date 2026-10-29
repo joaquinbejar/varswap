@@ -23,8 +23,8 @@ use solana_address::Address;
 use solana_instruction::AccountMeta;
 use solana_signer::Signer;
 use varswap_core::{
-    window_size, Bps, IntegerKernel, Print, RiskParams, Seconds, UnixTimestamp, Window, WindowSpec,
-    WindowState,
+    window_size, Bps, LnKernel, Print, ReturnKernel, RiskParams, Seconds, UnixTimestamp, Window,
+    WindowSpec, WindowState,
 };
 use varswap_program::layout::SampleResult;
 
@@ -229,7 +229,14 @@ fn test_sample_outage_one_print_fills_run() {
     let mut d = load(&env, &w);
     let win = Window::load(&mut d).unwrap();
     assert_eq!(win.filled(), 5);
-    assert_eq!(win.sum_sq().raw(), 30_000_000u128 * 30_000_000);
+    // One return ln(1.3) over the four intervals b_0..b_4, the run's inner returns zero.
+    let want = varswap_core::LnKernel
+        .squared_log_return(
+            varswap_core::StoredPrice::try_new(100_000_000, -8).unwrap(),
+            varswap_core::StoredPrice::try_new(130_000_000, -8).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(win.sum_sq(), want);
 }
 
 #[test]
@@ -569,6 +576,7 @@ fn test_replay_synthetic_24_samples_matches_off_chain() {
             max_conf: Bps::new(MAX_CONF),
             backfill_deadline: Seconds::new(BACKFILL),
             receiver_program: pyth_lite::RECEIVER_PROGRAM_ID,
+            exponent: -8,
         },
     )
     .unwrap();
@@ -593,20 +601,17 @@ fn test_replay_synthetic_24_samples_matches_off_chain() {
         for u in noise.iter().skip(3 * j).take(3) {
             expect_code(&env.sample(&w, u), code::NOT_ON_GRID);
             assert_eq!(
-                wo.sample(&print(u), now, &IntegerKernel),
+                wo.sample(&print(u), now, &LnKernel),
                 Err(varswap_core::CoreError::NotOnGrid)
             );
         }
         let u = &canonical[i];
         env.sample(&w, u).unwrap();
-        wo.sample(&print(u), now, &IntegerKernel).unwrap();
+        wo.sample(&print(u), now, &LnKernel).unwrap();
     }
     assert_eq!(canonical.len(), 23);
     env.finalize(&w).unwrap();
-    assert_eq!(
-        wo.finalize(now, &IntegerKernel).unwrap(),
-        WindowState::Finalized
-    );
+    assert_eq!(wo.finalize(now, &LnKernel).unwrap(), WindowState::Finalized);
     let mut d = load(&env, &w);
     let on = Window::load(&mut d).unwrap();
     assert_eq!(on.state().unwrap(), WindowState::Finalized);
@@ -637,4 +642,22 @@ fn test_sample_event_logged() {
         )),
         "{line}"
     );
+}
+
+#[test]
+fn test_sample_exponent_mismatch_rejected() {
+    // The SOL feed config pins −8; a print at −7 is the same feed after a Pyth re-init.
+    let (mut env, w) = Env::with_window(24);
+    env.set_time(b(2));
+    let u = PriceUpdate {
+        exponent: -7,
+        ..at(1, 10_000_000)
+    };
+    expect_code(&env.sample(&w, &u), code::EXPONENT_MISMATCH);
+    // The window keeps its copy even if the admin re-pins the feed afterwards.
+    let mut a = feed_args(SOL);
+    a.exponent = -7;
+    env.set_feed(a).unwrap();
+    expect_code(&env.sample(&w, &u), code::EXPONENT_MISMATCH);
+    env.sample(&w, &at(1, 100_000_000)).unwrap();
 }

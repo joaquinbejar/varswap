@@ -4,17 +4,13 @@
 # sBPF target version (cargo-build-sbf's default is v3).
 SBF_ARCH ?= v3
 
-# Milestone 3a: the program only builds with the integer stand-in kernel, a test-only feature
-# (fail closed: the default build is a compile error, checked by sbf-control).
-PROGRAM_FEATURES = --features insecure-test-kernel
-
 .PHONY: all
 all: fmt-check lint test
 
-# Build the workspace (all features: the program needs its test kernel until milestone 1b)
+# Build the workspace
 .PHONY: build
 build:
-	cargo build --workspace --all-features
+	cargo build --workspace
 
 # Build the on-chain crates for SBF (proves they stay no_std with no host-only dependency);
 # fails on any stack frame over 4 KiB (scripts/sbf-build.sh).
@@ -22,23 +18,23 @@ build:
 sbf:
 	@SBF_ARCH=$(SBF_ARCH) sh scripts/sbf-build.sh pyth-lite/Cargo.toml
 	@SBF_ARCH=$(SBF_ARCH) sh scripts/sbf-build.sh varswap-core/Cargo.toml
-	@SBF_ARCH=$(SBF_ARCH) sh scripts/sbf-build.sh program/Cargo.toml $(PROGRAM_FEATURES)
+	@SBF_ARCH=$(SBF_ARCH) sh scripts/sbf-build.sh program/Cargo.toml
 
 # Build the program into target/deploy/varswap_program.so (the LiteSVM tests load it)
 .PHONY: program
 program:
-	@SBF_ARCH=$(SBF_ARCH) sh scripts/sbf-build.sh program/Cargo.toml $(PROGRAM_FEATURES)
+	@SBF_ARCH=$(SBF_ARCH) sh scripts/sbf-build.sh program/Cargo.toml
 
 # Run the program in LiteSVM and regenerate docs/benchmarks.md
 .PHONY: bench
 bench:
-	@SBF_ARCH=$(SBF_ARCH) sh scripts/sbf-build.sh program/Cargo.toml --no-default-features $(PROGRAM_FEATURES)
+	@SBF_ARCH=$(SBF_ARCH) sh scripts/sbf-build.sh program/Cargo.toml --no-default-features
 	cp target/deploy/varswap_program.so target/deploy/varswap_program_no_events.so
-	@SBF_ARCH=$(SBF_ARCH) sh scripts/sbf-build.sh program/Cargo.toml $(PROGRAM_FEATURES)
+	@SBF_ARCH=$(SBF_ARCH) sh scripts/sbf-build.sh program/Cargo.toml
 	VARSWAP_NO_EVENTS_SO=$(CURDIR)/target/deploy/varswap_program_no_events.so \
 	VARSWAP_SBF_TOOLCHAIN="$$(cargo build-sbf --version 2>/dev/null | grep -v 'installed with' | paste -sd ',' - | sed 's/,/, /g'), sBPF $(SBF_ARCH)" \
 	VARSWAP_BENCH_OUT=$(CURDIR)/docs/benchmarks.md \
-	cargo test -p varswap-program --release $(PROGRAM_FEATURES) --test cu -- --nocapture
+	cargo test -p varswap-program --release --test cu -- --nocapture
 
 # Failing controls for scripts/sbf-build.sh: it must reject lint-control/stack-probe (a 6 KB
 # frame, which cargo build-sbf only warns about) and a failing cargo (a missing manifest).
@@ -49,10 +45,7 @@ sbf-control:
 		echo "sbf-control: the stack check accepted a 6 KB frame"; exit 1; fi
 	@out=$$(SBF_ARCH=$(SBF_ARCH) sh scripts/sbf-build.sh lint-control/no-such-crate/Cargo.toml 2>&1); \
 	if [ $$? -eq 0 ]; then echo "sbf-control: a failing cargo passed"; exit 1; fi
-	@out=$$(SBF_ARCH=$(SBF_ARCH) sh scripts/sbf-build.sh program/Cargo.toml 2>&1); \
-	if [ $$? -eq 0 ] || ! printf '%s\n' "$$out" | grep -q 'no production kernel'; then \
-		echo "sbf-control: the default program build did not fail closed"; exit 1; fi
-	@echo "sbf-control: rejects an oversized frame, a failing cargo and a default program build"
+	@echo "sbf-control: rejects an oversized frame and a failing cargo"
 
 # Run every test (the program tests need `make program` first; `pre-push` runs `sbf` before)
 .PHONY: test

@@ -47,6 +47,8 @@ pub enum CoreError {
     Overflow = 18,
     /// The return kernel failed; the payload is its own error code.
     Kernel(u8) = 19,
+    /// The print's exponent is not the one the window pinned (`docs/PLAN.md` 4.4).
+    ExponentMismatch = 20,
 }
 
 impl CoreError {
@@ -76,6 +78,7 @@ impl CoreError {
             Self::InvalidAccountData => 17,
             Self::Overflow => 18,
             Self::Kernel(_) => 19,
+            Self::ExponentMismatch => 20,
         }
     }
 }
@@ -103,6 +106,7 @@ impl fmt::Display for CoreError {
             Self::InvalidAccountData => "invalid window account data",
             Self::Overflow => "arithmetic overflow",
             Self::Kernel(_) => "return kernel error",
+            Self::ExponentMismatch => "print exponent differs from the feed's",
         };
         f.write_str(s)
     }

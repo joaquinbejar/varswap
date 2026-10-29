@@ -275,7 +275,8 @@ impl<'a> Window<'a> {
     /// # Errors
     ///
     /// [`CoreError::WindowFinal`], [`CoreError::BackfillClosed`] if `now > end +
-    /// backfill_deadline`, [`CoreError::WrongFeed`], [`CoreError::NotOnGrid`],
+    /// backfill_deadline`, [`CoreError::WrongFeed`], [`CoreError::ExponentMismatch`],
+    /// [`CoreError::NotOnGrid`],
     /// [`CoreError::BucketAlreadySampled`], or a kernel error. Nothing is written on error.
     pub fn sample<K: ReturnKernel>(
         &mut self,
@@ -291,6 +292,9 @@ impl<'a> Window<'a> {
         }
         if print.feed_id() != self.spec.feed() {
             return Err(CoreError::WrongFeed);
+        }
+        if print.stored().exponent() != self.spec.exponent() {
+            return Err(CoreError::ExponentMismatch);
         }
         let run = self.spec.canonical_run(print)?;
         for k in run.first()..=run.last() {

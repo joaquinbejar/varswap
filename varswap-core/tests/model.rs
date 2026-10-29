@@ -63,7 +63,7 @@ fn tape() -> impl Strategy<Value = Tape> {
                     2 => 1i64..=i64::from(3 * tolerance + 3 * interval),
                 ],
                 1u64..=1_000,
-                -4i32..=-1,
+                Just(()),
                 // Failed-slot copies emitted after this aggregate.
                 0usize..=2,
             ),
@@ -80,12 +80,12 @@ fn tape() -> impl Strategy<Value = Tape> {
                 let mut messages = Vec::new();
                 // Aggregate 0 sits before the window; later ones follow the gaps.
                 let mut prev = START - first;
-                for (gap, price, exp, copies) in steps {
+                for (gap, price, (), copies) in steps {
                     let publish = prev + gap;
-                    messages.push((publish, prev, price, exp));
+                    messages.push((publish, prev, price, -8));
                     for _ in 0..copies {
                         // Failed slot: last trading price, prev == publish.
-                        messages.push((publish, publish, price, exp));
+                        messages.push((publish, publish, price, -8));
                     }
                     if gap > 0 {
                         prev = publish;
