@@ -76,6 +76,29 @@ impl BucketRun {
     }
 }
 
+impl RiskParams {
+    /// `tolerance > 0`, `backfill_deadline > 0`, `0 < max_conf <= 10,000` bps: the rules
+    /// `set_feed_config` and [`WindowSpec::try_new`] share.
+    ///
+    /// # Errors
+    ///
+    /// [`CoreError::ZeroTolerance`], [`CoreError::ZeroBackfillDeadline`] or
+    /// [`CoreError::InvalidMaxConf`].
+    #[inline]
+    pub fn check(&self) -> Result<(), CoreError> {
+        if self.tolerance.get() == 0 {
+            return Err(CoreError::ZeroTolerance);
+        }
+        if self.backfill_deadline.get() == 0 {
+            return Err(CoreError::ZeroBackfillDeadline);
+        }
+        if self.max_conf.get() == 0 || self.max_conf.get() > MAX_CONF_BPS {
+            return Err(CoreError::InvalidMaxConf);
+        }
+        Ok(())
+    }
+}
+
 impl WindowSpec {
     /// Validates a window: `start < end`, `interval > 0`, `(end − start) % interval == 0`,
     /// `N + 1 <= MAX_BUCKETS`, `tolerance > 0`, `backfill_deadline > 0`,
@@ -109,15 +132,7 @@ impl WindowSpec {
         if last >= MAX_BUCKETS {
             return Err(CoreError::TooManyBuckets);
         }
-        if risk.tolerance.get() == 0 {
-            return Err(CoreError::ZeroTolerance);
-        }
-        if risk.backfill_deadline.get() == 0 {
-            return Err(CoreError::ZeroBackfillDeadline);
-        }
-        if risk.max_conf.get() == 0 || risk.max_conf.get() > MAX_CONF_BPS {
-            return Err(CoreError::InvalidMaxConf);
-        }
+        risk.check()?;
         end.get()
             .checked_add(i64::from(risk.backfill_deadline.get()))
             .ok_or(CoreError::Overflow)?;

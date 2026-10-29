@@ -1,6 +1,5 @@
 # Makefile for the varswap workspace. Targets mirror matchbook's; `pre-push` follows
 # rules/global_rules.md (fmt check, clippy -D warnings, lint control, tests, docs -D warnings).
-# `program` and `bench` (LiteSVM CU table) join `pre-push` with milestone 3.
 
 # sBPF target version (cargo-build-sbf's default is v3).
 SBF_ARCH ?= v3
@@ -19,15 +18,36 @@ build:
 sbf:
 	@SBF_ARCH=$(SBF_ARCH) sh scripts/sbf-build.sh pyth-lite/Cargo.toml
 	@SBF_ARCH=$(SBF_ARCH) sh scripts/sbf-build.sh varswap-core/Cargo.toml
+	@SBF_ARCH=$(SBF_ARCH) sh scripts/sbf-build.sh program/Cargo.toml
 
-# Failing control for the stack check: it must reject lint-control/stack-probe (6 KB frame).
+# Build the program into target/deploy/varswap_program.so (the LiteSVM tests load it)
+.PHONY: program
+program:
+	@SBF_ARCH=$(SBF_ARCH) sh scripts/sbf-build.sh program/Cargo.toml
+
+# Run the program in LiteSVM and regenerate docs/benchmarks.md
+.PHONY: bench
+bench:
+	@SBF_ARCH=$(SBF_ARCH) sh scripts/sbf-build.sh program/Cargo.toml --no-default-features
+	cp target/deploy/varswap_program.so target/deploy/varswap_program_no_events.so
+	@SBF_ARCH=$(SBF_ARCH) sh scripts/sbf-build.sh program/Cargo.toml
+	VARSWAP_NO_EVENTS_SO=$(CURDIR)/target/deploy/varswap_program_no_events.so \
+	VARSWAP_SBF_TOOLCHAIN="$$(cargo build-sbf --version 2>/dev/null | grep -v 'installed with' | paste -sd ',' - | sed 's/,/, /g'), sBPF $(SBF_ARCH)" \
+	VARSWAP_BENCH_OUT=$(CURDIR)/docs/benchmarks.md \
+	cargo test -p varswap-program --release --test cu -- --nocapture
+
+# Failing controls for scripts/sbf-build.sh: it must reject lint-control/stack-probe (a 6 KB
+# frame, which cargo build-sbf only warns about) and a failing cargo (a missing manifest).
 .PHONY: sbf-control
 sbf-control:
-	@if SBF_ARCH=$(SBF_ARCH) sh scripts/sbf-build.sh lint-control/stack-probe/Cargo.toml >/dev/null 2>&1; then \
-		echo "sbf-control: the stack check accepted a 6 KB frame"; exit 1; \
-	else echo "sbf-control: the stack check rejects an oversized frame"; fi
+	@out=$$(SBF_ARCH=$(SBF_ARCH) sh scripts/sbf-build.sh lint-control/stack-probe/Cargo.toml 2>&1); \
+	if [ $$? -eq 0 ] || ! printf '%s\n' "$$out" | grep -q 'stack frame over 4 KiB'; then \
+		echo "sbf-control: the stack check accepted a 6 KB frame"; exit 1; fi
+	@out=$$(SBF_ARCH=$(SBF_ARCH) sh scripts/sbf-build.sh lint-control/no-such-crate/Cargo.toml 2>&1); \
+	if [ $$? -eq 0 ]; then echo "sbf-control: a failing cargo passed"; exit 1; fi
+	@echo "sbf-control: rejects an oversized frame and a failing cargo"
 
-# Run every test
+# Run every test (the program tests need `make program` first; `pre-push` runs `sbf` before)
 .PHONY: test
 test:
 	cargo test --workspace --all-features

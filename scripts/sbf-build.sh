@@ -1,10 +1,13 @@
 #!/bin/sh
 # Builds one crate for SBF and fails if any function's stack frame exceeds 4 KiB.
 # cargo build-sbf only prints the overflow (and exits 0); the overflow corrupts locals at
-# run time, so rules/global_rules.md makes it a build failure. Usage: sbf-build.sh <manifest>
+# run time, so rules/global_rules.md makes it a build failure. A failing cargo fails too: its
+# status comes from the command substitution, not from a pipe.
+# Usage: sbf-build.sh <manifest> [extra cargo build-sbf arguments]
 set -u
 manifest=$1
-out=$(cargo build-sbf --manifest-path "$manifest" --arch "${SBF_ARCH:-v3}" 2>&1)
+shift
+out=$(cargo build-sbf --manifest-path "$manifest" --arch "${SBF_ARCH:-v3}" "$@" 2>&1)
 status=$?
 printf '%s\n' "$out" | grep -v 'installed with the Solana CLI'
 if [ $status -ne 0 ]; then

@@ -649,3 +649,19 @@ fn test_load_rejects_corruption() {
     assert!(Window::load(&mut d).is_ok());
     assert_eq!(d[0], WINDOW_TAG);
 }
+
+#[test]
+fn test_init_rejects_dirty_bitmap_accepts_dirty_price_area() {
+    let s = hourly(70);
+    let mut data = account(&s);
+    data[144 + 9] = 1; // a bitmap bit
+    assert!(matches!(
+        Window::init(&mut data, s, 1),
+        Err(CoreError::InvalidAccountData)
+    ));
+    let mut data = account(&s);
+    let prices = 144 + 16;
+    data[prices + 3] = 0xff; // stale bytes behind an empty bucket are never read
+    let w = Window::init(&mut data, s, 1).unwrap();
+    assert_eq!(w.price(0).unwrap(), None);
+}

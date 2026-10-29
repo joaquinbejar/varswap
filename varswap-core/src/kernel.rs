@@ -60,3 +60,48 @@ pub trait ReturnKernel {
     /// [`CoreError::Kernel`] or [`CoreError::Overflow`].
     fn annualize(&self, sum_sq: SumSq, span_seconds: u64) -> Result<u128, CoreError>;
 }
+
+/// Exact integer stand-in for the log-return kernel: `(to − from)²` with both prices
+/// rescaled to the smaller exponent, and `sum_sq × YEAR_SECONDS / span` rounded down.
+///
+/// **Not a log return.** It is exact, so tests compare windows bit for bit, and it is the
+/// kernel the program uses until milestone 1b plugs in optfix `ln`; a program built with it
+/// must not be deployed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct IntegerKernel;
+
+impl IntegerKernel {
+    /// `price × 10^(exponent − base)`, `exponent >= base`.
+    fn rescale(p: StoredPrice, base: i8) -> Result<i128, CoreError> {
+        let shift = i32::from(p.exponent())
+            .checked_sub(i32::from(base))
+            .and_then(|s| u32::try_from(s).ok())
+            .ok_or(CoreError::Overflow)?;
+        10i128
+            .checked_pow(shift)
+            .and_then(|f| f.checked_mul(i128::from(p.price())))
+            .ok_or(CoreError::Overflow)
+    }
+}
+
+impl ReturnKernel for IntegerKernel {
+    fn squared_log_return(&self, from: StoredPrice, to: StoredPrice) -> Result<SumSq, CoreError> {
+        let base = from.exponent().min(to.exponent());
+        let d = Self::rescale(to, base)?
+            .checked_sub(Self::rescale(from, base)?)
+            .ok_or(CoreError::Overflow)?;
+        d.checked_mul(d)
+            .and_then(|sq| u128::try_from(sq).ok())
+            .map(SumSq::from_raw)
+            .ok_or(CoreError::Overflow)
+    }
+
+    fn annualize(&self, sum_sq: SumSq, span_seconds: u64) -> Result<u128, CoreError> {
+        // Rounded down; the real kernel documents its own direction.
+        sum_sq
+            .raw()
+            .checked_mul(u128::from(crate::YEAR_SECONDS))
+            .and_then(|x| x.checked_div(u128::from(span_seconds)))
+            .ok_or(CoreError::Overflow)
+    }
+}

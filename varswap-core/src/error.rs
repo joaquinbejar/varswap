@@ -49,6 +49,37 @@ pub enum CoreError {
     Kernel(u8) = 19,
 }
 
+impl CoreError {
+    /// Stable numeric code: the discriminant; [`CoreError::Kernel`] is 19 whatever its
+    /// payload (read the payload with a match).
+    #[inline]
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::EmptyWindow => 0,
+            Self::ZeroInterval => 1,
+            Self::EndOffGrid => 2,
+            Self::TooManyBuckets => 3,
+            Self::ZeroTolerance => 4,
+            Self::ZeroBackfillDeadline => 5,
+            Self::InvalidMaxConf => 6,
+            Self::StartNotInFuture => 7,
+            Self::ExponentOutOfRange => 8,
+            Self::PriceOutOfRange => 9,
+            Self::NoPreviousPrint => 10,
+            Self::WrongFeed => 11,
+            Self::NotOnGrid => 12,
+            Self::BucketAlreadySampled => 13,
+            Self::BackfillClosed => 14,
+            Self::WindowFinal => 15,
+            Self::FinalizeTooEarly => 16,
+            Self::InvalidAccountData => 17,
+            Self::Overflow => 18,
+            Self::Kernel(_) => 19,
+        }
+    }
+}
+
 impl fmt::Display for CoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {

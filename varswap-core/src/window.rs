@@ -65,16 +65,32 @@ pub struct Window<'a> {
 }
 
 impl<'a> Window<'a> {
-    /// Initializes a zeroed account of exactly [`window_size`] bytes: state `Pending`, every
-    /// bucket empty.
+    /// Initializes an account of exactly [`window_size`] bytes whose header and bitmap are
+    /// zero (a freshly created account): state `Pending`, every bucket empty.
     ///
     /// # Errors
     ///
-    /// [`CoreError::InvalidAccountData`] if the size is wrong or the account is not zeroed
-    /// (re-initialization).
+    /// [`CoreError::InvalidAccountData`] if the size is wrong or the header or bitmap is not
+    /// zero (re-initialization).
     pub fn init(data: &'a mut [u8], spec: WindowSpec, bump: u8) -> Result<Self, CoreError> {
         let buckets = spec.buckets()?;
-        if data.len() != window_size(buckets)? || data.iter().any(|b| *b != 0) {
+        if data.len() != window_size(buckets)? {
+            return Err(CoreError::InvalidAccountData);
+        }
+        // Header and bitmap must be zero: an initialized window has a non-zero tag, and the
+        // bitmap alone decides which buckets are filled (prices are read only behind a set
+        // bit). Scanning only these keeps `create_window` linear in the bitmap words, not
+        // in the account size.
+        let bitmap_end = bitmap_words(buckets)?
+            .checked_mul(8)
+            .and_then(|b| b.checked_add(HEADER_LEN))
+            .ok_or(CoreError::Overflow)?;
+        if data
+            .get(..bitmap_end)
+            .ok_or(CoreError::InvalidAccountData)?
+            .iter()
+            .any(|b| *b != 0)
+        {
             return Err(CoreError::InvalidAccountData);
         }
         let header = WindowHeader {
