@@ -161,7 +161,7 @@ buffer is needed.
 
 | # | Instruction | Signers | Accounts |
 | --- | --- | --- | --- |
-| 0 | `init_config` | admin (the program's upgrade authority), payer | config (w), program_data, system; payload: the collateral mint |
+| 0 | `init_config` | admin (the program's upgrade authority), payer | config (w), program_data, system; payload: the collateral mint, immutable afterwards (no setter, by design) |
 | 0b | `set_feed_config` | admin, payer (on create) | config, feed_config (w), system: creates or overwrites; validates `max_conf`, `tolerance > 0`, `backfill_deadline > 0`, `max_buckets <= MAX_BUCKETS` (3.1) |
 | 1 | `create_window` | payer | feed_config, window (w), system (the feed and its risk parameters come from `feed_config`) |
 | 2 | `sample` | anyone (payer of fee only) | window (w), price_update (Pyth receiver account); clock from the syscall; return data and an event per accepted sample |
@@ -222,7 +222,10 @@ buffer is needed.
 Binding: a `Window` copies its `FeedConfig` (receiver program id, feed, risk parameters) at
 creation and a `Swap` stores its collateral mint and token program; `sample`, `settle_swap`
 and `claim_*` read only those copies, never mutable global config. Tested by mutating
-`Config` and `FeedConfig` mid-life.
+`FeedConfig` after a window's creation (receiver, guard, confidence and exponent). The
+collateral mint in `Config` is immutable by design (decided 2026-10-29): `init_config` sets it
+once and no instruction changes it, which is safer than a setter, so there is no `Config`
+mutation to test.
 
 ### 4.1 Who pushes samples, and manipulation resistance
 
@@ -529,7 +532,7 @@ to build test accounts and to cross-check the decoder.
    floored and loss ceiled, clamped to `[0, total]`, unwind returns each collateral, the
    error-bound gate); `settle_swap` pays on `LnKernel::conservative_realized_var`. Program
    error codes are now 100 to 139, `140 +` `PythError`, `160 +` `CoreError::code`, `220 +`
-   kernel payload. Tests: core proptest (conservation, monotone payout, gain floored) over
+   kernel payload; the full table is `docs/errors.md`. Tests: core proptest (conservation, monotone payout, gain floored) over
    realized in `[0, 2 × cap]` at notionals up to the gate, the decimal `V_cons` fixture run
    through `SwapTerms::payouts`, and LiteSVM tests for every account rule (forged config,
    window, mint, token accounts, swap and vault PDAs, token and system programs), the gate at

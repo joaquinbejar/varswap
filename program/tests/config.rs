@@ -341,3 +341,19 @@ fn test_set_feed_config_update_with_other_feed_bytes_rejected() {
     env.set(feed_pda(SOL), PROGRAM_ID, xau.data.clone());
     expect_code(&env.set_feed(feed_args(SOL)), code::INVALID_PDA);
 }
+
+#[test]
+fn test_error_table_documented() {
+    // docs/errors.md lists every code the program can return.
+    let doc = include_str!("../../docs/errors.md");
+    let codes = (100..=124)
+        .chain(140..=149)
+        .chain((160..=185).filter(|c| *c != 179));
+    for c in codes {
+        assert!(
+            doc.contains(&format!("| {c} | `")),
+            "code {c} missing from docs/errors.md"
+        );
+    }
+    assert!(doc.contains("| 220 + k |"));
+}
