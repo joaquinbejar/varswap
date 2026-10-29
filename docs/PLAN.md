@@ -508,9 +508,9 @@ to build test accounts and to cross-check the decoder.
    unwind paths are tested, `claim_long` and `claim_short` are tested in both orders and with
    either side's USDC account frozen (the other side still claims), every forged account
    is rejected, and `open_swap` rejects `notional × LnKernel::realized_var_error_bound(
-   window.interval, cap_var, 0) >= 2^64` (exponent pinned), with `sum_sq` accumulated at
-   `2^-96` per plan (B) of 4.4 and the 4.4 table regenerated from it (the realized variance error bound of 4.4), with a
-   test at the limit and one just above it.
+   window.interval, cap_var, 0) >= 2^64` (the realized variance error bound of 4.4, exponent
+   pinned), with a test at the limit and one just above it; `sum_sq` is accumulated at
+   `2^-96` per plan (B) of 4.4 and the 4.4 table is regenerated from it.
 5. **Benchmarks and manipulation study.** *Done when* `docs/benchmarks.md` has CU for every
    instruction and the README has the pusher-bias table and the outage tables from 4.1
    (compression error and unwind frequency per model and per `tolerance`).
