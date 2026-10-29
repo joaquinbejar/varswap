@@ -38,7 +38,7 @@ bench:
 	VARSWAP_NO_EVENTS_SO=$(CURDIR)/target/deploy/varswap_program_no_events.so \
 	VARSWAP_SBF_TOOLCHAIN="$$(cargo build-sbf --version 2>/dev/null | grep -v 'installed with' | paste -sd ',' - | sed 's/,/, /g'), sBPF $(SBF_ARCH)" \
 	VARSWAP_BENCH_OUT=$(CURDIR)/docs/benchmarks.md \
-	cargo test -p varswap-program --release --test cu -- --nocapture
+	cargo test -p varswap-program --release $(PROGRAM_FEATURES) --test cu -- --nocapture
 
 # Failing controls for scripts/sbf-build.sh: it must reject lint-control/stack-probe (a 6 KB
 # frame, which cargo build-sbf only warns about) and a failing cargo (a missing manifest).
