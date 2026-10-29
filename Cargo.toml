@@ -1,0 +1,49 @@
+[workspace]
+members = ["pyth-lite", "lint-control"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Joaquin Bejar <jb@taunais.com>"]
+license = "MIT"
+repository = "https://github.com/joaquinbejar/varswap"
+
+[workspace.dependencies]
+# Versions checked on crates.io (max_stable_version) on 2026-10-29.
+pyth-lite = { path = "pyth-lite", version = "0.1" }
+# Dev only: cross-checks the pyth-lite decoder against the Anchor reference (docs/PLAN.md 4.6).
+pyth-solana-receiver-sdk = "2.0"
+# Dev only: the SDK does not re-export the Anchor traits the cross-check calls
+# (`AccountDeserialize`, `Discriminator`); same version the SDK already pulls in.
+anchor-lang = "1.2"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "deny"
+# Pinocchio's entrypoint macros test `target_os = "solana"`; `lint_control` is set only by
+# `make lint-control`.
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(target_os, values("solana"))',
+    'cfg(lint_control)',
+] }
+
+[workspace.lints.clippy]
+panic = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+integer_division = "deny"
+float_arithmetic = "deny"
+panic_in_result_fn = "deny"
+manual_assert = "deny"
+disallowed_macros = "deny"          # list in clippy.toml
+
+[profile.release]
+overflow-checks = true
+codegen-units = 1
+lto = "fat"

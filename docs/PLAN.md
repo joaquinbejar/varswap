@@ -168,9 +168,11 @@ buffer is needed.
   parameters copied from it (an anyone-can-create window must not let the first creator pick
   loose risk parameters and own the PDA), `start` in the future.
 - `sample`: the `price_update` account is owned by the Pyth receiver program (address pinned
-  in the window's `FeedConfig` copy, verified at milestone 2), has the `PriceUpdateV2` discriminator,
+  in the window's `FeedConfig` copy; mainnet id verified in milestone 2 as
+  `pyth_lite::RECEIVER_PROGRAM_ID`), has the `PriceUpdateV2` discriminator,
   `verification_level == Full`, `feed_id == window.spec.feed`, `price > 0`,
-  `conf × 10_000 <= price × max_conf` computed in `u128`, `now <= end + backfill_deadline`,
+  `conf × 10_000 <= price × max_conf` computed in `u128`, `prev_publish_time > 0` (4.1),
+  `now <= end + backfill_deadline`,
   window not finalized. Buckets are derived, not taken from data: the print fills every `k` in `[0, N]` with
   `prev_publish_time < b_k <= publish_time <= b_k + tolerance` (4.1), i.e. `k_lo =
   max(0, floor((prev_publish_time − start) / interval) + 1, ceil((publish_time − tolerance −
@@ -214,13 +216,22 @@ elapsed time; a short gains by omitting reversals, a long by merging same-direct
 So samples are **canonical**:
 
 - The sample for boundary `b_k = start + k × interval` is the unique Pyth print with
-  `prev_publish_time < b_k <= publish_time`, i.e. the first aggregate published at or after
-  the boundary. `PriceUpdateV2` carries `prev_publish_time`, so the program can check the
-  crossing; whether Pyth guarantees that `prev_publish_time` is the immediately preceding
-  aggregate (so the canonical print is unique) is verified in milestone 2 against the Pyth
-  receiver source and docs. If it cannot be proven, the fallback is the first-write-wins
-  rule with the residual selection risk quantified in the bias study and accepted
-  explicitly by you.
+  `prev_publish_time < b_k <= publish_time`, i.e. the first successful aggregate published
+  at or after the boundary. `PriceUpdateV2` carries `prev_publish_time`, so the program can
+  check the crossing. **Verified in milestone 2** (sources under Verified facts, "Canonical
+  print"): `prev_publish_time` is the `publish_time` of the previous *successful* aggregate
+  of the feed, and successful aggregates have non-decreasing publish times, so their
+  intervals `(prev_publish_time, publish_time]` tile the time line and every boundary has
+  at most one canonical print. Messages from slots where aggregation failed, and later
+  aggregates within the same second, carry `prev_publish_time == publish_time`: an empty
+  interval that never matches. No fallback to first-write-wins is needed. Residual cases:
+  - an aggregate that Pythnet computed but never sent (the legacy V1 message path) leaves
+    its boundaries with no canonical print: the bucket stays empty and the window degrades
+    (liveness, not choice);
+  - the first aggregate after an oracle `init_price` (feed creation or an admin re-init) has
+    `prev_publish_time = 0`, so its interval overlaps earlier prints and would give the
+    pusher a choice inside `tolerance`. `sample` rejects `prev_publish_time == 0` (3.3,
+    negative test in milestone 3); the boundaries only that print covers stay empty.
 - A canonical sample can be posted late (Hermes serves historical updates by timestamp), so
   there is no hindsight to exploit and `max_age` no longer limits backfill: any bucket can be
   filled until `end + backfill_deadline` (proposed 24 h).
@@ -270,13 +281,28 @@ So samples are **canonical**:
   (varswap session). Only a loose sanity bound (proposed `conf / price > 10%`), documented as
   an exceptional unwind; the bias study measures how often real SOL/USD history would have
   unwound under it.
-- To verify in milestone 2: `publish_time` is in whole seconds while Pythnet aggregates about
-  every 400 ms, so consecutive prints can share a `publish_time`; uniqueness needs
-  `prev_publish_time` to be the previous aggregate's own `publish_time` including repeats
-  (fixture with two prints sharing a second); Hermes `/v2/updates/price/{t}` returns the
-  first aggregate at or after `t`; and whether the receiver rejects VAAs from an expired
-  guardian set (about 24 h after rotation), which could make a bucket unpostable within
-  `backfill_deadline`.
+- Verified in milestone 2 (sources under Verified facts):
+  - `publish_time` is whole Unix seconds from the Pythnet clock, which never goes
+    backwards. Several aggregates can share a second; only the first carries
+    `prev_publish_time < publish_time`, the rest have `prev_publish_time == publish_time`,
+    so uniqueness holds with repeats. This is proven from the aggregation source rather than
+    from a fixture: the receiver keeps only the latest update per account, and Hermes serves
+    one update per requested time.
+  - Hermes `GET /v2/updates/price/{t}` returns the first update with `publish_time >= t`,
+    ties broken by the earliest slot (the real aggregate before any failed-slot copy).
+    Keepers request `t = b_k`. The program still checks `prev_publish_time < b_k` itself:
+    after the real update leaves Hermes's cache (about 640 s) Hermes may serve a failed-slot
+    copy, or fall back to the Benchmarks service, whose source is not public.
+  - Guardian sets: Wormhole refuses to verify a VAA signed by a guardian set that expired
+    (24 h after a rotation), in `verify_encoded_vaa_v1` and in `post_update_atomic`;
+    `post_update` accepts an encoded VAA verified earlier at any time. A canonical print
+    whose VAA was not verified within 24 h of a rotation becomes unpostable and its bucket
+    degrades the window. That is a liveness risk for keepers, not a lever: nobody can post a
+    different print in its place.
+  - Push oracle feed accounts are not a source of canonical prints: the push oracle stores
+    an update only if its `publish_time` is strictly newer than the stored one, on Pyth's
+    schedule and not on our grid. Keepers post canonical prints with `post_update` from
+    Hermes (milestone 6).
 
 ### 4.2 Running sums vs ring buffer
 
@@ -334,7 +360,8 @@ to build test accounts and to cross-check the decoder.
    finalize as pure functions. *Done when* proptest against an f64 reference on simulated GBM
    paths shows realized variance within the documented bound, and that any gap yields
    `Degraded`; and the workspace carries the shared lint control (`rules/global_rules.md`,
-   synced from optfix `afb9d4d`):
+   synced from optfix `afb9d4d`; set up with milestone 2, which ran first, except the
+   entrypoint-module allow, which lands with the program in milestone 3):
    - `lint-control/` (`Cargo.toml`, `src/lib.rs`, `check.sh`) copied from optfix and added
      to the workspace members;
    - `cfg(lint_control)` in `unexpected_cfgs` `check-cfg`;
@@ -372,10 +399,43 @@ to build test accounts and to cross-check the decoder.
 - `pyth-solana-receiver-sdk` 2.0.0, `pythnet-sdk` 3.0.0 on crates.io.
 - Crypto.SOL/USD feed id `ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d`
   (Hermes `/v2/price_feeds?query=SOL/USD&asset_type=crypto`).
-- Not yet verified, to do in milestone 2: the Pyth receiver program id (candidate from the
-  varswap session's memory, unverified: `rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ`; push
-  oracle `pythWSnswVUd12oZpeFP8e9CVaEqJg25g1Vtc2biRsT`), and whether sponsored push feed
-  accounts exist for the feeds we use.
+- Checked in milestone 2 (2026-10-29):
+  - Program ids: receiver `rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ`, push oracle
+    `pythWSnswVUd12oZpeFP8e9CVaEqJg25g1Vtc2biRsT` (pyth-solana-receiver-sdk 2.0.0
+    `src/lib.rs`, `declare_id!` and `PYTH_PUSH_ORACLE_ID` with default features; the
+    `pro-compatible` feature uses `rec2HHDDnjLfj4kE7VyEtFA1HPGQLK33259532cRyHp` and
+    `pyt2F414BA6dPttK6RddPZUdHfapoBN24GL5wbrPCou`). The receiver owns all four mainnet
+    fixtures. `pyth_lite::RECEIVER_PROGRAM_ID` and `PUSH_ORACLE_PROGRAM_ID` are tested
+    against the SDK constants and the base58 strings.
+  - Push oracle feed accounts are PDAs of the push oracle with seeds `[shard_id (u16 LE),
+    feed_id]` (`pyth-push-oracle/src/sdk.rs`), owned by the receiver, with the PDA itself as
+    `write_authority`, always `Full` (`post_update` hard-codes it). Sponsored accounts
+    exist on mainnet, shard 0: Metal.XAU/USD `2uPQGpm8X4ZkxMHxrAW1QuhXcse1AHEgPih6Xp9NuEWW`
+    (feed `765d2ba906dbc32ca17cc11f5310a89e9ee1f6420508c63861f2f8ba4ee34bb2`), Metal.XAG/USD
+    `H9JxsWwtDZxjSL6m7cdCVsWibj3JBMD9sxqLjadoZnot` (feed
+    `f2fb02c32b055c805e7238d628e5e9dadef274376114eb1f012337cabe93871e`), Crypto.SOL/USD
+    `7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE`. The XAG/USD account's last
+    `publish_time` is 2026-07-03, about 118 days before the fetch: that sponsored feed is
+    not maintained, so nothing may rely on it being fresh. Exponents seen: SOL −8,
+    XAU −3, XAG −5, all within `i8` (3.1).
+  - Real `Partial` accounts exist (found with `getProgramAccounts` on the receiver,
+    `dataSize 134`, tag byte 0 at offset 40); the committed one is a BTC/USD update with
+    `num_signatures = 5`.
+  - Canonical print (pyth-client `acba47f`, pyth-crosschain `69d9242`, pythnet validator
+    `pyth-v1.14.17` `99aa1e1`):
+    - pyth-client `program/c/src/oracle/upd_aggregate.h:135-215` rolls
+      `prev_timestamp_ = timestamp_` only when the stored status is `Trading`.
+    - `program/rust/src/accounts/price.rs:116-133` builds the message: on a failed slot
+      it uses `prev_timestamp_` for both times.
+    - `pythnet_sdk/src/messages.rs:99-110` documents the rule "the unique update is the one
+      such that prev_publish_time < t <= publish_time".
+    - Pythnet `runtime/src/bank/pyth/accumulator.rs:393-484` emits one message per feed per
+      slot, and `runtime/src/bank.rs:2226-2233` keeps the clock monotone.
+    - Hermes `apps/hermes/server/src/api/rest/v2/timestamp_price_updates.rs:25-29` and
+      `state/cache.rs:285-305` give "first update with publish_time >= t".
+    - Guardian expiry: `core-bridge/src/legacy/state/guardian_set.rs:230-238`,
+      `processor/parse_and_verify_vaa/verify_encoded_vaa_v1.rs:38-43` and
+      `pyth-solana-receiver/src/lib.rs:412-440`. Push oracle: `pyth-push-oracle/src/lib.rs:94-108`.
 - To verify in milestone 1 with optfix: `i128` alignment. Since Rust 1.77, `i128` is
   16-aligned on x86_64 hosts while account data is only guaranteed 8-aligned, so a
   `bytemuck::from_bytes` over a struct holding `Fixed` may fail. Fallback: store `Fixed` as
@@ -403,6 +463,7 @@ whenever it is added or touched.
 | `optfix` | unpublished | git, pinned `rev` |
 | `litesvm-token` (dev) | 0.18.1 | `0.18` |
 | `pyth-solana-receiver-sdk` (dev only, fixtures and cross-check) | 2.0.0 | `2.0` |
+| `anchor-lang` (dev only, pyth-lite cross-check; approved 2026-10-29) | 1.2.2 | `1.2` |
 
 **Version decision (Joaquin, 2026-10-29): option (b), the Pinocchio 0.11 generation.**
 `pinocchio-token` 0.7.0 and `pinocchio-associated-token-account` 0.4.0 are built on

@@ -1,0 +1,19 @@
+[package]
+name = "pyth-lite"
+description = "no_std reader for Pyth PriceUpdateV2 accounts: owner, discriminator, layout and price checks"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["pyth", "oracle", "solana", "no-std"]
+categories = ["no-std", "cryptography::cryptocurrencies"]
+
+[dependencies]
+
+[dev-dependencies]
+anchor-lang = { workspace = true }
+pyth-solana-receiver-sdk = { workspace = true }
+
+[lints]
+workspace = true
