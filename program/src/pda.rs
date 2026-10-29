@@ -16,6 +16,10 @@ pub const CONFIG_SEED: &[u8] = b"config";
 pub const FEED_SEED: &[u8] = b"feed";
 /// Seed prefix of a window PDA, followed by the feed id and `start`, `end`, `interval` LE.
 pub const WINDOW_SEED: &[u8] = b"window";
+/// Seed prefix of a swap PDA, followed by the window, long, short and `swap_index` LE.
+pub const SWAP_SEED: &[u8] = b"swap";
+/// Seed prefix of a vault PDA, followed by the swap.
+pub const VAULT_SEED: &[u8] = b"vault";
 
 /// The canonical PDA and bump for `seeds`.
 ///

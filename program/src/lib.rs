@@ -17,6 +17,7 @@ pub mod loader;
 pub mod pda;
 pub mod processor;
 pub mod state;
+pub mod swap;
 
 use pinocchio::{AccountView, Address, ProgramResult};
 
@@ -40,7 +41,7 @@ pub type Kernel = varswap_core::LnKernel;
 #[repr(u8)]
 pub enum Instruction {
     /// `init_config`: admin (the program's upgrade authority), payer, config, program data,
-    /// system program. No payload.
+    /// system program. Payload [`layout::InitConfigArgs`].
     InitConfig = 0,
     /// `set_feed_config`: admin, payer, config, feed config, system program.
     /// Payload [`layout::SetFeedConfigArgs`].
@@ -52,6 +53,17 @@ pub enum Instruction {
     Sample = 3,
     /// `finalize`: window. No payload.
     Finalize = 4,
+    /// `open_swap`: long, short, payer, config, window, swap, vault, long and short token
+    /// accounts, mint, token program, system program. Payload [`layout::OpenSwapArgs`].
+    OpenSwap = 5,
+    /// `settle_swap`: window, swap. No payload.
+    SettleSwap = 6,
+    /// `claim_long`: swap, vault, the long's token account, mint, token program. No payload.
+    ClaimLong = 7,
+    /// `claim_short`: swap, vault, the short's token account, mint, token program.
+    ClaimShort = 8,
+    /// `close_swap`: swap, vault, rent receiver, token program. No payload.
+    CloseSwap = 9,
 }
 
 impl Instruction {
@@ -68,6 +80,11 @@ impl Instruction {
             2 => Ok(Self::CreateWindow),
             3 => Ok(Self::Sample),
             4 => Ok(Self::Finalize),
+            5 => Ok(Self::OpenSwap),
+            6 => Ok(Self::SettleSwap),
+            7 => Ok(Self::ClaimLong),
+            8 => Ok(Self::ClaimShort),
+            9 => Ok(Self::CloseSwap),
             _ => Err(VarswapError::InvalidInstruction),
         }
     }
@@ -91,5 +108,10 @@ pub fn process_instruction(
         Instruction::CreateWindow => processor::create_window(program_id, accounts, payload),
         Instruction::Sample => processor::sample(program_id, accounts, payload),
         Instruction::Finalize => processor::finalize(program_id, accounts, payload),
+        Instruction::OpenSwap => swap::open_swap(program_id, accounts, payload),
+        Instruction::SettleSwap => swap::settle_swap(program_id, accounts, payload),
+        Instruction::ClaimLong => swap::claim(program_id, accounts, payload, swap::Side::Long),
+        Instruction::ClaimShort => swap::claim(program_id, accounts, payload, swap::Side::Short),
+        Instruction::CloseSwap => swap::close_swap(program_id, accounts, payload),
     }
 }

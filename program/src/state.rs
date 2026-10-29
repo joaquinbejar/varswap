@@ -8,13 +8,29 @@ use varswap_core::layout::Hdr;
 use varswap_core::{Bps, RiskParams, Seconds};
 
 use crate::error::VarswapError;
-use crate::layout::{ConfigData, FeedConfigData};
+use crate::layout::{ConfigData, FeedConfigData, SwapData};
 use crate::pda::{self, CONFIG_SEED, FEED_SEED};
 
 /// Account tag of `Config` (`varswap_core::WINDOW_TAG` is 1).
 pub const CONFIG_TAG: u8 = 2;
 /// Account tag of `FeedConfig`.
 pub const FEED_CONFIG_TAG: u8 = 3;
+/// Account tag of `Swap`.
+pub const SWAP_TAG: u8 = 4;
+/// `Swap` size, bytes.
+pub const SWAP_LEN: usize = size_of::<SwapData>();
+/// SPL Token account size, bytes.
+pub const TOKEN_ACCOUNT_LEN: usize = 165;
+
+/// Life cycle of a swap. Stored as a `u8` and validated on load.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SwapState {
+    /// Collateral in the vault, waiting for the window to end.
+    Open = 0,
+    /// Payouts computed; each side claims its own.
+    Settled = 1,
+}
 /// Layout version of the program's own accounts.
 pub const VERSION: u8 = 1;
 /// `Config` size, bytes.
@@ -142,6 +158,30 @@ pub fn load_feed_config(
     )
     .map_err(|_| VarswapError::InvalidPda)?;
     Ok(f)
+}
+
+/// Loads a `Swap`: owner, size, tag, version, padding, state and claim flags. Its PDA is
+/// re-derived by the instructions that sign with it.
+///
+/// # Errors
+///
+/// `InvalidAccountOwner` or `InvalidAccountData`.
+pub fn load_swap(
+    a: &AccountView,
+    program_id: &Address,
+) -> Result<(SwapData, SwapState), VarswapError> {
+    owned(a, program_id).map_err(|_| VarswapError::InvalidAccountOwner)?;
+    let s: SwapData = read(a)?;
+    check_hdr(&s.hdr, SWAP_TAG).map_err(|_| VarswapError::InvalidAccountData)?;
+    let state = match s.state {
+        0 => SwapState::Open,
+        1 => SwapState::Settled,
+        _ => return Err(VarswapError::InvalidAccountData),
+    };
+    if s._pad != [0; 4] || s.long_claimed > 1 || s.short_claimed > 1 {
+        return Err(VarswapError::InvalidAccountData);
+    }
+    Ok((s, state))
 }
 
 /// The risk parameters a window copies from its feed config (`docs/PLAN.md` 3.3).

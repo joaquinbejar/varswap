@@ -32,6 +32,19 @@ fn test_init_config_by_upgrade_authority_ok() {
     let c: ConfigData = bytemuck::pod_read_unaligned(&acc.data);
     assert_eq!(c.admin, env.admin.pubkey().to_bytes());
     assert_eq!(c.hdr.tag, 2);
+    assert_eq!(c.collateral_mint, env.usdc.to_bytes());
+}
+
+#[test]
+fn test_init_config_zero_mint_rejected() {
+    let mut env = Env::new();
+    let ix = ix_init_config(
+        &env.admin.pubkey(),
+        &env.payer.pubkey(),
+        &Address::new_from_array([0; 32]),
+    );
+    let (p, a) = (env.payer.insecure_clone(), env.admin.insecure_clone());
+    expect_code(&env.send(&[ix], &[&p, &a]), code::INVALID_MINT);
 }
 
 #[test]
@@ -46,7 +59,7 @@ fn test_init_config_front_run_by_other_signer_rejected() {
     let mut env = Env::new();
     let attacker = Keypair::new();
     env.svm.airdrop(&attacker.pubkey(), 1_000_000_000).unwrap();
-    let ix = ix_init_config(&attacker.pubkey(), &attacker.pubkey());
+    let ix = ix_init_config(&attacker.pubkey(), &attacker.pubkey(), &env.usdc);
     expect_code(&env.send(&[ix], &[&attacker]), code::NOT_AUTHORITY);
 }
 
@@ -71,7 +84,7 @@ fn test_init_config_program_data_wrong_owner_rejected() {
     let real = env.account(&Env::program_data());
     let forged = Address::new_unique();
     env.set(forged, Address::new_unique(), real.data.clone());
-    let mut ix = ix_init_config(&env.admin.pubkey(), &env.payer.pubkey());
+    let mut ix = ix_init_config(&env.admin.pubkey(), &env.payer.pubkey(), &env.usdc);
     ix.accounts[3] = AccountMeta::new_readonly(forged, false);
     let (p, a) = (env.payer.insecure_clone(), env.admin.insecure_clone());
     expect_code(&env.send(&[ix], &[&p, &a]), code::INVALID_ACCOUNT_OWNER);
@@ -84,7 +97,7 @@ fn test_init_config_program_data_wrong_address_rejected() {
     let real = env.account(&Env::program_data());
     let forged = Address::new_unique();
     env.set(forged, LOADER, real.data.clone());
-    let mut ix = ix_init_config(&env.admin.pubkey(), &env.payer.pubkey());
+    let mut ix = ix_init_config(&env.admin.pubkey(), &env.payer.pubkey(), &env.usdc);
     ix.accounts[3] = AccountMeta::new_readonly(forged, false);
     let (p, a) = (env.payer.insecure_clone(), env.admin.insecure_clone());
     expect_code(&env.send(&[ix], &[&p, &a]), code::INVALID_PDA);
@@ -103,7 +116,7 @@ fn test_init_config_program_data_malformed_rejected() {
 #[test]
 fn test_init_config_admin_not_signer_rejected() {
     let mut env = Env::new();
-    let mut ix = ix_init_config(&env.admin.pubkey(), &env.payer.pubkey());
+    let mut ix = ix_init_config(&env.admin.pubkey(), &env.payer.pubkey(), &env.usdc);
     ix.accounts[0].is_signer = false;
     let p = env.payer.insecure_clone();
     expect_code(&env.send(&[ix], &[&p]), code::MISSING_SIGNATURE);
@@ -112,7 +125,7 @@ fn test_init_config_admin_not_signer_rejected() {
 #[test]
 fn test_init_config_wrong_config_pda_rejected() {
     let mut env = Env::new();
-    let mut ix = ix_init_config(&env.admin.pubkey(), &env.payer.pubkey());
+    let mut ix = ix_init_config(&env.admin.pubkey(), &env.payer.pubkey(), &env.usdc);
     ix.accounts[2] = AccountMeta::new(Address::new_unique(), false);
     let (p, a) = (env.payer.insecure_clone(), env.admin.insecure_clone());
     expect_code(&env.send(&[ix], &[&p, &a]), code::INVALID_PDA);
@@ -121,7 +134,7 @@ fn test_init_config_wrong_config_pda_rejected() {
 #[test]
 fn test_init_config_wrong_system_program_rejected() {
     let mut env = Env::new();
-    let mut ix = ix_init_config(&env.admin.pubkey(), &env.payer.pubkey());
+    let mut ix = ix_init_config(&env.admin.pubkey(), &env.payer.pubkey(), &env.usdc);
     ix.accounts[4] = AccountMeta::new_readonly(Address::new_unique(), false);
     let (p, a) = (env.payer.insecure_clone(), env.admin.insecure_clone());
     expect_code(&env.send(&[ix], &[&p, &a]), code::INVALID_SYSTEM_PROGRAM);
@@ -130,8 +143,8 @@ fn test_init_config_wrong_system_program_rejected() {
 #[test]
 fn test_unknown_instruction_and_bad_payload_rejected() {
     let mut env = Env::new();
-    let mut ix = ix_init_config(&env.admin.pubkey(), &env.payer.pubkey());
-    ix.data = vec![9];
+    let mut ix = ix_init_config(&env.admin.pubkey(), &env.payer.pubkey(), &env.usdc);
+    ix.data = vec![99];
     let (p, a) = (env.payer.insecure_clone(), env.admin.insecure_clone());
     expect_code(
         &env.send(&[ix.clone()], &[&p, &a]),
@@ -147,7 +160,7 @@ fn test_unknown_instruction_and_bad_payload_rejected() {
         &env.send(&[ix.clone()], &[&p, &a]),
         code::INVALID_INSTRUCTION_DATA,
     );
-    ix.data = vec![0];
+    ix.data = ix_init_config(&env.admin.pubkey(), &env.payer.pubkey(), &env.usdc).data;
     ix.accounts.truncate(4);
     expect_code(&env.send(&[ix], &[&p, &a]), code::NOT_ENOUGH_ACCOUNTS);
 }

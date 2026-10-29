@@ -21,6 +21,8 @@ optfix = { git = "https://github.com/joaquinbejar/optfix", rev = "fd1e81c5726c0b
 # Pinocchio 0.11 generation: decided exception to the latest-stable rule (docs/PLAN.md).
 pinocchio = { version = "0.11", default-features = false, features = ["cpi"] }
 pinocchio-system = "0.6"
+# Built on solana-account-view 2 (Pinocchio 0.11), the recorded exception (docs/PLAN.md).
+pinocchio-token = "0.7"
 # Approved 2026-10-29 for the sample events (docs/PLAN.md 3.1).
 pinocchio-log = { version = "0.5", default-features = false }
 # LiteSVM 0.18.1 (latest) pins `solana-address ~2.7` and these generations of the Solana client
@@ -28,6 +30,9 @@ pinocchio-log = { version = "0.5", default-features = false }
 # (docs/PLAN.md, Dependencies), as in optfix and quotebook.
 solana-address = { version = "2.7", default-features = false }
 litesvm = "0.18"
+# Dev only: SPL mints and token accounts in LiteSVM, as metalbook (resolves against the LiteSVM
+# 0.18.1 pins; checked 2026-10-29, latest stable 0.18.1).
+litesvm-token = "0.18"
 solana-account = "4.7"
 solana-clock = "3.2"
 solana-instruction = "3.5"
