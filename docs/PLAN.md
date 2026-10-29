@@ -109,7 +109,7 @@ pub enum VarswapError {
 | `FeedConfig` | `["feed", feed_id]` | varswap | ~64 | admin: risk parameters per feed (receiver program id, min_interval, max_conf, backfill_deadline) |
 | `Window` | `["window", feed_id, start_le, end_le, interval_le]` | varswap | ~200, computed in M3 | `create_window` (anyone), `sample` (anyone), `finalize` (anyone) |
 | `Swap` | `["swap", window, long, short, swap_index_le]` | varswap | 8 + 32×3 + 8×4 + 1 + 8×2 + 2 = ~162 | `open_swap`, `settle_swap`, `claim_*` (payouts and claimed flags, +18 bytes) |
-| Collateral vault | ATA of the `Swap` PDA for USDC | SPL Token | 165 | token CPIs only |
+| Collateral vault | `["vault", swap]` PDA token account (system create + `initialize_account3`) | SPL Token | 165 | token CPIs only |
 
 ```rust
 struct Window {
@@ -135,7 +135,7 @@ settlement; it is listed as an open question for UI use.
 | 1 | `create_window` | payer | config, window (w), system |
 | 2 | `sample` | anyone (payer of fee only) | window (w), price_update (Pyth receiver account), clock sysvar |
 | 3 | `finalize` | anyone | window (w), clock |
-| 4 | `open_swap` | long, short, payer | window, swap (w), vault (w), long_usdc (w), short_usdc (w), usdc_mint, token program, ATA program, system |
+| 4 | `open_swap` | long, short, payer | window, swap (w), vault (w), long_usdc (w), short_usdc (w), usdc_mint, token program, system |
 | 5 | `settle_swap` | anyone | window, swap (w): computes and stores both payouts, state `Settled`; moves no tokens |
 | 5b | `claim_long` / `claim_short` | anyone | swap (w), vault (w), that side's USDC account (w), usdc_mint, token program: pays one side only, so a frozen USDC account on one side never blocks the other |
 | 6 | `close_swap` | anyone after both sides claimed (a permanently frozen side leaves the rent locked; accepted) | swap (w), vault (w), rent receiver = payer recorded in swap |
@@ -157,8 +157,8 @@ settlement; it is listed as an open question for UI use.
   exponent (log returns are scale invariant), so a Pyth exponent change mid-window does not
   brick it. Clock read with the Pinocchio syscall.
 - `open_swap`: both parties sign; window not finalized and `now < window.start` (no opening
-  after sampling begins, so nobody trades on known returns); swap PDA; vault is the ATA of the
-  swap PDA with the config's USDC mint; collateral amounts recomputed on-chain, not trusted
+  after sampling begins, so nobody trades on known returns); swap PDA; vault is the `["vault", swap]` PDA token account
+  for the swap's USDC mint; collateral amounts recomputed on-chain, not trusted
   from data.
 - `finalize`: immediately when all `N + 1` buckets are filled, otherwise only after
   `end + backfill_deadline`, so nobody can degrade a window by finalizing early. Fewer than 2 samples or `t_last == t_first`: unwind explicitly
@@ -314,7 +314,8 @@ whenever it is added or touched.
 | `solana-address` | 2.9.0 | `2.9` |
 | `pinocchio-system` | 0.7.0 | `0.7` |
 | `pinocchio-token` | 0.7.0 | `0.7`, see conflict below |
-| `pinocchio-associated-token-account` | 0.4.0 | `0.4`, see conflict below |
+| `rust_decimal` (SDK conversions) | 1.43.0 | `1.43` |
+| `optfix` | unpublished | git, pinned `rev` |
 | `litesvm-token` (dev) | 0.18.1 | `0.18` |
 | `pyth-solana-receiver-sdk` (dev only, fixtures and cross-check) | 2.0.0 | `2.0` |
 
@@ -323,7 +324,8 @@ whenever it is added or touched.
 `solana-account-view ^2.0` (the Pinocchio 0.11 generation), while `pinocchio` 0.12.0 depends on
 `solana-account-view` 3.0; `pinocchio-system` 0.7.0 already targets `pinocchio ^0.12`. So the
 latest stable versions of all four cannot be combined today. Options: (a) Pinocchio 0.12 with
-the few token CPIs written in-crate (`transfer_checked`, `mint_to`, `burn`, account creation),
+the three token CPIs varswap needs written in-crate (`transfer_checked`, `close_account`,
+`initialize_account3`; the vault is a PDA token account, so no ATA crate at all),
 replaced by `pinocchio-token` once a 0.12-compatible release exists; (b) the whole set one
 generation back (Pinocchio 0.11, as matchbook), against the latest-stable rule; (c) wait for the
 companion releases. Proposal: (a), re-checked on crates.io at the start of the milestone.
