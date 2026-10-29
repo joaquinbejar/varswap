@@ -16,8 +16,8 @@ varswap-core = { path = "varswap-core", version = "0.1" }
 bytemuck = { version = "1.25", default-features = false, features = ["derive"] }
 proptest = "1.12"
 # Unpublished sibling (crates.io at its milestone 7): git, pinned by rev (rules/global_rules.md).
-# fd1e81c = optfix M3 merge: Q64.64 `Fixed`, `ln` within 2 ulp.
-optfix = { git = "https://github.com/joaquinbejar/optfix", rev = "fd1e81c5726c0b0a0e6e252f497f821cbcf92b97" }
+# 622b343 = optfix#10 merge: adds `wide::mul_shr` (exact 256-bit multiply-and-shift).
+optfix = { git = "https://github.com/joaquinbejar/optfix", rev = "622b343b7416d5fa1b31ac8d2a55b3528ce39584" }
 # Pinocchio 0.11 generation: decided exception to the latest-stable rule (docs/PLAN.md).
 pinocchio = { version = "0.11", default-features = false, features = ["cpi"] }
 pinocchio-system = "0.6"

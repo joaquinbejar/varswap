@@ -27,6 +27,8 @@ use varswap_core::{
 };
 
 const TWO_64: f64 = 18_446_744_073_709_551_616.0;
+/// `sum_sq` scale of `LnKernel` (`2^-96`).
+const TWO_96: f64 = 79_228_162_514_264_337_593_543_950_336.0;
 
 fn config() -> Config {
     let cases = std::env::var("VARSWAP_PROPTEST_CASES")
@@ -62,7 +64,8 @@ fn test_same_price_other_exponent_zero_return() {
     // 1.0 written as 1_000e-3 and as 100_000e-5.
     let r = LnKernel::log_return(sp(1_000, -3), sp(100_000, -5)).unwrap();
     let bound = LnKernel::term_error_bound(r, 2).unwrap();
-    assert!(r.raw().unsigned_abs() <= bound / 2 + 1, "r = {}", r.raw());
+    // |r| is within δr = 2 × 2 + 2 raw units of zero.
+    assert!(r.raw().unsigned_abs() <= 6, "r = {}", r.raw());
     let sq = LnKernel
         .squared_log_return(sp(1_000, -3), sp(100_000, -5))
         .unwrap();
@@ -78,7 +81,7 @@ fn test_extreme_exponents_do_not_overflow() {
     let sq = LnKernel
         .squared_log_return(sp(1, -128), sp(1, 127))
         .unwrap();
-    assert!((sq.raw() as f64 / TWO_64 - want * want).abs() < 1e-9);
+    assert!((sq.raw() as f64 / TWO_96 - want * want).abs() < 1e-9);
     // The largest mantissas.
     assert!(LnKernel::log_return(sp(1, 0), sp(i64::MAX, 0)).is_ok());
 }
@@ -89,7 +92,7 @@ fn test_squared_return_rounds_down_and_is_symmetric() {
     let down = LnKernel.squared_log_return(sp(110, 0), sp(100, 0)).unwrap();
     // 1.1 is not exact in f64: take the reference from the integer prices.
     let r = ref_log_return(100, 110);
-    let want = r * r * TWO_64;
+    let want = r * r * TWO_96;
     for got in [up.raw(), down.raw()] {
         let bound = LnKernel::term_error_bound(Fixed::from_raw((r * TWO_64) as i128), 0).unwrap();
         assert!(
@@ -167,9 +170,9 @@ proptest! {
             let bk = s.boundary(k as u32).unwrap().get();
             w.sample(&print(p as u64, i32::from(exp), bk + 1, bk - 1), now, &LnKernel).unwrap();
         }
-        // Each term against f64 at near-ulp resolution: the reference's own error is about
-        // 4 × 2^-53 relative (ln_1p, the division, the square), so the tolerance is the
-        // kernel bound plus that, in raw units.
+        // Each term against f64 (magnitude: at the 2^-96 scale the reference's own error,
+        // about 4 × 2^-53 relative, exceeds the kernel bound; the exact check is the decimal
+        // fixture in tests/vcons_exact.rs). Tolerance: the kernel bound plus that error.
         let mut sum = 0u128;
         let mut worst = 0f64;
         for pair in prices.windows(2) {
@@ -178,7 +181,7 @@ proptest! {
                 .unwrap()
                 .raw();
             let r = ref_log_return(pair[0], pair[1]);
-            let want = r * r * TWO_64;
+            let want = r * r * TWO_96;
             let bound = LnKernel::term_error_bound(Fixed::from_raw((r * TWO_64) as i128), 0)
                 .unwrap() as f64;
             let tol = bound + 4.0 * f64::EPSILON * want + 1.0;
@@ -194,7 +197,11 @@ proptest! {
         let span = u128::from(interval) * u128::from(n);
         prop_assert_eq!(
             w.realized_var().unwrap(),
-            Some(sum * u128::from(YEAR_SECONDS) / span)
+            Some(
+                optfix::wide::mul_shr(sum, u128::from(YEAR_SECONDS), 32, optfix::Rounding::Down)
+                    .unwrap()
+                    / span
+            )
         );
         prop_assert!(worst.is_finite());
 
@@ -222,8 +229,10 @@ proptest! {
         let exact_hi = (hi + comp) * YEAR_SECONDS as f64 / span as f64;
         let exact_v = exact_hi / TWO_64;
         if exact_v <= 25.0 {
+            // term bounds are in 2^-96 units; annualized into Q64.64 they shrink by 2^32.
             prop_assert!(
-                term_bounds * YEAR_SECONDS as f64 / span as f64 + 1.0 <= eps as f64,
+                term_bounds / 4_294_967_296.0 * YEAR_SECONDS as f64 / span as f64 + 1.0
+                    <= eps as f64,
                 "closed form {} below the per-term sum {}", eps, term_bounds
             );
         }
@@ -303,7 +312,8 @@ fn test_realized_var_error_bound_covers_gbm_windows() {
         let bound = LnKernel::realized_var_error_bound(Seconds::new(interval), cap_raw, 0).unwrap();
         // Closed form in f64.
         let y = (YEAR_SECONDS as f64 / f64::from(interval)).ceil();
-        let closed = 2.0 * 4.0 * (cap * y).sqrt() + 3.0 * y + 2.0;
+        // sum_sq at 2^-96: the per-term rounding contributes ceil(3Y / 2^32), at most 1 here.
+        let closed = 2.0 * 4.0 * (cap * y).sqrt() + (3.0 * y / 4_294_967_296.0).ceil() + 2.0;
         assert!((bound as f64 - closed).abs() <= 3.0, "{bound} vs {closed}");
         for seed in 0..20u64 {
             let prices = gbm(seed, 150.0, 0.0, sigma, interval, n, -8);
@@ -318,7 +328,10 @@ fn test_realized_var_error_bound_covers_gbm_windows() {
                 exact += r * r;
             }
             let span = u128::from(interval) * u128::from(n);
-            let got = (sum * u128::from(YEAR_SECONDS) / span) as f64;
+            let got =
+                (optfix::wide::mul_shr(sum, u128::from(YEAR_SECONDS), 32, optfix::Rounding::Down)
+                    .unwrap()
+                    / span) as f64;
             let want = exact * two64 * YEAR_SECONDS as f64 / span as f64;
             if want > cap * two64 {
                 continue;
@@ -346,12 +359,12 @@ fn test_realized_var_error_bound_worst_case_numbers() {
     let n1 = (1u128 << 64) / b1;
     let n3600 = (1u128 << 64) / b3600;
     eprintln!("bound 60 s {b60} -> {n60}; 1 s {b1} -> {n1}; 3600 s {b3600} -> {n3600}");
-    assert_eq!((b60, n60), (1_605_802, 11_487_558_287_827));
-    assert_eq!((b1, n1), (94_832_630, 194_518_954_854));
-    assert_eq!((b3600, n3600), (30_026, 614_359_024_635_634));
+    assert_eq!((b60, n60), (29_003, 636_028_827_145_797));
+    assert_eq!((b1, n1), (224_631, 82_120_206_354_908));
+    assert_eq!((b3600, n3600), (3_747, 4_923_070_209_156_538));
     // Unpinned (Δe up to 255), for comparison.
     let u60 = LnKernel::realized_var_error_bound(Seconds::new(60), cap_raw, 255).unwrap();
-    assert_eq!(u60, 3_454_508);
+    assert_eq!(u60, 1_877_709);
     assert_eq!(
         LnKernel::realized_var_error_bound(Seconds::new(0), cap_raw, 0),
         Err(varswap_core::CoreError::ZeroInterval)
@@ -388,7 +401,7 @@ fn test_regression_ln_error_crosses_atom_boundary_without_v_cons() {
     let v = w.realized_var().unwrap().unwrap();
     assert_eq!(v, 9_674_578_593_639_773_024);
     let eps = LnKernel::realized_var_error_bound(Seconds::new(year), CAP, 0).unwrap();
-    assert_eq!(eps, 46);
+    assert_eq!(eps, 44);
 
     // The milestone 4 payout: long collateral NOTIONAL × STRIKE (exact here), plus
     // NOTIONAL × (min(V, cap) − STRIKE), floored; with STRIKE = 1 that is
@@ -402,7 +415,7 @@ fn test_regression_ln_error_crosses_atom_boundary_without_v_cons() {
     assert_eq!(long_payout(v), EXACT_PAYOUT + 1);
     // On V_cons it never exceeds the exact payout.
     let cons = LnKernel::conservative_realized_var(v, Seconds::new(year), CAP, 0).unwrap();
-    assert_eq!(cons, v - 46);
+    assert_eq!(cons, v - 44);
     assert!(long_payout(cons) <= EXACT_PAYOUT);
     assert_eq!(long_payout(cons), EXACT_PAYOUT);
 }

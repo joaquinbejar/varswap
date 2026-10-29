@@ -1,12 +1,17 @@
 //! The boundary to the log-return math, filled by optfix `ln` in milestone 3.
 
-use optfix::{Fixed, PricingError};
+use optfix::{Fixed, PricingError, Rounding};
 
 use crate::error::CoreError;
 use crate::print::StoredPrice;
 
+/// Scale of [`LnKernel`]'s `sum_sq`: `2^-96` per unit (32 more fractional bits than Q64.64,
+/// so the truncation of each squared return costs `2^-96`, not `2^-64`; `docs/PLAN.md` 4.4,
+/// plan (B)). The `u128` holds a sum of squared log returns up to `2^32`.
+pub const SUM_SQ_SCALE_BITS: u32 = 96;
+
 /// Sum of squared log returns, in the raw fixed-point units of the [`ReturnKernel`] that
-/// produced it. Never negative.
+/// produced it ([`SUM_SQ_SCALE_BITS`] for [`LnKernel`]). Never negative.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[repr(transparent)]
 pub struct SumSq(u128);
@@ -156,8 +161,9 @@ impl LnKernel {
         Ok(r)
     }
 
-    /// Upper bound, in raw units, on the error of [`ReturnKernel::squared_log_return`] for a
-    /// term whose log return is `r` and whose exponents differ by `delta_exp`.
+    /// Upper bound, in `2^-96` units (the scale of `sum_sq`), on the error of
+    /// [`ReturnKernel::squared_log_return`] for a term whose log return is `r` and whose
+    /// exponents differ by `delta_exp`: `2 |r| δr + 3` with `δr` in `2^-64` units.
     ///
     /// # Errors
     ///
@@ -169,14 +175,15 @@ impl LnKernel {
             .and_then(|x| x.checked_add(u128::from(delta_exp)))
             .ok_or(CoreError::Overflow)?;
         let r_abs = r.raw().unsigned_abs();
-        // 2 |r| δr in raw units: (2 × r_raw × δr) / 2^64, rounded up (floor + 1); then + 1
-        // for δr² / 2^64 (at most 1 for δr below 2^32) and + 1 for the `mul_down` truncation.
+        // In 2^-96 units: 2 |r| δr = 2 × r_raw × δr / 2^32 (r_raw at 2^-64, δr in 2^-64 units),
+        // rounded up (floor + 1); then + 1 for δr² (at most 2^-128 × δr², below one unit for δr
+        // under 2^48) and + 1 for the truncation of the square.
         let two_r_dr = r_abs
             .checked_mul(dr)
             .and_then(|x| x.checked_mul(2))
             .ok_or(CoreError::Overflow)?;
         let scaled = two_r_dr
-            .checked_shr(64)
+            .checked_shr(32)
             .and_then(|x| x.checked_add(1))
             .ok_or(CoreError::Overflow)?;
         scaled.checked_add(2).ok_or(CoreError::Overflow)
@@ -189,16 +196,18 @@ impl LnKernel {
     /// `min(realized, cap_var)` (`cap_var` in Q64.64 raw units) and for exponent changes of at
     /// most `max_delta_exp` between adjacent buckets:
     ///
-    /// `ε <= 2 δr √(cap_var × Y) + 3 Y + 2`, `Y = ceil(YEAR_SECONDS / interval)`,
-    /// `δr = 2 × LN_MAX_ERROR_ULPS + max_delta_exp`.
+    /// `ε <= ceil(2 δr √(cap_var × Y) / 2^32) + ceil(3 Y / 2^32) + 2`,
+    /// `Y = ceil(YEAR_SECONDS / interval)`, `δr = 2 × LN_MAX_ERROR_ULPS + max_delta_exp`.
     ///
-    /// Derivation: each term is within `2 |r_i| δr + 3` raw units
-    /// ([`LnKernel::term_error_bound`]); summed over `N` terms and annualized by `F =
-    /// YEAR_SECONDS / (N × interval)`, the error is `F (2 δr Σ|r_i| + 3N) + 1`. By
+    /// Derivation: `sum_sq` is kept at `2^-96`, and each term is within `2 |r_i| δr + 3` units
+    /// of `2^-96` ([`LnKernel::term_error_bound`], `δr` in `2^-64` units). Summed over `N` terms
+    /// and annualized by `F = YEAR_SECONDS / (N × interval)` into Q64.64 (one more unit for the
+    /// final floor), the error is `F (2 δr Σ|r_i| + 3N 2^-32) + 1` raw units. By
     /// Cauchy–Schwarz `Σ|r_i| <= √(N Σ r_i²)`, and `F Σ r_i² = V`, the realized variance, so
-    /// `F × 2 δr √(N Σ r_i²) = 2 δr √(V × F × N) = 2 δr √(V × Y)` and `F × 3N = 3Y`: the bound
-    /// does not depend on `N`. The payoff only reads `min(V, cap_var)`, which is 1-Lipschitz,
-    /// and `V − ε(V)` increases with `V`, so evaluating at `V = cap_var` covers every path.
+    /// `F × 2 δr Σ|r_i| <= 2 δr √(V × Y)` and `F × 3N = 3Y`: the bound does not depend on
+    /// `N`. With `V = cap_var / 2^64`, `2 δr √(V Y) = 2 δr √(cap_var × Y) / 2^32`. The payoff
+    /// only reads `min(V, cap_var)`, which is 1-Lipschitz, and `V − ε(V)` increases with `V`,
+    /// so evaluating at `V = cap_var` covers every path.
     ///
     /// Payouts do not settle on the computed variance but on
     /// [`LnKernel::conservative_realized_var`] (`V − ε`; capped, never above the capped exact
@@ -226,7 +235,7 @@ impl LnKernel {
             .checked_mul(2)
             .and_then(|x| x.checked_add(u128::from(max_delta_exp)))
             .ok_or(CoreError::Overflow)?;
-        // V = cap_var / 2^64 (real), so √(V × Y) = √(cap_var × Y) / 2^32. δr counts raw
+        // V = cap_var / 2^64 (real), so √(V × Y) = √(cap_var × Y) / 2^32. δr counts 2^-64
         // units, hence 2 δr √(V Y) raw units = 2 δr √(cap_var × Y) / 2^32, rounded up
         // (isqrt + 1, then shift + 1).
         let q = cap_var.checked_mul(y).ok_or(CoreError::Overflow)?;
@@ -237,8 +246,14 @@ impl LnKernel {
             .and_then(|x| x.checked_shr(32))
             .and_then(|x| x.checked_add(1))
             .ok_or(CoreError::Overflow)?;
+        // 3 Y / 2^32 rounded up: the per-term +3 (in 2^-96 units) after annualization.
+        let rounding = y
+            .checked_mul(3)
+            .and_then(|x| x.checked_add((1 << 32) - 1))
+            .and_then(|x| x.checked_shr(32))
+            .ok_or(CoreError::Overflow)?;
         main_raw
-            .checked_add(y.checked_mul(3).ok_or(CoreError::Overflow)?)
+            .checked_add(rounding)
             .and_then(|x| x.checked_add(2))
             .ok_or(CoreError::Overflow)
     }
@@ -289,20 +304,28 @@ fn kernel_err(e: PricingError) -> CoreError {
 }
 
 impl ReturnKernel for LnKernel {
+    /// `r²` at scale [`SUM_SQ_SCALE_BITS`] (`2^-96`): `floor(|r_raw|² / 2^32)` through the full
+    /// 256-bit product (`optfix::wide::mul_shr`), rounded down. Fits while `|r| < 2^16`; a log
+    /// return is at most `ln(i64::MAX) + 255 ln 10`, about 630.
     fn squared_log_return(&self, from: StoredPrice, to: StoredPrice) -> Result<SumSq, CoreError> {
-        let r = Self::log_return(from, to)?;
-        let sq = r.mul_down(r).map_err(kernel_err)?;
-        u128::try_from(sq.raw())
+        let r = Self::log_return(from, to)?.raw().unsigned_abs();
+        optfix::wide::mul_shr(r, r, 32, Rounding::Down)
             .map(SumSq::from_raw)
-            .map_err(|_| CoreError::Overflow)
+            .map_err(kernel_err)
     }
 
-    /// `sum_sq × YEAR_SECONDS / span` in Q64.64 raw units, rounded down (toward the short).
+    /// `sum_sq × YEAR_SECONDS / span`, from `2^-96` to Q64.64 raw units, rounded down (toward
+    /// the short): `floor(floor(sum × YEAR / 2^32) / span)`, which equals the single floor.
     fn annualize(&self, sum_sq: SumSq, span_seconds: u64) -> Result<u128, CoreError> {
-        sum_sq
-            .raw()
-            .checked_mul(u128::from(crate::YEAR_SECONDS))
-            .and_then(|x| x.checked_div(u128::from(span_seconds)))
+        let shifted = optfix::wide::mul_shr(
+            sum_sq.raw(),
+            u128::from(crate::YEAR_SECONDS),
+            32,
+            Rounding::Down,
+        )
+        .map_err(kernel_err)?;
+        shifted
+            .checked_div(u128::from(span_seconds))
             .ok_or(CoreError::Overflow)
     }
 }

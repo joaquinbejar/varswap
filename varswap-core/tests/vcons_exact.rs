@@ -127,11 +127,13 @@ fn test_vcons_direction_and_budget_against_decimal_reference() {
     }
     // The fixture exercises both edges of the argument.
     assert!(above_cap_uncapped_violations >= 1);
-    assert_eq!(max_advantage, 2);
+    // With sum_sq at 2^-96 the largest observed advantage is one whole atom below the floor
+    // (two with the 2^-64 accumulation); the bound allows two.
+    assert_eq!(max_advantage, 1);
 }
 
-/// Codex #36470 (1): above the cap the uncapped V_cons exceeds V_exact (…6963 > …6955.86),
-/// yet the capped guarantee holds.
+/// Codex #36470 (1): above the cap the uncapped V_cons exceeds V_exact (…6965 > …6955.86
+/// with the 2^-96 accumulation; …6963 before), yet the capped guarantee holds.
 #[test]
 fn test_regression_above_cap_uncapped_direction_fails_capped_holds() {
     let c = cases().into_iter().nth(1).unwrap();
@@ -139,24 +141,26 @@ fn test_regression_above_cap_uncapped_direction_fails_capped_holds() {
     let v = realized(&c);
     let cons = LnKernel::conservative_realized_var(v, Seconds::new(c.interval), c.cap, 0).unwrap();
     assert_eq!(c.v_exact_floor, 23_440_309_410_282_258_976_955);
-    assert_eq!(cons % 10_000, 6_963);
+    assert_eq!(cons % 10_000, 6_965);
     assert!(cons > c.v_exact_floor, "uncapped V_cons <= V_exact here");
     assert!(cons.min(c.cap) <= c.v_exact_floor.min(c.cap));
     assert_eq!(long_payout(&c, cons), c.payout_exact_floor);
 }
 
-/// Codex #36470 (2): strike 1, the exact long payout floors to 76 and the conservative one to
-/// 74: a 2-atom short advantage, inside the 3-atom budget.
+/// Codex #36470 (2), at codex's notional 401,016,175,515,425,035: strike 1, the exact long
+/// payout floors to 76 (100-digit decimal); the conservative one stays within the 3-atom
+/// budget below it: 75 now, 74 with the 2^-64 accumulation and ε = 46.
 #[test]
 fn test_regression_two_atom_short_advantage_within_budget() {
-    let c = cases().into_iter().nth(2).unwrap();
+    let mut c = cases().into_iter().nth(2).unwrap();
     assert_eq!(
         c.prices,
         [1_726_933_792_193_200_381, 1_726_933_815_967_915_399]
     );
-    assert_eq!(c.notional, 401_016_175_515_425_035);
+    c.notional = 401_016_175_515_425_035;
+    c.payout_exact_floor = 76;
     let v = realized(&c);
     let cons = LnKernel::conservative_realized_var(v, Seconds::new(c.interval), c.cap, 0).unwrap();
-    assert_eq!(c.payout_exact_floor, 76);
-    assert_eq!(long_payout(&c, cons), 74);
+    // 75 with the 2^-96 accumulation (ε = 44): one atom below the exact floor.
+    assert_eq!(long_payout(&c, cons), 75);
 }

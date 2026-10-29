@@ -368,12 +368,14 @@ conservation invariant trivial; open question 4.
 
 Realized variance error (milestone 1b, decided 2026-10-29). optfix `ln` is within 2 ulp
 (`2^-64`) and rounds to nearest, so its error is undirected. Per squared log return the error
-is at most `2 |r| δr + 3` raw units, `δr = 4 + |Δe|` (two `ln` calls plus the half-ulp
+is at most `2 |r| δr + 3` units of `2^-96` (the scale `sum_sq` is kept at since milestone 4,
+plan (B) below), `δr = 4 + |Δe|` in `2^-64` units (two `ln` calls plus the half-ulp
 `ln 10` constant scaled by the exponent change; `LnKernel::term_error_bound`, checked per term
 by the GBM proptest). Over a complete window, by Cauchy–Schwarz, the realized variance error
 is at most
 
-`ε(interval, cap) = 2 δr √(cap × Y) + 3 Y + 2` raw units, `Y = ceil(YEAR_SECONDS / interval)`,
+`ε(interval, cap) = ceil(2 δr √(cap × Y) / 2^32) + ceil(3 Y / 2^32) + 2` Q64.64 raw units
+(`cap` raw), `Y = ceil(YEAR_SECONDS / interval)`,
 
 independent of the number of buckets (`LnKernel::realized_var_error_bound`; derivation in its
 docs). The payoff reads `min(realized, cap_var)`, so the bound is evaluated at `cap_var`.
@@ -389,21 +391,24 @@ window's remaining buckets, so it degrades and its swaps unwind; the admin updat
 
 | Interval | ε (raw) | ε (variance) | Max notional for ε < 1 atom (atoms per unit variance) |
 | --- | ---: | ---: | ---: |
-| 1 s | 94,832,630 | `5.1 × 10^-12` | `1.95 × 10^11` (195k USDC) |
-| 60 s | 1,605,802 | `8.7 × 10^-14` | `1.15 × 10^13` (11.5M USDC) |
-| 3,600 s | 30,026 | `1.6 × 10^-15` | `6.14 × 10^14` (614M USDC) |
+| 1 s | 224,631 | `1.2 × 10^-14` | `8.21 × 10^13` (82.1M USDC) |
+| 60 s | 29,003 | `1.6 × 10^-15` | `6.36 × 10^14` (636M USDC) |
+| 3,600 s | 3,747 | `2.0 × 10^-16` | `4.92 × 10^15` (4.92B USDC) |
 
-Unpinned (`Δe` up to 255) the 60 s row would be 3,454,508 raw (5.3M USDC). At short intervals
-the `3 Y` term dominates: one raw unit of `mul_down` truncation per term plus the bound's own
-round-up.
+Exact values, tested in `varswap-core/tests/ln_kernel.rs`. Unpinned (`Δe` up to 255) the 60 s
+row would be 1,877,709 raw. Before plan (B), with `sum_sq` at `2^-64`, the `3 Y` term (one raw
+unit of truncation per term) dominated at short intervals: 195k, 11.5M and 614M USDC for the
+same rows.
 
-**Milestone 4 plan (B), approved 2026-10-29:** accumulate `sum_sq` at `2^-96` instead of
-`2^-64`: each term is the 256-bit product `r × r` shifted to `2^-96` (rounded down), so the
-per-term truncation falls from `2^-64` to `2^-96` and the `3 Y` term to about `2^-32 × 3 Y`;
-the `u128` sum still holds `2^32` units of `Σ r²`. `annualize` converts back to Q64.64
-(rounded down). The widening multiply-and-shift comes from optfix as a public, reviewed
-function (requested by the coordinator), not a copy; milestone 4 pins that optfix rev and
-regenerates this table with exact limits from `realized_var_error_bound`.
+**Plan (B), done in milestone 4b:** `sum_sq` is accumulated at `2^-96` instead of `2^-64`
+(`SUM_SQ_SCALE_BITS`): each term is `floor(|r_raw|² / 2^32)` through the full 256-bit product,
+so the per-term truncation falls from `2^-64` to `2^-96` and the `3 Y` term to
+`ceil(3 Y / 2^32)`, at most 1. The `u128` sum still holds `2^32` units of `Σ r²` (a log return
+is at most about 630). `annualize` converts back to Q64.64 as
+`floor(floor(sum × YEAR / 2^32) / span)`, rounded down. Both multiplications, and the swap
+collateral and payout products, use `optfix::wide::mul_shr` (optfix rev `622b343`), the
+single reviewed 256-bit multiply-and-shift. The window layout is unchanged (`sum_sq` was
+already 16 bytes).
 
 **Which case applies: the bound is applied in the short's favour (codex review of #11).**
 A payoff error under one atom is not enough by itself: the payout is floored in atoms, and a
@@ -428,7 +433,8 @@ conservative variance `V_cons = max(0, V − ε(window.interval, cap_var))`
   short advantage), at the largest notional the limit allows: `|min(V, cap) − min(V_exact,
   cap)| <= ε`, `min(V_cons, cap) <= min(V_exact, cap)`, the long never overpaid, the short's
   advantage at most 2 whole atoms below the exact payout's floor (under 3 against the exact
-  payout), and `ε` equal to an independent Python replica. The GBM proptest checks the same
+  payout; the largest observed is 1 since plan (B), 2 before), and `ε` equal to an
+  independent Python replica. The GBM proptest checks the same
   quantities' magnitudes in f64 (a mutation subtracting `4ε` fails it at 4.5 atoms).
 
 The directed parts of the kernel (`r²` and the annualization rounded down) also lower the
@@ -526,9 +532,9 @@ to build test accounts and to cross-check the decoder.
      (`docs/benchmarks.md`).
    - The replay from real SOL/USD prints moves to milestone 6, where keepers need Hermes
      access anyway (verified facts, 2026-10-29).
-4. **Swaps.** `open_swap`, `settle_swap`, `close_swap`. Status (milestone 4a, 2026-10-29):
-   done except plan (B) of 4.4, which waits for the optfix rev with the public widening
-   multiply. `varswap_core::SwapTerms` holds the math (collateral rounded up, the long's gain
+4. **Swaps.** `open_swap`, `settle_swap`, `close_swap`. Status (2026-10-29): done; milestone
+   4a the swap program, milestone 4b plan (B) of 4.4 (`sum_sq` at `2^-96`, optfix
+   `wide::mul_shr` at rev `622b343`, the limit table regenerated). `varswap_core::SwapTerms` holds the math (collateral rounded up, the long's gain
    floored and loss ceiled, clamped to `[0, total]`, unwind returns each collateral, the
    error-bound gate); `settle_swap` pays on `LnKernel::conservative_realized_var`. Program
    error codes are now 100 to 139, `140 +` `PythError`, `160 +` `CoreError::code`, `220 +`
@@ -639,7 +645,7 @@ whenever it is added or touched.
 | `pinocchio-system` | 0.7.0 (0.6.1 used) | `0.6`, decided exception below |
 | `pinocchio-token` | 0.7.0 | `0.7`, see conflict below |
 | `rust_decimal` (SDK conversions) | 1.43.0 | `1.43` |
-| `optfix` | unpublished | git, pinned `rev = fd1e81c5726c0b0a0e6e252f497f821cbcf92b97` (optfix M3) |
+| `optfix` | unpublished | git, pinned `rev = 622b343b7416d5fa1b31ac8d2a55b3528ce39584` (optfix#10: `wide::mul_shr`) |
 | `litesvm-token` (dev) | 0.18.1 | `0.18` |
 | `pyth-solana-receiver-sdk` (dev only, fixtures and cross-check) | 2.0.0 | `2.0` |
 | `anchor-lang` (dev only, pyth-lite cross-check; approved 2026-10-29) | 1.2.2 | `1.2` |

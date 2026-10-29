@@ -27,7 +27,7 @@ mod window;
 pub use error::CoreError;
 #[cfg(feature = "insecure-test-kernel")]
 pub use kernel::IntegerKernel;
-pub use kernel::{LnKernel, ReturnKernel, SumSq, LN_10_RAW};
+pub use kernel::{LnKernel, ReturnKernel, SumSq, LN_10_RAW, SUM_SQ_SCALE_BITS};
 pub use print::{Print, StoredPrice};
 pub use spec::{BucketRun, RiskParams, WindowSpec};
 pub use swap::{Settlement, SwapTerms, MAX_CAP_VAR};
