@@ -52,7 +52,7 @@ pub struct WindowSpec {
     pub end: UnixTimestamp,
     pub interval: Seconds,       // sampling grid, e.g. 3600
     // Copied at creation from the admin-written FeedConfig, never from the creator (3.3):
-    pub tolerance: Seconds,      // halt bound: publish_time <= boundary + tolerance (4.1)
+    pub tolerance: Seconds,      // long outage guard, hours: publish_time <= boundary + tolerance (4.1)
     pub max_conf: Bps,           // loose sanity bound only (4.1)
     pub backfill_deadline: Seconds, // buckets can be filled until end + this (4.1, 4.3)
     pub receiver_program: Address,  // copied from FeedConfig; samples are checked against it
@@ -108,7 +108,7 @@ pub enum VarswapError {
 | --- | --- | --- | --- | --- |
 | `Config` | `["config"]` | varswap | 8 + 32 + 32 + 8 | admin |
 | `FeedConfig` | `["feed", feed_id]` | varswap | ~64 | admin: risk parameters per feed (receiver program id, min_interval, tolerance, max_conf, backfill_deadline, max_buckets) |
-| `Window` | `["window", feed_id, start_le, end_le, interval_le]` | varswap | ~200, computed in M3 | `create_window` (anyone), `sample` (anyone), `finalize` (anyone) |
+| `Window` | `["window", feed_id, start_le, end_le, interval_le]` | varswap | about 6.5 KB for 721 buckets (header + bitmap + 9 bytes per bucket) | `create_window` (anyone), `sample` (anyone), `finalize` (anyone) |
 | `Swap` | `["swap", window, long, short, swap_index_le]` | varswap | 8 + 32×3 + 8×4 + 1 + 8×2 + 2 = ~162 | `open_swap`, `settle_swap`, `claim_*` (payouts and claimed flags, +18 bytes) |
 | Collateral vault | `["vault", swap]` PDA token account (system create + `initialize_account3`) | SPL Token | 165 | token CPIs only |
 
@@ -132,7 +132,7 @@ settlement; it is listed as an open question for UI use.
 | # | Instruction | Signers | Accounts |
 | --- | --- | --- | --- |
 | 0 | `init_config` | admin, payer | config (w), system |
-| 0b | `set_feed_config` | admin | config, feed_config (w), system: validates `max_conf`, `0 < tolerance < min_interval`, `backfill_deadline > 0`, `max_buckets` fits 10 KiB |
+| 0b | `set_feed_config` | admin | config, feed_config (w), system: validates `max_conf`, `tolerance > 0`, `backfill_deadline > 0`, `max_buckets` fits 10 KiB |
 | 1 | `create_window` | payer | config, window (w), system |
 | 2 | `sample` | anyone (payer of fee only) | window (w), price_update (Pyth receiver account), clock sysvar |
 | 3 | `finalize` | anyone | window (w), clock |
@@ -207,9 +207,17 @@ So samples are **canonical**:
   `N` at `create_window`. When bucket `k` is filled, the returns to its filled neighbours `k − 1`
   and `k + 1` are added to `sum_sq`, so a sample costs at most two `ln` calls and finalize
   costs none.
-- Halt bound: the canonical print must also satisfy `publish_time <= b_k + tolerance`;
-  otherwise the first print after an outage would be canonical for every boundary in the
-  gap and fill them all with one price (zero returns). A gap then leaves buckets empty.
+- Outages: the first print after `b_k` is canonical for every boundary it crosses, so after
+  an outage it fills all the gap's buckets with one price. That is not a bias: the gap's
+  whole move appears as one return spanning `m` intervals, whose square has the same
+  expectation as the sum of `m` squared returns (`σ² m Δ`); only unobserved reversals inside
+  the gap are lost, and nobody can choose them (varswap session). A tight halt bound would
+  instead turn every Pyth halt into an unwind, and halts cluster in stress events, when the
+  short is losing: the same free option as a tight confidence filter. So the only guard is a
+  long one: `publish_time <= b_k + tolerance` with `tolerance` in hours (proposed 6 h),
+  documented as an exceptional unwind; the bias study counts how often real SOL/USD history
+  would have tripped it. (metalbook keeps a short tolerance: its payoff is a mean of prices,
+  where one reopening print filling many slots would bias the mean.)
 - Confidence: no tight filter. Canonicity and `Full` verification already remove the
   pusher's choice, and a tight `max_conf` would make a missing bucket (hence an unwind) most
   likely exactly when variance is high and the short is losing: a free option for the short
