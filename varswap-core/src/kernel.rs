@@ -183,6 +183,63 @@ impl LnKernel {
     }
 }
 
+impl LnKernel {
+    /// Upper bound, in Q64.64 raw units, on `|computed − exact|` realized variance of a
+    /// complete window on a grid of `interval` seconds, for payoffs that use
+    /// `min(realized, cap_var)` (`cap_var` in Q64.64 raw units) and for exponent changes of at
+    /// most `max_delta_exp` between adjacent buckets:
+    ///
+    /// `ε <= 2 δr √(cap_var × Y) + 3 Y + 2`, `Y = ceil(YEAR_SECONDS / interval)`,
+    /// `δr = 2 × LN_MAX_ERROR_ULPS + max_delta_exp`.
+    ///
+    /// Derivation: each term is within `2 |r_i| δr + 3` raw units
+    /// ([`LnKernel::term_error_bound`]); summed over `N` terms and annualized by `F =
+    /// YEAR_SECONDS / (N × interval)`, the error is `F (2 δr Σ|r_i| + 3N) + 1`. By
+    /// Cauchy–Schwarz `Σ|r_i| <= √(N Σ r_i²)`, and `F Σ r_i² = V`, the realized variance, so
+    /// `F × 2 δr √(N Σ r_i²) = 2 δr √(V × F × N) = 2 δr √(V × Y)` and `F × 3N = 3Y`: the bound
+    /// does not depend on `N`. The payoff only reads `min(V, cap_var)`, which is 1-Lipschitz,
+    /// and `V − ε(V)` increases with `V`, so evaluating at `V = cap_var` covers every path.
+    ///
+    /// # Errors
+    ///
+    /// [`CoreError::ZeroInterval`] or [`CoreError::Overflow`].
+    pub fn realized_var_error_bound(
+        interval: crate::Seconds,
+        cap_var: u128,
+        max_delta_exp: u8,
+    ) -> Result<u128, CoreError> {
+        let iv = u128::from(interval.get());
+        if iv == 0 {
+            return Err(CoreError::ZeroInterval);
+        }
+        let year = u128::from(crate::YEAR_SECONDS);
+        let y = year
+            .checked_add(iv)
+            .and_then(|x| x.checked_sub(1))
+            .and_then(|x| x.checked_div(iv))
+            .ok_or(CoreError::Overflow)?;
+        let dr = u128::from(optfix::LN_MAX_ERROR_ULPS)
+            .checked_mul(2)
+            .and_then(|x| x.checked_add(u128::from(max_delta_exp)))
+            .ok_or(CoreError::Overflow)?;
+        // V = cap_var / 2^64 (real), so √(V × Y) = √(cap_var × Y) / 2^32. δr counts raw
+        // units, hence 2 δr √(V Y) raw units = 2 δr √(cap_var × Y) / 2^32, rounded up
+        // (isqrt + 1, then shift + 1).
+        let q = cap_var.checked_mul(y).ok_or(CoreError::Overflow)?;
+        let root = q.isqrt().checked_add(1).ok_or(CoreError::Overflow)?;
+        let main_raw = root
+            .checked_mul(dr)
+            .and_then(|x| x.checked_mul(2))
+            .and_then(|x| x.checked_shr(32))
+            .and_then(|x| x.checked_add(1))
+            .ok_or(CoreError::Overflow)?;
+        main_raw
+            .checked_add(y.checked_mul(3).ok_or(CoreError::Overflow)?)
+            .and_then(|x| x.checked_add(2))
+            .ok_or(CoreError::Overflow)
+    }
+}
+
 fn ln_mantissa(p: StoredPrice) -> Result<Fixed, CoreError> {
     optfix::ln(Fixed::from_int(p.price())).map_err(kernel_err)
 }

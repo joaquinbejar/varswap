@@ -22,7 +22,7 @@ use optfix::Fixed;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, RngSeed};
 use varswap_core::{
-    LnKernel, ReturnKernel, StoredPrice, UnixTimestamp, Window, WindowState, LN_10_RAW,
+    LnKernel, ReturnKernel, Seconds, StoredPrice, UnixTimestamp, Window, WindowState, LN_10_RAW,
     YEAR_SECONDS,
 };
 
@@ -235,4 +235,73 @@ fn test_gbm_estimates_sigma_squared() {
     let var = w.realized_var().unwrap().unwrap() as f64 / TWO_64;
     let se = 0.64 * (2.0f64 / 720.0).sqrt();
     assert!((var - 0.64).abs() < 4.0 * se, "realized {var}");
+}
+
+/// `realized_var_error_bound` matches its closed form and covers the actual error of complete
+/// windows on GBM paths below the cap. A sanity check only: over a whole window the f64
+/// reference's own error is larger than the bound; the tight check is the per-term proptest,
+/// from which the closed form follows by the derivation in the function's docs.
+#[test]
+fn test_realized_var_error_bound_covers_gbm_windows() {
+    let two64 = TWO_64;
+    for (interval, n, sigma) in [
+        (60u32, 1_104u32, 3.0f64),
+        (1, 1_104, 1.0),
+        (3_600, 720, 0.8),
+    ] {
+        let cap = 25.0f64; // 500% vol squared
+        let cap_raw = (cap * two64) as u128;
+        let bound = LnKernel::realized_var_error_bound(Seconds::new(interval), cap_raw, 0).unwrap();
+        // Closed form in f64.
+        let y = (YEAR_SECONDS as f64 / f64::from(interval)).ceil();
+        let closed = 2.0 * 4.0 * (cap * y).sqrt() + 3.0 * y + 2.0;
+        assert!((bound as f64 - closed).abs() <= 3.0, "{bound} vs {closed}");
+        for seed in 0..20u64 {
+            let prices = gbm(seed, 150.0, 0.0, sigma, interval, n, -8);
+            let mut sum = 0u128;
+            let mut exact = 0f64;
+            for pair in prices.windows(2) {
+                sum += LnKernel
+                    .squared_log_return(sp(pair[0], -8), sp(pair[1], -8))
+                    .unwrap()
+                    .raw();
+                let r = ref_log_return(pair[0], pair[1]);
+                exact += r * r;
+            }
+            let span = u128::from(interval) * u128::from(n);
+            let got = (sum * u128::from(YEAR_SECONDS) / span) as f64;
+            let want = exact * two64 * YEAR_SECONDS as f64 / span as f64;
+            if want > cap * two64 {
+                continue;
+            }
+            // f64 slack: the reference's own relative error over the sum.
+            let slack = want * f64::from(n + 4) * f64::EPSILON;
+            assert!(
+                (got - want).abs() <= bound as f64 + slack,
+                "interval {interval} seed {seed}: error {} > bound {bound} + {slack}",
+                (got - want).abs()
+            );
+        }
+    }
+}
+
+#[test]
+fn test_realized_var_error_bound_worst_case_numbers() {
+    // The values PLAN 4.4 quotes: cap 25 (500% vol), exponent changes up to 255.
+    let cap_raw = 25u128 << 64;
+    let b60 = LnKernel::realized_var_error_bound(Seconds::new(60), cap_raw, 255).unwrap();
+    let b1 = LnKernel::realized_var_error_bound(Seconds::new(1), cap_raw, 255).unwrap();
+    let b3600 = LnKernel::realized_var_error_bound(Seconds::new(3_600), cap_raw, 255).unwrap();
+    // Max notional (atoms per unit variance) with error under one atom: 2^64 / ε.
+    let n60 = (1u128 << 64) / b60;
+    let n1 = (1u128 << 64) / b1;
+    let n3600 = (1u128 << 64) / b3600;
+    eprintln!("bound 60 s {b60} -> {n60}; 1 s {b1} -> {n1}; 3600 s {b3600} -> {n3600}");
+    assert_eq!((b60, n60), (3_454_508, 5_339_904_864_516));
+    assert_eq!((b1, n1), (109_152_646, 168_999_513_522));
+    assert_eq!((b3600, n3600), (268_693, 68_653_608_667_548));
+    assert_eq!(
+        LnKernel::realized_var_error_bound(Seconds::new(0), cap_raw, 0),
+        Err(varswap_core::CoreError::ZeroInterval)
+    );
 }

@@ -356,19 +356,32 @@ as "rounding toward the short", a deliberate, symmetric-enough choice that keeps
 conservation invariant trivial; open question 4.
 
 Realized variance error (milestone 1b, decided 2026-10-29). optfix `ln` is within 2 ulp
-(`2^-64`) and rounds to nearest, so its error is undirected. Per squared log return, with
-`δr <= 4 + |Δe|` raw units (two `ln` calls plus the half-ulp `ln 10` constant scaled by the
-exponent change), the error is at most `2 |r| δr + δr² + 1` raw units
-(`LnKernel::term_error_bound`): 3 raw units for an hourly `|r| <= 5%`. A 30-day hourly window
-(720 terms) is then within 2,160 raw units (`1.2 × 10^-16`) in `sum_sq` and, after
-annualization (`× YEAR_SECONDS / span`, about 12.2), within `1.4 × 10^-15` in realized
-variance: under one atom of payoff for a variance notional up to `7 × 10^14` atoms
-(`7 × 10^8` USDC) per unit of variance. The contract settles on the computed realized
-variance; the undirected part is below an atom at these notionals, and the directed parts
-(`r²` and the annualization rounded down) lower the realized variance, which is the short's
-side, consistent with the payout rounding above. So the residual goes to the short, like the
-other rounding, and is documented rather than compensated. Milestone 4 checks the notional
-cap against this bound.
+(`2^-64`) and rounds to nearest, so its error is undirected. Per squared log return the error
+is at most `2 |r| δr + 3` raw units, `δr = 4 + |Δe|` (two `ln` calls plus the half-ulp
+`ln 10` constant scaled by the exponent change; `LnKernel::term_error_bound`, checked per term
+by the GBM proptest). Over a complete window, by Cauchy–Schwarz, the realized variance error
+is at most
+
+`ε(interval, cap) = 2 δr √(cap × Y) + 3 Y + 2` raw units, `Y = ceil(YEAR_SECONDS / interval)`,
+
+independent of the number of buckets (`LnKernel::realized_var_error_bound`; derivation in its
+docs). The payoff reads `min(realized, cap_var)`, so the bound is evaluated at `cap_var`. Worst
+case, with `cap_var = 25` (500% vol) and exponent changes up to 255 (`δr = 259`):
+
+| Interval | ε (raw) | ε (variance) | Max notional for ε < 1 atom (atoms per unit variance) |
+| --- | ---: | ---: | ---: |
+| 1 s | 109,152,646 | `5.9 × 10^-12` | `1.69 × 10^11` (169k USDC) |
+| 60 s | 3,454,508 | `1.9 × 10^-13` | `5.34 × 10^12` (5.3M USDC) |
+| 3,600 s | 268,693 | `1.5 × 10^-14` | `6.87 × 10^13` (68.7M USDC) |
+
+**Which case applies: the bound holds by enforcement, so the `ln` error is dropped.**
+`open_swap` (milestone 4) rejects any swap with `notional × ε(window.interval, cap_var) >=
+2^64` (that is, a payoff error of one atom or more), computed on-chain from the window's
+interval and the swap's cap. Within that limit the payoff error is under one atom, and the
+payout already rounds down in atoms toward the short, so the residual is absorbed there with
+the other rounding (at most one more atom, to the short). The directed parts of the kernel
+(`r²` and the annualization rounded down) also lower the realized variance, the short's
+side. Nothing is subtracted from the variance before payout.
 
 ### 4.5 Annualization
 
@@ -465,8 +478,10 @@ to build test accounts and to cross-check the decoder.
 4. **Swaps.** `open_swap`, `settle_swap`, `close_swap`. *Done when* conservation
    (`payouts == collateral`) holds in proptest across realized in `[0, 2 × cap]`, degraded and
    unwind paths are tested, `claim_long` and `claim_short` are tested in both orders and with
-   either side's USDC account frozen (the other side still claims), and every forged account
-   is rejected.
+   either side's USDC account frozen (the other side still claims), every forged account
+   is rejected, and `open_swap` rejects `notional × LnKernel::realized_var_error_bound(
+   window.interval, cap_var, 255) >= 2^64` (the realized variance error bound of 4.4), with a
+   test at the limit and one just above it.
 5. **Benchmarks and manipulation study.** *Done when* `docs/benchmarks.md` has CU for every
    instruction and the README has the pusher-bias table and the outage tables from 4.1
    (compression error and unwind frequency per model and per `tolerance`).
