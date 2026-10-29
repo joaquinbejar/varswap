@@ -152,9 +152,14 @@ settlement; it is listed as an open question for UI use.
   in the window's `FeedConfig` copy, verified at milestone 2), has the `PriceUpdateV2` discriminator,
   `verification_level == Full`, `feed_id == window.spec.feed`, `price > 0`,
   `conf × 10_000 <= price × max_conf` computed in `u128`, `now <= end + backfill_deadline`,
-  window not finalized. The bucket is derived, not taken from data: `k = ceil((publish_time −
-  start) / interval)`, `0 <= k <= N`, the canonical crossing `prev_publish_time < b_k <=
-  publish_time` holds (4.1), and bucket `k` is empty. Each print converts to `Fixed` with its own
+  window not finalized. Buckets are derived, not taken from data: the print fills every `k` in `[0, N]` with
+  `prev_publish_time < b_k <= publish_time <= b_k + tolerance` (4.1), i.e. `k_lo =
+  max(0, floor((prev_publish_time − start) / interval) + 1, ceil((publish_time − tolerance −
+  start) / interval))` to `k_hi = min(N, floor((publish_time − start) / interval))`, all
+  empty, a run of at most `tolerance / interval + 1` buckets so CU stays bounded. Returns
+  inside the run are zero; only the two edge returns go to `sum_sq` (still at most two `ln`
+  calls). M3 test: an outage spanning 3 boundaries, one `sample` call, `sum_sq` equals one
+  return over 4 intervals. Each print converts to `Fixed` with its own
   exponent (log returns are scale invariant), so a Pyth exponent change mid-window does not
   brick it. Clock read with the Pinocchio syscall.
 - `open_swap`: both parties sign; window not finalized and `now < window.start` (no opening
