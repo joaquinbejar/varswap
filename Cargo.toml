@@ -1,5 +1,5 @@
 [workspace]
-members = ["varswap-core", "pyth-lite", "program", "study", "lint-control"]
+members = ["varswap-core", "pyth-lite", "program", "sdk", "study", "lint-control"]
 resolver = "2"
 
 [workspace.package]
@@ -13,6 +13,7 @@ repository = "https://github.com/joaquinbejar/varswap"
 # Versions checked on crates.io (max_stable_version) on 2026-10-29.
 pyth-lite = { path = "pyth-lite", version = "0.1" }
 varswap-core = { path = "varswap-core", version = "0.1" }
+varswap-sdk = { path = "sdk" }
 bytemuck = { version = "1.25", default-features = false, features = ["derive"] }
 proptest = "1.12"
 # Unpublished sibling (crates.io at its milestone 7): git, pinned by rev (rules/global_rules.md).

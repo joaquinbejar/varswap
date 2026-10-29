@@ -11,12 +11,7 @@ use crate::error::VarswapError;
 use crate::layout::{ConfigData, FeedConfigData, SwapData};
 use crate::pda::{self, CONFIG_SEED, FEED_SEED};
 
-/// Account tag of `Config` (`varswap_core::WINDOW_TAG` is 1).
-pub const CONFIG_TAG: u8 = 2;
-/// Account tag of `FeedConfig`.
-pub const FEED_CONFIG_TAG: u8 = 3;
-/// Account tag of `Swap`.
-pub const SWAP_TAG: u8 = 4;
+pub use varswap_core::layout::{CONFIG_TAG, FEED_CONFIG_TAG, SWAP_TAG};
 /// `Swap` size, bytes.
 pub const SWAP_LEN: usize = size_of::<SwapData>();
 /// SPL Token account size, bytes.
@@ -32,7 +27,7 @@ pub enum SwapState {
     Settled = 1,
 }
 /// Layout version of the program's own accounts.
-pub const VERSION: u8 = 1;
+pub const VERSION: u8 = varswap_core::layout::ACCOUNT_VERSION;
 /// `Config` size, bytes.
 pub const CONFIG_LEN: usize = size_of::<ConfigData>();
 /// `FeedConfig` size, bytes.
