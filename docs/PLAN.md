@@ -285,6 +285,36 @@ to build test accounts and to cross-check the decoder.
 - optfix is consumed as a git dependency pinned by `rev` until it is on crates.io (a path
   dependency would break CI).
 
+## Dependencies (latest stable on crates.io, checked 2026-10-29)
+
+Rule from `rules/global_rules.md`: every dependency at the latest stable version, written
+`MAJOR.MINOR`, re-checked via `https://crates.io/api/v1/crates/<name>` (`max_stable_version`)
+whenever it is added or touched.
+
+| Crate | Latest stable | Requirement |
+| --- | --- | --- |
+| `pinocchio` | 0.12.0 | `0.12` |
+| `bytemuck` | 1.25.2 | `1.25` |
+| `proptest` (dev) | 1.12.0 | `1.12` |
+| `litesvm` (dev) | 0.18.1 | `0.18` |
+| `mollusk-svm` (dev, optional) | 0.16.4 | `0.16` |
+| `solana-address` | 2.9.0 | `2.9` |
+| `pinocchio-system` | 0.7.0 | `0.7` |
+| `pinocchio-token` | 0.7.0 | `0.7`, see conflict below |
+| `pinocchio-associated-token-account` | 0.4.0 | `0.4`, see conflict below |
+| `litesvm-token` (dev) | 0.18.1 | `0.18` |
+| `pyth-solana-receiver-sdk` (dev only, fixtures and cross-check) | 2.0.0 | `2.0` |
+
+**Version conflict, needs a decision before this repo's first program milestone.**
+`pinocchio-token` 0.7.0 and `pinocchio-associated-token-account` 0.4.0 depend on
+`solana-account-view ^2.0` (the Pinocchio 0.11 generation), while `pinocchio` 0.12.0 depends on
+`solana-account-view` 3.0; `pinocchio-system` 0.7.0 already targets `pinocchio ^0.12`. So the
+latest stable versions of all four cannot be combined today. Options: (a) Pinocchio 0.12 with
+the few token CPIs written in-crate (`transfer_checked`, `mint_to`, `burn`, account creation),
+replaced by `pinocchio-token` once a 0.12-compatible release exists; (b) the whole set one
+generation back (Pinocchio 0.11, as matchbook), against the latest-stable rule; (c) wait for the
+companion releases. Proposal: (a), re-checked on crates.io at the start of the milestone.
+
 ## 6. Open questions
 
 1. First underlying: SOL/USD (24/7, simplest) proposed. Or straight to XAU?
