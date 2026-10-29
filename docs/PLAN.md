@@ -610,8 +610,13 @@ to build test accounts and to cross-check the decoder.
    never finalizes after a failed post unless a re-read shows the bucket filled; the Hermes
    source ported from metalbook-keeper #17, key from `VARSWAP_HERMES_API_KEY` only, redacted
    in `Debug` and scrubbed from errors; LiteSVM tests on synthetic tapes; the production RPC
-   `Chain` with the receiver's post path comes with devnet); 6c the admin CLI
-   (`solana-rpc-client ~4.3`) next; devnet after. *Done when* a Rust SDK and a keeper example push samples on devnet for
+   `Chain` with the receiver's post path comes with devnet); 6c `varswap-admin` done (the
+   thin admin CLI over the SDK: `init-config`, `set-feed-config`, `create-window`,
+   `window-address` and JSON reads of the config, feed configs, windows and swaps, with
+   `--dry-run`; `solana-rpc-client ~4.3` at `confirmed`; the URL hidden from `Debug` and every
+   node message redacted as a whole after the preflight logs are appended, including each URL
+   path segment or query value of 8 or more characters as a bare token, ported from
+   metalbook-cli); devnet next. *Done when* a Rust SDK and a keeper example push samples on devnet for
    a live SOL/USD window and it finalizes, and a replay of 24 real canonical SOL/USD prints
    (fixtures fetched from Hermes, committed) finalizes to the off-chain value. Keepers read
    the Hermes API key from an environment variable; it is never committed.
