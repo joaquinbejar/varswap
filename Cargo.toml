@@ -1,5 +1,5 @@
 [workspace]
-members = ["varswap-core", "pyth-lite", "program", "sdk", "keeper", "study", "lint-control"]
+members = ["varswap-core", "pyth-lite", "program", "sdk", "keeper", "cli", "study", "lint-control"]
 resolver = "2"
 
 [workspace.package]
@@ -23,6 +23,18 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 base64 = "0.23"
 thiserror = "2.0"
+varswap-cli = { path = "cli" }
+# varswap-cli: argument parsing (clap 4.6.7) and the RPC client, the cross-repo choice
+# (quotebook, metalbook). solana-rpc-client 4.4.0 is the latest stable but pulls the agave 4.4
+# crates LiteSVM 0.18.1 does not build with; `~4.3` (4.3.x) resolves with the LiteSVM pins
+# (coordinator: pin with `~`). solana-rpc-client-api is the same release; solana-commitment-config
+# 3.1.1 is the latest; solana-hash 4.6 is the generation LiteSVM pins (4.7.0 latest). Checked on
+# crates.io on 2026-10-29.
+clap = { version = "4.6", features = ["derive", "env"] }
+solana-rpc-client = "~4.3"
+solana-rpc-client-api = "~4.3"
+solana-commitment-config = "3.1"
+solana-hash = "4.6"
 bytemuck = { version = "1.25", default-features = false, features = ["derive"] }
 proptest = "1.12"
 # Unpublished sibling (crates.io at its milestone 7): git, pinned by rev (rules/global_rules.md).

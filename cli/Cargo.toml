@@ -1,0 +1,36 @@
+[package]
+name = "varswap-cli"
+description = "Thin admin CLI for varswap: config, feed configs and windows over JSON-RPC, and account reads"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "varswap-admin"
+path = "src/main.rs"
+
+[dependencies]
+varswap-sdk = { workspace = true }
+varswap-core = { workspace = true }
+# The generation varswap-sdk builds instructions with (LiteSVM's, docs/PLAN.md exception).
+solana-address = { workspace = true, features = ["decode"] }
+solana-instruction = { workspace = true }
+solana-transaction = { workspace = true }
+solana-keypair = { workspace = true }
+solana-signer = { workspace = true }
+solana-hash = { workspace = true, features = ["decode"] }
+solana-rpc-client = { workspace = true }
+solana-rpc-client-api = { workspace = true }
+solana-commitment-config = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+clap = { workspace = true }
+
+[dev-dependencies]
+base64 = { workspace = true }
+
+[lints]
+workspace = true
