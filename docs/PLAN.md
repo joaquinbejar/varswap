@@ -409,8 +409,10 @@ against the short (codex's counterexample, now a regression test). So payouts se
 conservative variance `V_cons = max(0, V − ε(window.interval, cap_var))`
 (`LnKernel::conservative_realized_var`), taken before the cap and before the floor.
 
-- Guarantee, on the capped values: `ε(cap)` bounds `|min(V, cap) − min(V_exact, cap)|`, so
-  `min(V_cons, cap) <= min(V_exact, cap)`: **the long is never overpaid**. Above the cap the
+- Guarantee, on the capped values: `min(V_cons, cap) <= min(V_exact, cap)`: **the long is
+  never overpaid**. When `V_exact < cap`, the kernel's uncapped bound `|V − V_exact| <= ε(cap)`
+  gives `V_cons <= V_exact`; when `V_exact >= cap` the right side is `cap` and the inequality
+  is immediate (a capped absolute-error bound alone would not give the direction). Above the cap the
   uncapped `V_cons <= V_exact` need not hold; the payout never reads it.
 - Budget: the `ln` error is within `±ε` and `ε` is then subtracted, so the short gains at most
   `2ε × notional` from the bound, plus at most one atom from the payout's floor. The notional

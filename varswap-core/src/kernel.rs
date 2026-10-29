@@ -249,9 +249,11 @@ impl LnKernel {
     /// [`LnKernel::realized_var_error_bound`] of the window's interval and the swap's cap
     /// (all in Q64.64 raw units). Apply it before the cap and before the payout's floor.
     ///
-    /// Guarantee, on the capped values: `ε` bounds `|min(V, cap) − min(V_exact, cap)|`, so
-    /// `min(V_cons, cap) <= min(V_exact, cap)` and the long is never overpaid. Above the cap
-    /// the uncapped `V_cons <= V_exact` need not hold, and nothing reads it.
+    /// Guarantee, on the capped values: `min(V_cons, cap) <= min(V_exact, cap)`, so the long is
+    /// never overpaid. When `V_exact < cap`, the kernel's uncapped bound `|V − V_exact| <= ε`
+    /// gives `V_cons <= V_exact` directly; when `V_exact >= cap` the right side is `cap` and
+    /// the inequality is immediate. Above the cap the uncapped `V_cons <= V_exact` need not
+    /// hold, and nothing reads it.
     ///
     /// Budget (`docs/PLAN.md` 4.4): the `ln` error is within `±ε` and `ε` is then subtracted,
     /// so the short gains at most `2ε × notional` from the bound, plus at most one atom from

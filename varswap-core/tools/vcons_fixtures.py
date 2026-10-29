@@ -7,8 +7,8 @@ with every value an integer. Exponent 0, strike 1.0 (collateral exact), notional
 the limit allows, floor((2^64 - 1) / eps). V_exact is the annualized sum of squared natural
 log returns in Q64.64 raw units, computed with decimal at 100 digits; its floor and the floor
 of the exact long payout floor(notional x min(V_exact, cap) / 2^64) let the Rust test check
-the direction exactly (an integer V_cons <= V_exact iff V_cons <= floor(V_exact), V_exact
-never being an integer here). eps replicates LnKernel::realized_var_error_bound with
+the direction exactly: for an integer q and any real x, q <= x iff q <= floor(x), which also
+covers the zero-variance paths, whose V_exact is the integer 0. eps replicates LnKernel::realized_var_error_bound with
 delta_e = 0; the test asserts the two agree.
 
 Usage: python3 tools/vcons_fixtures.py > tests/fixtures/vcons.txt
