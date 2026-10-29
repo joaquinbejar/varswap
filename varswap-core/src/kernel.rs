@@ -125,16 +125,18 @@ pub const LN_10_RAW: i128 = 42_475_197_918_399_869_020;
 ///
 /// `r = ln(to) − ln(from) + (e_to − e_from) × ln 10`, with `ln` applied to each price
 /// mantissa (at most `i64::MAX`, inside Q64.64). The ratio is never formed, so prints with
-/// very different exponents cannot overflow. `r²` is rounded down (`mul_down`) and
-/// [`LnKernel::annualize`] rounds down: toward a lower realized variance, the short's side,
-/// matching the payout rounding of `docs/PLAN.md` 4.4.
+/// very different exponents cannot overflow. `r²` is kept at `2^-96`
+/// ([`SUM_SQ_SCALE_BITS`]), rounded down through the 256-bit product
+/// (`optfix::wide::mul_shr`), and [`LnKernel::annualize`] rounds down: toward a lower realized
+/// variance, the short's side, matching the payout rounding of `docs/PLAN.md` 4.4.
 ///
-/// Error of one term (raw units, `2^-64`), with `δr` the error of `r`:
+/// Error of one term, with `δr` the error of `r` in `2^-64` units:
 /// `δr <= 2 × LN_MAX_ERROR_ULPS + |Δe|` (two `ln` calls, plus [`LN_10_RAW`]'s half ulp
-/// scaled by `|Δe|`, rounded up to one), and
-/// `|computed r² − r²| <= 2 |r| δr + δr² + 1` ([`LnKernel::term_error_bound`]). For
-/// `|r| <= 1` and equal exponents that is at most 9 raw units (`4.9 × 10^-19`) per term.
-/// The `ln` part is undirected; only the final `+ 1` truncation is directed (down).
+/// scaled by `|Δe|`, rounded up to one), and, in units of `2^-96`,
+/// `|computed r² − r²| <= 2 |r| δr × 2^32 + δr² / 2^32 + 1`
+/// ([`LnKernel::term_error_bound`]). For `|r| <= 1` and equal exponents that is about
+/// `3.4 × 10^10` units of `2^-96` (`4.3 × 10^-19`) per term. The `ln` part is undirected;
+/// only the final `+ 1` truncation is directed (down).
 /// Cost: two `ln` calls (about 900 CU) per term on SBF.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct LnKernel;
@@ -176,8 +178,8 @@ impl LnKernel {
             .ok_or(CoreError::Overflow)?;
         let r_abs = r.raw().unsigned_abs();
         // In 2^-96 units: 2 |r| δr = 2 × r_raw × δr / 2^32 (r_raw at 2^-64, δr in 2^-64 units),
-        // rounded up (floor + 1); then + 1 for δr² (at most 2^-128 × δr², below one unit for δr
-        // under 2^48) and + 1 for the truncation of the square.
+        // rounded up (floor + 1); then + 1 for δr² (δr² / 2^32 units of 2^-96, below one for δr
+        // under 2^16; here δr <= 4 + 255) and + 1 for the truncation of the square.
         let two_r_dr = r_abs
             .checked_mul(dr)
             .and_then(|x| x.checked_mul(2))
