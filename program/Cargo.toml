@@ -38,6 +38,7 @@ solana-address = { workspace = true, features = ["decode", "curve25519"] }
 litesvm = { workspace = true }
 litesvm-token = { workspace = true }
 varswap-sdk = { workspace = true }
+varswap-keeper = { workspace = true }
 solana-account = { workspace = true }
 solana-clock = { workspace = true }
 solana-instruction = { workspace = true }

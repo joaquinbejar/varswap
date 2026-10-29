@@ -1,5 +1,5 @@
 [workspace]
-members = ["varswap-core", "pyth-lite", "program", "sdk", "study", "lint-control"]
+members = ["varswap-core", "pyth-lite", "program", "sdk", "keeper", "study", "lint-control"]
 resolver = "2"
 
 [workspace.package]
@@ -14,6 +14,15 @@ repository = "https://github.com/joaquinbejar/varswap"
 pyth-lite = { path = "pyth-lite", version = "0.1" }
 varswap-core = { path = "varswap-core", version = "0.1" }
 varswap-sdk = { path = "sdk" }
+varswap-keeper = { path = "keeper" }
+# Off-chain only (varswap-keeper): the same set as metalbook-keeper. Checked on crates.io on
+# 2026-10-29: ureq 3.5.0, serde 1.0.229, serde_json 1.0.154, base64 0.23.1, thiserror 2.0.21.
+# One blocking HTTP crate, TLS through rustls, no native TLS.
+ureq = { version = "3.5", default-features = false, features = ["rustls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+base64 = "0.23"
+thiserror = "2.0"
 bytemuck = { version = "1.25", default-features = false, features = ["derive"] }
 proptest = "1.12"
 # Unpublished sibling (crates.io at its milestone 7): git, pinned by rev (rules/global_rules.md).

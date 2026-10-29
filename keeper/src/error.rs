@@ -1,0 +1,38 @@
+//! Keeper errors.
+
+/// Why a keeper step failed.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum KeeperError {
+    /// The window account is missing or cannot be decoded.
+    #[error("window account cannot be decoded: {0}")]
+    Decode(&'static str),
+    /// The stored window is rejected by `varswap-core`.
+    #[error("window rejected: {0:?}")]
+    Core(varswap_core::CoreError),
+    /// The price source failed.
+    #[error("price source failed: {0}")]
+    Source(String),
+    /// A price-source response could not be used. Carries only the HTTP status, the body
+    /// length and a fixed category, never response content (which could reflect the API key).
+    #[error("malformed price-source response (HTTP {status}, {byte_len} bytes): {what}")]
+    MalformedResponse {
+        /// HTTP status of the response.
+        status: u16,
+        /// Length of the body, bytes.
+        byte_len: usize,
+        /// What was wrong, from a fixed set of descriptions.
+        what: &'static str,
+    },
+    /// A chain operation (read, post, finalize) failed.
+    #[error("chain operation failed: {0}")]
+    Chain(String),
+    /// A configuration value is missing or invalid.
+    #[error("configuration: {0}")]
+    Config(&'static str),
+}
+
+impl From<varswap_core::CoreError> for KeeperError {
+    fn from(e: varswap_core::CoreError) -> Self {
+        Self::Core(e)
+    }
+}

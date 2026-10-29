@@ -603,9 +603,15 @@ to build test accounts and to cross-check the decoder.
 6. **SDK and devnet.** Status (2026-10-29): 6a `varswap-sdk` done (a builder per
    instruction, PDAs, decoders on `varswap_core::layout`, which now holds every account and
    payload layout; every builder equals the test harness's independent encoding byte for
-   byte, and a full lifecycle runs through the SDK only); 6b the keeper (`Chain` and
-   `PriceSource` traits, Hermes source with the key from the environment, redacted) and 6c the
-   admin CLI (`solana-rpc-client`) next; devnet after. *Done when* a Rust SDK and a keeper example push samples on devnet for
+   byte, and a full lifecycle runs through the SDK only); 6b `varswap-keeper` done
+   (`Keeper::tick` over `Chain` and `PriceSource` traits: posts every empty bucket's
+   published canonical print that `varswap_core::accept_print`, the rule `sample` itself now
+   calls, accepts, marks the run it fills, finalizes when complete or past the deadline, and
+   never finalizes after a failed post unless a re-read shows the bucket filled; the Hermes
+   source ported from metalbook-keeper #17, key from `VARSWAP_HERMES_API_KEY` only, redacted
+   in `Debug` and scrubbed from errors; LiteSVM tests on synthetic tapes; the production RPC
+   `Chain` with the receiver's post path comes with devnet); 6c the admin CLI
+   (`solana-rpc-client ~4.3`) next; devnet after. *Done when* a Rust SDK and a keeper example push samples on devnet for
    a live SOL/USD window and it finalizes, and a replay of 24 real canonical SOL/USD prints
    (fixtures fetched from Hermes, committed) finalizes to the off-chain value. Keepers read
    the Hermes API key from an environment variable; it is never committed.

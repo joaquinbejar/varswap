@@ -6,7 +6,10 @@ use pinocchio::sysvars::clock::Clock;
 use pinocchio::sysvars::Sysvar;
 use pinocchio::{AccountView, Address, ProgramResult};
 use pyth_lite::{PriceRequirements, PriceUpdate};
-use varswap_core::{window_size, Print, Seconds, UnixTimestamp, Window, WindowSpec, MAX_BUCKETS};
+use varswap_core::{
+    accept_print, window_size, CoreError, RawPrint, Seconds, UnixTimestamp, Window, WindowSpec,
+    MAX_BUCKETS,
+};
 
 use crate::error::{core, pyth, VarswapError};
 use crate::layout::{
@@ -268,8 +271,24 @@ pub fn sample(program_id: &Address, accounts: &mut [AccountView], payload: &[u8]
     .map_err(pyth)?;
     let req = PriceRequirements::new(spec.feed(), None, spec.max_conf().get());
     let price = update.verify(&req, now).map_err(pyth)?;
-    let print = Print::try_from(&price).map_err(core)?;
-    let run = w.sample(&print, now, &Kernel::default()).map_err(core)?;
+    // The same acceptance rule off-chain keepers apply (varswap_core::accept_print).
+    let accepted = accept_print(
+        &spec,
+        &RawPrint {
+            feed: price.feed_id(),
+            price: i64::try_from(price.price().get())
+                .map_err(|_| core(CoreError::PriceOutOfRange))?,
+            conf: price.conf(),
+            exponent: price.exponent(),
+            publish_time: price.publish_time(),
+            prev_publish_time: price.prev_publish_time(),
+        },
+    )
+    .map_err(core)?;
+    let run = w
+        .sample_accepted(&accepted, now, &Kernel::default())
+        .map_err(core)?;
+    let print = accepted.print();
 
     let result = SampleResult {
         price: print.stored().price(),

@@ -348,7 +348,7 @@ fn test_error_table_documented() {
     let doc = include_str!("../../docs/errors.md");
     let codes = (100..=124)
         .chain(140..=149)
-        .chain((160..=185).filter(|c| *c != 179));
+        .chain((160..=188).filter(|c| *c != 179));
     for c in codes {
         assert!(
             doc.contains(&format!("| {c} | `")),
