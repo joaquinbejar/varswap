@@ -359,8 +359,9 @@ pub fn run(model: Model, p: &Params, paths: usize, seed: u64, tolerances: &[f64]
 /// The candidates are points of the same fine-grained path: the path walks from `b_k` through
 /// the candidates (one per `window_seconds / (candidates − 1)` s) and on to `b_{k+1}`, so the
 /// hourly prints are a subsequence and shifting every observation by the same time leaves the
-/// expected variance unchanged. The best case for the long (max) and the short (min) is exact
-/// by dynamic programming over the candidate per boundary.
+/// expected variance unchanged. The best case for the long (max) and the short (min) is the
+/// hindsight optimum over that discrete candidate set: exact by dynamic programming over the
+/// candidate per boundary, chosen knowing the whole path (an online pusher gets less).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PusherBias {
     /// `max − canonical`, annualized variance units.

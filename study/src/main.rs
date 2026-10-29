@@ -137,9 +137,11 @@ fn main() {
     writeln!(
         out,
         "If any print within `w` seconds after a boundary were acceptable (first-write-wins \
-         with a tolerance), a pusher could steer the contract. Exact best case for the long \
-         (max) and the short (min) by dynamic programming over candidate prints (one per \
-         `w / 6` s) taken from the same fine-grained GBM path the hourly prints lie on, σ = 80%, \
+         with a tolerance), a pusher could steer the contract. The figures are the hindsight \
+         optimum over the discrete candidate set: the exact best case for the long (max) and \
+         the short (min), by dynamic programming over 7 candidate prints per boundary (one per \
+         `w / 6` s), chosen knowing the whole path; a real pusher choosing online gets less. \
+         The candidates are taken from the same fine-grained GBM path the hourly prints lie on, σ = 80%, \
          30 days hourly, {} windows; canonical prints make both zero. The control column \
          always takes the last candidate (a fixed shift of `w`): zero in expectation on a \
          coherent path, shown with its standard error.",

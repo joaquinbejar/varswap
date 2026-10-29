@@ -323,9 +323,12 @@ So samples are **canonical**:
     half a day settle as one return. Re-run the study on real outage frequency and length
     in milestone 6, when keepers have a Hermes key, before changing it.
   - **Pusher bias, the reason for canonical prints:** if any print within `w` seconds after
-    a boundary were acceptable, the exact best case for a pusher (dynamic programming over
-    candidate prints taken from one coherent fine-grained GBM path, so a fixed shift of every
-    print is unbiased; the study's control column confirms it at 0 ± 6 vp) would move the
+    a boundary were acceptable, the hindsight optimum for a pusher over a discrete candidate
+    set (exact by dynamic programming over 7 candidate prints per boundary, chosen knowing the
+    whole path, so an online pusher gets less; candidates taken from one coherent fine-grained
+    GBM path, so a fixed shift of every
+    print is unbiased; the study's control column, always the last candidate, confirms it at
+    0 ± 6 vp, against the +1,066.67 vp analytic artifact of the first model) would move the
     contract by +464 / −440 vp at `w` = 10 s, +1,175 / −1,039 vp at 60 s and +2,776 /
     −2,131 vp at 300 s (mean, long / short), up to 43% of the variance. Canonical prints make
     it zero. (A first version drew the candidates independently of the hourly path, which

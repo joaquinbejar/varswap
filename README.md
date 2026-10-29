@@ -25,8 +25,8 @@ benchmarks and the outage study); milestone 6 (SDK, keeper, devnet) next. Not de
 
 The sample for each grid boundary is the unique Pyth print with `prev_publish_time < b <=
 publish_time`, so the pusher has no choice. Without that rule a pusher accepting any print
-within `w` seconds after each boundary could steer the payoff (exact best case by dynamic
-programming over prints of one coherent GBM path, σ = 80%, 30 days hourly; the control
+within `w` seconds after each boundary could steer the payoff (hindsight optimum over 7
+candidate prints per boundary, exact by dynamic programming, on one coherent GBM path, σ = 80%, 30 days hourly; the control
 column, a fixed shift of every print by `w`, is zero as it should be; `docs/study.md`):
 
 | w | Long gain mean (vp) | Long gain p95 (vp) | Short gain mean (vp) | Short gain p95 (vp) | Long gain mean (USDC) | Control: fixed shift mean (vp) |
