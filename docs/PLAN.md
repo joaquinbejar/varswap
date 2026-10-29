@@ -333,7 +333,16 @@ to build test accounts and to cross-check the decoder.
 1. **Domain and accumulator math.** `varswap-core` with types, errors, accumulator update and
    finalize as pure functions. *Done when* proptest against an f64 reference on simulated GBM
    paths shows realized variance within the documented bound, and that any gap yields
-   `Degraded`.
+   `Degraded`; and the workspace carries the shared lint control (`rules/global_rules.md`,
+   synced from optfix `afb9d4d`):
+   - `lint-control/` (`Cargo.toml`, `src/lib.rs`, `check.sh`) copied from optfix and added
+     to the workspace members;
+   - `cfg(lint_control)` in `unexpected_cfgs` `check-cfg`;
+   - `disallowed_macros = "deny"` in `[workspace.lints.clippy]`, with `clippy.toml` at the
+     root;
+   - `clippy::disallowed_macros` allowed in tests and benches and in the module that invokes
+     the Pinocchio entrypoint macros (`no_allocator!` expands to `assert!`), with a comment;
+   - `make lint-control` part of `make pre-push`.
 2. **`pyth-lite`.** *Done when* it decodes real `PriceUpdateV2` accounts fetched from mainnet
    (fixtures committed) for Full and Partial levels, rejects wrong owner/discriminator and
    malformed, truncated and unknown-verification-tag fixtures, the receiver program id is
