@@ -7,7 +7,9 @@
 //! maps errors to codes ([`error`]).
 //!
 //! Milestone 3a: the squared log return is `varswap_core::IntegerKernel`, an exact integer
-//! stand-in, until milestone 1b plugs in optfix `ln`. **This build must not be deployed.**
+//! stand-in, until milestone 1b plugs in optfix `ln`. It exists only with the
+//! `insecure-test-kernel` feature; without it the crate refuses to compile, so no deployable
+//! ELF can be built (`make sbf-control` checks that the default `cargo build-sbf` fails).
 
 #![no_std]
 
@@ -32,7 +34,14 @@ mod entry {
     pinocchio::nostd_panic_handler!();
 }
 
+#[cfg(not(feature = "insecure-test-kernel"))]
+compile_error!(
+    "varswap-program has no production kernel before milestone 1b (optfix ln); \
+     `--features insecure-test-kernel` builds the integer stand-in for tests only"
+);
+
 /// Kernel the program runs (milestone 3a stand-in, see the crate docs).
+#[cfg(feature = "insecure-test-kernel")]
 pub type Kernel = varswap_core::IntegerKernel;
 
 /// Instruction tags (the first byte of the instruction data).

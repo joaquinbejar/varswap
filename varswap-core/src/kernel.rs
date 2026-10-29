@@ -65,11 +65,13 @@ pub trait ReturnKernel {
 /// rescaled to the smaller exponent, and `sum_sq × YEAR_SECONDS / span` rounded down.
 ///
 /// **Not a log return.** It is exact, so tests compare windows bit for bit, and it is the
-/// kernel the program uses until milestone 1b plugs in optfix `ln`; a program built with it
-/// must not be deployed.
+/// kernel the program uses until milestone 1b plugs in optfix `ln`. Only with the
+/// `insecure-test-kernel` feature; a program built with it must not be deployed.
+#[cfg(feature = "insecure-test-kernel")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct IntegerKernel;
 
+#[cfg(feature = "insecure-test-kernel")]
 impl IntegerKernel {
     /// `price × 10^(exponent − base)`, `exponent >= base`.
     fn rescale(p: StoredPrice, base: i8) -> Result<i128, CoreError> {
@@ -84,6 +86,7 @@ impl IntegerKernel {
     }
 }
 
+#[cfg(feature = "insecure-test-kernel")]
 impl ReturnKernel for IntegerKernel {
     fn squared_log_return(&self, from: StoredPrice, to: StoredPrice) -> Result<SumSq, CoreError> {
         let base = from.exponent().min(to.exponent());

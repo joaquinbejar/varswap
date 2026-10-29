@@ -417,7 +417,11 @@ to build test accounts and to cross-check the decoder.
    off-chain value. Split (coordinator, 2026-10-29):
    - **3a, done:** the program (`program/`) with `init_config`, `set_feed_config`,
      `create_window`, `sample`, `finalize`, running `varswap_core::IntegerKernel` (an exact
-     integer stand-in, so the build must not be deployed until milestone 1b). LiteSVM loads it
+     integer stand-in). Fail closed (codex review): the stand-in exists only behind the
+     `insecure-test-kernel` feature, and without it the program is a `compile_error!`, so no
+     deployable ELF can be built; `make sbf-control` requires the default `cargo build-sbf`
+     to fail with that error. Tests and the bench build with the feature; milestone 1b
+     removes the gate by making the optfix kernel the default. LiteSVM loads it
      through the upgradeable loader. Negative tests with forged accounts for every rule of
      3.3; the `FeedConfig` binding test; the 10,240-byte CPI cap exercised by creating a
      `MAX_BUCKETS` window (10,233 bytes) through the system program CPI. The replay is a

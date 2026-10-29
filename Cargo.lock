@@ -4692,6 +4692,7 @@ dependencies = [
  "bytemuck",
  "proptest",
  "pyth-lite",
+ "varswap-core",
 ]
 
 [[package]]

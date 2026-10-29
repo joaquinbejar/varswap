@@ -18,6 +18,10 @@ default = ["events"]
 # Log one event per accepted sample (docs/PLAN.md 3.1). `make bench` also builds without it
 # to measure what the log costs.
 events = ["dep:pinocchio-log"]
+# Runs varswap-core's exact integer stand-in kernel. Required until milestone 1b supplies the
+# optfix kernel: without it the crate does not compile (fail closed, so no deployable ELF
+# exists). Tests and the bench only.
+insecure-test-kernel = ["varswap-core/insecure-test-kernel"]
 
 [dependencies]
 bytemuck = { workspace = true }
@@ -34,6 +38,8 @@ solana-address = { workspace = true, features = ["decode"] }
 solana-address = { workspace = true, features = ["decode", "curve25519"] }
 
 [dev-dependencies]
+# The LiteSVM tests compare against the integer kernel off-chain.
+varswap-core = { workspace = true, features = ["insecure-test-kernel"] }
 litesvm = { workspace = true }
 solana-account = { workspace = true }
 solana-clock = { workspace = true }
