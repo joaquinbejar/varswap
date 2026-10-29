@@ -60,6 +60,10 @@ pub enum CoreError {
     NotionalAboveErrorBound = 24,
     /// The collateral does not fit in a `u64` of atoms.
     CollateralOverflow = 25,
+    /// The print's price is zero or negative.
+    NonPositivePrice = 26,
+    /// The print's `conf / price` exceeds the window's bound.
+    ConfidenceTooWide = 27,
 }
 
 impl CoreError {
@@ -95,6 +99,8 @@ impl CoreError {
             Self::InvalidCap => 23,
             Self::NotionalAboveErrorBound => 24,
             Self::CollateralOverflow => 25,
+            Self::NonPositivePrice => 26,
+            Self::ConfidenceTooWide => 27,
         }
     }
 }
@@ -128,6 +134,8 @@ impl fmt::Display for CoreError {
             Self::InvalidCap => "cap variance not above the strike or too large",
             Self::NotionalAboveErrorBound => "notional too large for the variance error bound",
             Self::CollateralOverflow => "collateral does not fit in u64 atoms",
+            Self::NonPositivePrice => "print price is not positive",
+            Self::ConfidenceTooWide => "print confidence too wide",
         };
         f.write_str(s)
     }

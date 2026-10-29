@@ -15,6 +15,7 @@
 
 #![cfg_attr(not(test), no_std)]
 
+mod accept;
 mod error;
 mod kernel;
 pub mod layout;
@@ -24,6 +25,7 @@ mod swap;
 mod types;
 mod window;
 
+pub use accept::{accept_print, RawPrint};
 pub use error::CoreError;
 #[cfg(feature = "insecure-test-kernel")]
 pub use kernel::IntegerKernel;

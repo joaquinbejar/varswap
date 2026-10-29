@@ -67,3 +67,5 @@ once the program is deployed; they were re-ranged in milestone 4a, before any de
 | 183 | `InvalidCap` | `CoreError` (160 + 23) | `cap_var <= strike_var` or `cap_var` above [`crate::MAX_CAP_VAR`]. |
 | 184 | `NotionalAboveErrorBound` | `CoreError` (160 + 24) | `notional × ε >= 2^64`: the realized variance error bound could move a payout by an atom or more (`docs/PLAN.md` 4.4). |
 | 185 | `CollateralOverflow` | `CoreError` (160 + 25) | The collateral does not fit in a `u64` of atoms. |
+| 186 | `NonPositivePrice` | `CoreError` (160 + 26) | The print's price is zero or negative. |
+| 187 | `ConfidenceTooWide` | `CoreError` (160 + 27) | The print's `conf / price` exceeds the window's bound. |

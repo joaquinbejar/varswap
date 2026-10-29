@@ -1,0 +1,14 @@
+{
+  "binary": {
+    "encoding": "base64",
+    "data": ["UE5BVQEAAAADuAEAAAAEDQ=="]
+  },
+  "parsed": [
+    {
+      "id": "765d2ba906dbc32ca17cc11f5310a89e9ee1f6420508c63861f2f8ba4ee34bb2",
+      "price": { "price": "4023655", "conf": "125", "expo": -3, "publish_time": 1793289597 },
+      "ema_price": { "price": "4021000", "conf": "130", "expo": -3, "publish_time": 1793289597 },
+      "metadata": { "slot": 462940577, "proof_available_time": 1793289598, "prev_publish_time": 1793289596 }
+    }
+  ]
+}
