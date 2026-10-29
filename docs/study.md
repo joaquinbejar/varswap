@@ -50,10 +50,10 @@ Tail (USDC) is max(|p5|, |p99|).
 
 ## Pusher bias without canonical prints
 
-If any print within `w` seconds after a boundary were acceptable (first-write-wins with a tolerance), a pusher could steer the contract. Exact best case for the long (max) and the short (min) by dynamic programming over candidate prints (one per `w / 6` s), GBM σ = 80%, 30 days hourly, 1000 windows; canonical prints make both zero.
+If any print within `w` seconds after a boundary were acceptable (first-write-wins with a tolerance), a pusher could steer the contract. Exact best case for the long (max) and the short (min) by dynamic programming over candidate prints (one per `w / 6` s) taken from the same fine-grained GBM path the hourly prints lie on, σ = 80%, 30 days hourly, 1000 windows; canonical prints make both zero. The control column always takes the last candidate (a fixed shift of `w`): zero in expectation on a coherent path, shown with its standard error.
 
-| w | Long gain mean (vp) | Long gain p95 (vp) | Short gain mean (vp) | Short gain p95 (vp) | Long gain mean (USDC) |
-| ---: | ---: | ---: | ---: | ---: | ---: |
-| 10 s | +482.84 | +529.58 | +424.22 | +466.75 | +48284 |
-| 60 s | +1298.53 | +1422.97 | +947.30 | +1047.35 | +129853 |
-| 300 s | +3495.54 | +3795.10 | +1764.87 | +1944.01 | +349554 |
+| w | Long gain mean (vp) | Long gain p95 (vp) | Short gain mean (vp) | Short gain p95 (vp) | Long gain mean (USDC) | Control: fixed shift mean (vp) |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 10 s | +463.77 | +507.17 | +439.76 | +484.39 | +46377 | +0.25 ± 1.11 |
+| 60 s | +1174.85 | +1290.73 | +1038.61 | +1143.66 | +117485 | -0.26 ± 2.76 |
+| 300 s | +2775.74 | +3029.09 | +2130.50 | +2338.38 | +277574 | +0.24 ± 5.91 |

@@ -139,28 +139,38 @@ fn main() {
         "If any print within `w` seconds after a boundary were acceptable (first-write-wins \
          with a tolerance), a pusher could steer the contract. Exact best case for the long \
          (max) and the short (min) by dynamic programming over candidate prints (one per \
-         `w / 6` s), GBM σ = 80%, 30 days hourly, {} windows; canonical prints make both zero.",
+         `w / 6` s) taken from the same fine-grained GBM path the hourly prints lie on, σ = 80%, \
+         30 days hourly, {} windows; canonical prints make both zero. The control column \
+         always takes the last candidate (a fixed shift of `w`): zero in expectation on a \
+         coherent path, shown with its standard error.",
         PATHS / 4
     )
     .unwrap();
     writeln!(out).unwrap();
-    writeln!(out, "| w | Long gain mean (vp) | Long gain p95 (vp) | Short gain mean (vp) | Short gain p95 (vp) | Long gain mean (USDC) |").unwrap();
-    writeln!(out, "| ---: | ---: | ---: | ---: | ---: | ---: |").unwrap();
+    writeln!(
+        out,
+        "| w | Long gain mean (vp) | Long gain p95 (vp) | Short gain mean (vp) | Short gain p95 (vp) | Long gain mean (USDC) | Control: fixed shift mean (vp) |"
+    )
+    .unwrap();
+    writeln!(out, "| ---: | ---: | ---: | ---: | ---: | ---: | ---: |").unwrap();
     for w in [10.0, 60.0, 300.0] {
         let mut rng = Rng::new(SEED ^ (w as u64));
-        let (ups, downs): (Vec<f64>, Vec<f64>) = (0..PATHS / 4)
+        let runs: Vec<_> = (0..PATHS / 4)
             .map(|_| pusher_bias(&base, &mut rng, w, 7))
-            .unzip();
-        let su = varswap_study::summarize(&ups);
-        let sd = varswap_study::summarize(&downs.iter().map(|d| -d).collect::<Vec<_>>());
+            .collect();
+        let su = varswap_study::summarize(&runs.iter().map(|b| b.long_gain).collect::<Vec<_>>());
+        let sd = varswap_study::summarize(&runs.iter().map(|b| b.short_gain).collect::<Vec<_>>());
+        let sc = varswap_study::summarize(&runs.iter().map(|b| b.fixed_shift).collect::<Vec<_>>());
         writeln!(
             out,
-            "| {w:.0} s | {} | {} | {} | {} | {} |",
+            "| {w:.0} s | {} | {} | {} | {} | {} | {} ± {:.2} |",
             vp(su.mean),
             vp(su.p95),
             vp(sd.mean),
             vp(sd.p95),
-            usd(su.mean)
+            usd(su.mean),
+            vp(sc.mean),
+            sc.std / ((PATHS / 4) as f64).sqrt() * 10_000.0
         )
         .unwrap();
     }

@@ -324,9 +324,12 @@ So samples are **canonical**:
     in milestone 6, when keepers have a Hermes key, before changing it.
   - **Pusher bias, the reason for canonical prints:** if any print within `w` seconds after
     a boundary were acceptable, the exact best case for a pusher (dynamic programming over
-    candidate prints) would move the contract by +483 / −424 vp at `w` = 10 s, +1,299 /
-    −947 vp at 60 s and +3,496 / −1,765 vp at 300 s (mean, long / short), up to half the
-    variance itself. Canonical prints make it zero.
+    candidate prints taken from one coherent fine-grained GBM path, so a fixed shift of every
+    print is unbiased; the study's control column confirms it at 0 ± 6 vp) would move the
+    contract by +464 / −440 vp at `w` = 10 s, +1,175 / −1,039 vp at 60 s and +2,776 /
+    −2,131 vp at 300 s (mean, long / short), up to 43% of the variance. Canonical prints make
+    it zero. (A first version drew the candidates independently of the hourly path, which
+    adds `2σ²w / 3600` of spurious variance; codex review of #14.)
   - (metalbook keeps a short tolerance: its payoff is a mean of prices, where one reopening
     print filling many slots would bias the mean.)
 - Confidence: no tight filter. Canonicity and `Full` verification already remove the

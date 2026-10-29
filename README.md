@@ -26,13 +26,14 @@ benchmarks and the outage study); milestone 6 (SDK, keeper, devnet) next. Not de
 The sample for each grid boundary is the unique Pyth print with `prev_publish_time < b <=
 publish_time`, so the pusher has no choice. Without that rule a pusher accepting any print
 within `w` seconds after each boundary could steer the payoff (exact best case by dynamic
-programming, GBM σ = 80%, 30 days hourly; `docs/study.md`):
+programming over prints of one coherent GBM path, σ = 80%, 30 days hourly; the control
+column, a fixed shift of every print by `w`, is zero as it should be; `docs/study.md`):
 
-| w | Long gain mean (vp) | Long gain p95 (vp) | Short gain mean (vp) | Short gain p95 (vp) | Long gain mean (USDC) |
-| ---: | ---: | ---: | ---: | ---: | ---: |
-| 10 s | +482.84 | +529.58 | +424.22 | +466.75 | +48284 |
-| 60 s | +1298.53 | +1422.97 | +947.30 | +1047.35 | +129853 |
-| 300 s | +3495.54 | +3795.10 | +1764.87 | +1944.01 | +349554 |
+| w | Long gain mean (vp) | Long gain p95 (vp) | Short gain mean (vp) | Short gain p95 (vp) | Long gain mean (USDC) | Control: fixed shift mean (vp) |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 10 s | +463.77 | +507.17 | +439.76 | +484.39 | +46377 | +0.25 ± 1.11 |
+| 60 s | +1174.85 | +1290.73 | +1038.61 | +1143.66 | +117485 | -0.26 ± 2.76 |
+| 300 s | +2775.74 | +3029.09 | +2130.50 | +2338.38 | +277574 | +0.24 ± 5.91 |
 
 (vp: variance points, variance × 10,000; USDC per 1,000,000 USDC of notional per unit of
 variance; the latent variance is about 6,400 vp.)

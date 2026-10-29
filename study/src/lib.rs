@@ -352,39 +352,59 @@ pub fn run(model: Model, p: &Params, paths: usize, seed: u64, tolerances: &[f64]
         .collect()
 }
 
-/// Largest and smallest contract variance a pusher could reach if any of `candidates`
-/// prints within `window_seconds` after each boundary were acceptable (first-write-wins with
-/// a tolerance), against the canonical print, on a GBM path without outages; exact by dynamic
-/// programming over the candidate per boundary. Returns `(max − canonical, min − canonical)`
-/// in annualized variance units.
+/// What a pusher could reach if any of `candidates` prints within `window_seconds` after
+/// each boundary were acceptable (first-write-wins with a tolerance), against the canonical
+/// print, on one coherent GBM path without outages.
+///
+/// The candidates are points of the same fine-grained path: the path walks from `b_k` through
+/// the candidates (one per `window_seconds / (candidates − 1)` s) and on to `b_{k+1}`, so the
+/// hourly prints are a subsequence and shifting every observation by the same time leaves the
+/// expected variance unchanged. The best case for the long (max) and the short (min) is exact
+/// by dynamic programming over the candidate per boundary.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PusherBias {
+    /// `max − canonical`, annualized variance units.
+    pub long_gain: f64,
+    /// `canonical − min`, annualized variance units.
+    pub short_gain: f64,
+    /// Control: always the last candidate (a fixed shift of `window_seconds`) minus
+    /// canonical; zero in expectation.
+    pub fixed_shift: f64,
+}
+
+/// See [`PusherBias`].
 pub fn pusher_bias(
     p: &Params,
     rng: &mut Rng,
     window_seconds: f64,
     candidates: usize,
-) -> (f64, f64) {
-    let sh = p.sigma_hour();
+) -> PusherBias {
     let sigma_s = p.sigma / YEAR_SECONDS.sqrt();
-    let mut latent = vec![0.0; p.n + 1];
-    for k in 1..=p.n {
-        latent[k] =
-            latent[k - 1] - p.sigma * p.sigma / 2.0 * 3_600.0 / YEAR_SECONDS + sh * rng.normal();
-    }
-    // Candidate prints of b_k: the canonical one at b_k, then a random walk over the window.
+    let drift_s = -p.sigma * p.sigma / 2.0 / YEAR_SECONDS;
     let step = window_seconds / (candidates - 1).max(1) as f64;
-    let cand: Vec<Vec<f64>> = latent
-        .iter()
-        .map(|&l| {
-            let mut c = vec![l];
-            let mut x = l;
-            for _ in 1..candidates {
-                x += sigma_s * step.sqrt() * rng.normal();
-                c.push(x);
-            }
-            c
-        })
-        .collect();
-    let canonical: f64 = latent.windows(2).map(|w| (w[1] - w[0]).powi(2)).sum();
+    let rest = 3_600.0 - step * (candidates - 1) as f64;
+    let mut cand: Vec<Vec<f64>> = Vec::with_capacity(p.n + 1);
+    let mut x = 0.0;
+    for k in 0..=p.n {
+        let mut c = Vec::with_capacity(candidates);
+        c.push(x);
+        for _ in 1..candidates {
+            x += drift_s * step + sigma_s * step.sqrt() * rng.normal();
+            c.push(x);
+        }
+        cand.push(c);
+        if k < p.n {
+            // On to the next boundary along the same path.
+            x += drift_s * rest + sigma_s * rest.sqrt() * rng.normal();
+        }
+    }
+    let path_var = |pick: &dyn Fn(&[f64]) -> f64| -> f64 {
+        cand.windows(2)
+            .map(|w| (pick(&w[1]) - pick(&w[0])).powi(2))
+            .sum()
+    };
+    let canonical = path_var(&|c: &[f64]| c[0]);
+    let shifted = path_var(&|c: &[f64]| c[candidates - 1]);
     let best = |maximize: bool| -> f64 {
         let mut score = vec![0.0; candidates];
         for k in 1..=p.n {
@@ -407,10 +427,11 @@ pub fn pusher_bias(
         }
     };
     let scale = YEAR_SECONDS / (p.n as f64 * 3_600.0);
-    (
-        (best(true) - canonical) * scale,
-        (best(false) - canonical) * scale,
-    )
+    PusherBias {
+        long_gain: (best(true) - canonical) * scale,
+        short_gain: (canonical - best(false)) * scale,
+        fixed_shift: (shifted - canonical) * scale,
+    }
 }
 
 #[cfg(test)]
@@ -496,10 +517,29 @@ mod tests {
     #[test]
     fn test_pusher_bias_signs_and_zero_window() {
         let p = params();
-        let (up, down) = pusher_bias(&p, &mut Rng::new(5), 60.0, 7);
-        assert!(up >= 0.0 && down <= 0.0);
-        let (up0, down0) = pusher_bias(&p, &mut Rng::new(5), 0.0, 1);
-        assert!(up0.abs() < 1e-12 && down0.abs() < 1e-12);
+        let b = pusher_bias(&p, &mut Rng::new(5), 60.0, 7);
+        assert!(b.long_gain >= 0.0 && b.short_gain >= 0.0);
+        let z = pusher_bias(&p, &mut Rng::new(5), 0.0, 1);
+        assert!(z.long_gain.abs() < 1e-12 && z.short_gain.abs() < 1e-12);
+        assert!(z.fixed_shift.abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_pusher_fixed_shift_control_is_unbiased() {
+        // Shifting every observation by the same 300 s on one coherent path leaves the
+        // expected variance unchanged (codex review of the incoherent first model, which
+        // added 2 σ² w / 3600 per path instead).
+        let p = params();
+        let mut rng = Rng::new(6);
+        let n = 600;
+        let shifts: Vec<f64> = (0..n)
+            .map(|_| pusher_bias(&p, &mut rng, 300.0, 7).fixed_shift)
+            .collect();
+        let s = summarize(&shifts);
+        let se = s.std / (n as f64).sqrt();
+        assert!(s.mean.abs() < 4.0 * se, "mean {} vs se {}", s.mean, se);
+        // The incoherent model's bias, 2 σ² w / 3600 = 0.1067, is far outside that.
+        assert!(4.0 * se < 0.01);
     }
 
     #[test]
