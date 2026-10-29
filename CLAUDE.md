@@ -5,6 +5,7 @@ variance swaps settled against it. Crates: `varswap-core`, `pyth-lite` (no_std `
 reader, reused by metalbook), `program`, `sdk`. Pricing math from optfix.
 Oracle checks on every read: owner, discriminator, `Full` verification, feed id, exponent, staleness,
 confidence.
+
 ## Conventions shared with matchbook
 
 - Style reference: `~/Repos/Local/matchbook` (read only). Copy its workspace layout, `rust-toolchain.toml`
