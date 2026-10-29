@@ -1,6 +1,6 @@
 # varswap: plan
 
-Status: draft for review. Nothing here is implemented yet.
+Status: approved by Joaquin on 2026-10-29. Changes after approval are recorded as decisions.
 
 ## 1. Goal and non-goals
 
@@ -341,36 +341,32 @@ whenever it is added or touched.
 
 | Crate | Latest stable | Requirement |
 | --- | --- | --- |
-| `pinocchio` | 0.12.0 | `0.12` |
+| `pinocchio` | 0.12.0 (0.11.2 used) | `0.11`, decided exception below |
 | `bytemuck` | 1.25.2 | `1.25` |
 | `proptest` (dev) | 1.12.0 | `1.12` |
 | `litesvm` (dev) | 0.18.1 | `0.18` |
 | `mollusk-svm` (dev, optional) | 0.16.4 | `0.16` |
 | `solana-address` | 2.9.0 | `2.9` |
-| `pinocchio-system` | 0.7.0 | `0.7` |
+| `pinocchio-system` | 0.7.0 (0.6.1 used) | `0.6`, decided exception below |
 | `pinocchio-token` | 0.7.0 | `0.7`, see conflict below |
 | `rust_decimal` (SDK conversions) | 1.43.0 | `1.43` |
 | `optfix` | unpublished | git, pinned `rev` |
 | `litesvm-token` (dev) | 0.18.1 | `0.18` |
 | `pyth-solana-receiver-sdk` (dev only, fixtures and cross-check) | 2.0.0 | `2.0` |
 
-**Version conflict, needs a decision before this repo's first program milestone.**
-`pinocchio-token` 0.7.0 and `pinocchio-associated-token-account` 0.4.0 depend on
-`solana-account-view ^2.0` (the Pinocchio 0.11 generation), while `pinocchio` 0.12.0 depends on
-`solana-account-view` 3.0; `pinocchio-system` 0.7.0 already targets `pinocchio ^0.12`. So the
-latest stable versions of the three crates varswap uses (`pinocchio`, `pinocchio-system`,
-`pinocchio-token`) cannot be combined today. Options: (a) Pinocchio 0.12 with
-the three token CPIs varswap needs written in-crate (`transfer_checked`, `close_account`,
-`initialize_account3`; the vault is a PDA token account, so no ATA crate at all),
-replaced by `pinocchio-token` once a 0.12-compatible release exists; (b) the whole set one
-generation back (Pinocchio 0.11, as matchbook), against the latest-stable rule; (c) wait for the
-companion releases. Proposal: (a), re-checked on crates.io at the start of the milestone.
+**Version decision (Joaquin, 2026-10-29): option (b), the Pinocchio 0.11 generation.**
+`pinocchio-token` 0.7.0 and `pinocchio-associated-token-account` 0.4.0 are built on
+`solana-account-view` 2 (Pinocchio 0.11), while `pinocchio` 0.12.0 uses 3, so the latest
+stable versions cannot be combined. All four repos and matchbook therefore use `pinocchio`
+0.11 (0.11.2) and `pinocchio-system` 0.6 (0.6.1), the newest releases compatible with the
+token crates. This is the documented exception to the latest-stable rule; move all four to
+the 0.12 generation together once 0.12-compatible token crates are released.
 
 ## 6. Open questions
 
 1. First underlying: SOL/USD (24/7, simplest) proposed. Or straight to XAU?
-2. Degraded windows: always unwind in v1 (proposed after the codex review; the varswap
-   session agrees). OK?
+2. Decided (2026-10-29): degraded windows always unwind in v1. Canonical-print bounds:
+   `conf / price <= 10%` and outage guard `tolerance = 6 h`, both exceptional unwinds.
 3. Annualization for markets with closures: calendar time or trading time?
 4. Rounding dust to the short (proposed, simplest conservation) or to a treasury?
 5. Is a ring buffer of recent samples wanted for UIs, at extra rent?
