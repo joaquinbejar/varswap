@@ -200,6 +200,10 @@ impl LnKernel {
     /// does not depend on `N`. The payoff only reads `min(V, cap_var)`, which is 1-Lipschitz,
     /// and `V − ε(V)` increases with `V`, so evaluating at `V = cap_var` covers every path.
     ///
+    /// Payouts do not settle on the computed variance but on
+    /// [`LnKernel::conservative_realized_var`] (`V − ε`, never above the exact value), so the
+    /// error cannot move the long's payout up across an atom boundary.
+    ///
     /// # Errors
     ///
     /// [`CoreError::ZeroInterval`] or [`CoreError::Overflow`].
@@ -237,6 +241,29 @@ impl LnKernel {
             .checked_add(y.checked_mul(3).ok_or(CoreError::Overflow)?)
             .and_then(|x| x.checked_add(2))
             .ok_or(CoreError::Overflow)
+    }
+}
+
+impl LnKernel {
+    /// The realized variance a payout uses: `max(0, realized − ε)`, with `ε` the
+    /// [`LnKernel::realized_var_error_bound`] of the window's interval and the swap's cap
+    /// (all in Q64.64 raw units). Because `|computed − exact| <= ε`, the result never exceeds
+    /// the exact realized variance, so the long's payout never exceeds the exact payout and
+    /// every rounding, the `ln` error included, goes to the short (`docs/PLAN.md` 4.4). Apply
+    /// it before the cap and before the payout's floor.
+    ///
+    /// # Errors
+    ///
+    /// As [`LnKernel::realized_var_error_bound`].
+    pub fn conservative_realized_var(
+        realized: u128,
+        interval: crate::Seconds,
+        cap_var: u128,
+        max_delta_exp: u8,
+    ) -> Result<u128, CoreError> {
+        let eps = Self::realized_var_error_bound(interval, cap_var, max_delta_exp)?;
+        // Clamp at zero explicitly: a variance below the bound settles as zero.
+        Ok(realized.checked_sub(eps).unwrap_or(0))
     }
 }
 

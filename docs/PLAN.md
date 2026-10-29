@@ -402,14 +402,18 @@ the `u128` sum still holds `2^32` units of `Σ r²`. `annualize` converts back t
 function (requested by the coordinator), not a copy; milestone 4 pins that optfix rev and
 regenerates this table with exact limits from `realized_var_error_bound`.
 
-**Which case applies: the bound holds by enforcement, so the `ln` error is dropped.**
-`open_swap` (milestone 4) rejects any swap with `notional × ε(window.interval, cap_var) >=
-2^64` (that is, a payoff error of one atom or more), computed on-chain from the window's
-interval and the swap's cap. Within that limit the payoff error is under one atom, and the
-payout already rounds down in atoms toward the short, so the residual is absorbed there with
-the other rounding (at most one more atom, to the short). The directed parts of the kernel
-(`r²` and the annualization rounded down) also lower the realized variance, the short's
-side. Nothing is subtracted from the variance before payout.
+**Which case applies: the bound is applied in the short's favour (codex review of #11).**
+A payoff error under one atom is not enough by itself: the payout is floored in atoms, and a
+tiny positive `ln` error can still push the long's payout across an atom boundary, one atom
+against the short. So payouts settle on the conservative variance
+`V_cons = max(0, V − ε(window.interval, cap_var))` (`LnKernel::conservative_realized_var`),
+taken before the cap and before the floor. Since `|V − V_exact| <= ε`, `V_cons <= V_exact`:
+the long's payout never exceeds the exact payout, and every rounding, the `ln` error included,
+goes to the short, consistent with the payout rounding above. The GBM proptest checks
+`V_cons <= V_exact` against the f64 reference. The notional limit stays: `open_swap`
+(milestone 4) rejects `notional × ε >= 2^64`, which caps how much `V_cons` over-favours the
+short at under one atom. The directed parts of the kernel (`r²` and the annualization rounded
+down) also lower the realized variance.
 
 ### 4.5 Annualization
 
@@ -509,7 +513,9 @@ to build test accounts and to cross-check the decoder.
    either side's USDC account frozen (the other side still claims), every forged account
    is rejected, and `open_swap` rejects `notional × LnKernel::realized_var_error_bound(
    window.interval, cap_var, 0) >= 2^64` (the realized variance error bound of 4.4, exponent
-   pinned), with a test at the limit and one just above it; `sum_sq` is accumulated at
+   pinned), with a test at the limit and one just above it; `settle_swap` pays on
+   `LnKernel::conservative_realized_var` (`V − ε`, before the cap and the floor), with a test
+   that the long's payout never exceeds the payout on the exact variance; `sum_sq` is accumulated at
    `2^-96` per plan (B) of 4.4 and the 4.4 table is regenerated from it.
 5. **Benchmarks and manipulation study.** *Done when* `docs/benchmarks.md` has CU for every
    instruction and the README has the pusher-bias table and the outage tables from 4.1

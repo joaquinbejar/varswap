@@ -198,6 +198,41 @@ proptest! {
         );
         prop_assert!(worst.is_finite());
 
+        // The conservative variance never exceeds the exact one. The exact sum is the
+        // per-term f64 references (each within 4 × 2^-53 relative, already checked above)
+        // summed with Neumaier compensation and given that error in the unfavourable
+        // direction; the closed-form ε also dominates the per-term bounds it is derived from.
+        let realized = w.realized_var().unwrap().unwrap();
+        let cap = (25u128) << 64;
+        let eps = LnKernel::realized_var_error_bound(Seconds::new(interval), cap, 0).unwrap();
+        let cons =
+            LnKernel::conservative_realized_var(realized, Seconds::new(interval), cap, 0)
+                .unwrap();
+        let (mut hi, mut comp) = (0f64, 0f64);
+        let mut term_bounds = 0f64;
+        for pair in prices.windows(2) {
+            let r = ref_log_return(pair[0], pair[1]);
+            let x = r * r * TWO_64 * (1.0 + 4.0 * f64::EPSILON);
+            let t = hi + x;
+            comp += if hi.abs() >= x.abs() { (hi - t) + x } else { (x - t) + hi };
+            hi = t;
+            term_bounds += LnKernel::term_error_bound(Fixed::from_raw((r * TWO_64) as i128), 0)
+                .unwrap() as f64;
+        }
+        let exact_hi = (hi + comp) * YEAR_SECONDS as f64 / span as f64;
+        let exact_v = exact_hi / TWO_64;
+        if exact_v <= 25.0 {
+            prop_assert!(
+                term_bounds * YEAR_SECONDS as f64 / span as f64 + 1.0 <= eps as f64,
+                "closed form {} below the per-term sum {}", eps, term_bounds
+            );
+        }
+        prop_assert!(
+            (cons as f64) <= exact_hi * (1.0 + 2.0 * f64::EPSILON),
+            "V_cons {} > V_exact {}", cons, exact_hi
+        );
+        prop_assert!(cons <= realized && realized - cons <= eps);
+
         // Any gap degrades the window.
         let gap = missing % (n + 1);
         let mut data = vec![0u8; varswap_core::window_size(n + 1).unwrap()];
