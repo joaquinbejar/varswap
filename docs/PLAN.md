@@ -67,6 +67,15 @@ pub enum WindowState { Pending, Sampling, Finalized, Degraded }
 pub enum SwapState { Open, Settled }
 ```
 
+Implemented in milestone 1a (`varswap-core`): `FeedId` and `UnixTimestamp` are pyth-lite's;
+`Seconds(u32)` and `Bps(u16)` as above; the risk parameters copied from `FeedConfig` are a
+`RiskParams` value; a sampled print is a `Print` built from a verified
+`pyth_lite::OraclePrice`; `sum_sq` is a `SumSq(u128)` in the raw units of the `ReturnKernel`
+(optfix `Fixed` raw from milestone 1b); the library error is `CoreError` (`#[repr(u8)]`,
+mapped into `VarswapError` by the program). `SampleOutOfOrder` is gone: buckets fill in any
+order. A loaded window is checked for `filled` equal to the bits set and a state consistent
+with it (`Pending`: none; `Finalized`: all; `Degraded`: not all).
+
 Accumulator invariants:
 
 - Each bucket `k` in `[0, N]` holds at most one sample, the canonical print for `b_k` (4.1).
@@ -363,9 +372,28 @@ to build test accounts and to cross-check the decoder.
 ## 5. Milestones
 
 1. **Domain and accumulator math.** `varswap-core` with types, errors, accumulator update and
-   finalize as pure functions. *Done when* proptest against an f64 reference on simulated GBM
-   paths shows realized variance within the documented bound, and that any gap yields
-   `Degraded`; and the workspace carries the shared lint control (`rules/global_rules.md`,
+   finalize as pure functions. Split in two (coordinator, 2026-10-29), because the log-return
+   kernel needs optfix `ln`, which optfix decides in its milestone 3:
+   - **1a, done:** newtypes and `CoreError`; `WindowSpec` with its validation, grid and
+     stored layout (`layout::WindowSpecRaw`, 96 bytes, fields ordered by alignment;
+     `WindowHeader`, 144 bytes; offsets tested); `window_size` and `MAX_BUCKETS = 1_105`
+     (`window_size(1_105) = 10_233 <= 10_240 < 10_242 = window_size(1_106)`); the filled
+     bitmap and the price and exponent arrays; canonical-run assignment with Euclidean
+     floors and `NotOnGrid`; `Print` rejecting exponents outside `i8` and `prev_publish_time
+     == 0`; sampling (edge returns only, nothing written on error), the backfill deadline,
+     the 6 h outage guard and finalize (`Finalized` at once when complete, `Degraded` only
+     after `end + backfill_deadline`). The return math is behind the `ReturnKernel` trait
+     (`squared_log_return`, `annualize`, raw `u128` units of the kernel). Tested with an
+     exact integer kernel: a proptest model of the Pyth message tape (same-second
+     aggregates, failed-slot copies, long halts) submitted in random order matches a
+     brute-force reference exactly in filled buckets, prices, `sum_sq`, final state and
+     realized variance; canonical runs match brute force; a coverage test checks the
+     strategy produces complete and degraded windows, multi-bucket runs and guarded prints.
+   - **1b, after optfix `ln`:** the optfix kernel. *Done when* proptest against an f64
+     reference on simulated GBM paths shows realized variance within the documented bound,
+     and that any gap yields `Degraded`.
+
+   The workspace carries the shared lint control (`rules/global_rules.md`,
    synced from optfix `afb9d4d`; set up with milestone 2, which ran first, except the
    entrypoint-module allow, which lands with the program in milestone 3):
    - `lint-control/` (`Cargo.toml`, `src/lib.rs`, `check.sh`) copied from optfix and added

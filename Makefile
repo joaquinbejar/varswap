@@ -17,6 +17,7 @@ build:
 .PHONY: sbf
 sbf:
 	cargo build-sbf --manifest-path pyth-lite/Cargo.toml --arch $(SBF_ARCH)
+	cargo build-sbf --manifest-path varswap-core/Cargo.toml --arch $(SBF_ARCH)
 
 # Run every test
 .PHONY: test
