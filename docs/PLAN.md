@@ -109,7 +109,7 @@ pub enum VarswapError {
 | Account | Seeds | Owner | Size | Written by |
 | --- | --- | --- | --- | --- |
 | `Config` | `["config"]` | varswap | 8 + 32 + 32 + 8 | admin |
-| `FeedConfig` | `["feed", feed_id]` | varswap | ~64 | admin: risk parameters per feed (tolerance, max_age, max_conf, min_coverage, grace) |
+| `FeedConfig` | `["feed", feed_id]` | varswap | ~64 | admin: risk parameters per feed (min_interval, tolerance, max_age, max_conf, min_coverage, grace) |
 | `Window` | `["window", feed_id, start_le, end_le, interval_le]` | varswap | ~200, computed in M3 | `create_window` (anyone), `sample` (anyone), `finalize` (anyone) |
 | `Swap` | `["swap", window, long, short, swap_index_le]` | varswap | 8 + 32×3 + 8×4 + 1 + 8×2 + 2 = ~162 | `open_swap`, `settle_swap`, `claim_*` (payouts and claimed flags, +18 bytes) |
 | Collateral vault | ATA of the `Swap` PDA for USDC | SPL Token | 165 | token CPIs only |
@@ -147,7 +147,8 @@ settlement; it is listed as an open question for UI use.
 ### 3.3 Security checks
 
 - `create_window`: PDA from spec fields; `start < end`, `interval > 0`, `(end − start) %
-  interval == 0`, `feed` has a `FeedConfig` (so windows only exist on vetted feeds), risk
+  interval == 0`, `feed` has a `FeedConfig` (so windows only exist on vetted feeds),
+  `interval >= feed_config.min_interval`, risk
   parameters copied from it (an anyone-can-create window must not let the first creator pick
   a loose tolerance or confidence and own the PDA), `start` in the future.
 - `sample`: the `price_update` account is owned by the Pyth receiver program (address pinned
