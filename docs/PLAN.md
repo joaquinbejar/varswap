@@ -108,31 +108,50 @@ pub enum VarswapError {
 | --- | --- | --- | --- | --- |
 | `Config` | `["config"]` | varswap | 8 + 32 + 32 + 8 | admin |
 | `FeedConfig` | `["feed", feed_id]` | varswap | ~64 | admin: risk parameters per feed (receiver program id, min_interval, tolerance, max_conf, backfill_deadline, max_buckets) |
-| `Window` | `["window", feed_id, start_le, end_le, interval_le]` | varswap | about 6.5 KB for 721 buckets (header + bitmap + 9 bytes per bucket) | `create_window` (anyone), `sample` (anyone), `finalize` (anyone) |
+| `Window` | `["window", feed_id, start_le, end_le, interval_le]` | varswap | `144 + 8 × ceil((N + 1) / 64) + 9 × (N + 1)`: 6,729 bytes for 721 buckets (sketch, see below) | `create_window` (anyone), `sample` (anyone), `finalize` (anyone) |
 | `Swap` | `["swap", window, long, short, swap_index_le]` | varswap | 8 + 32×3 + 8×4 + 1 + 8×2 + 2 = ~162 | `open_swap`, `settle_swap`, `claim_*` (payouts and claimed flags, +18 bytes) |
 | Collateral vault | `["vault", swap]` PDA token account (system create + `initialize_account3`) | SPL Token | 165 | token CPIs only |
 
 ```rust
-struct Window {
-    hdr: Hdr, spec: WindowSpec, state: WindowState,
+#[repr(C)]
+struct WindowHeader {                      // 144 bytes, no implicit padding
+    hdr: Hdr,                              // 8
+    spec: WindowSpec,                      // 96: 94 bytes of fields + `_pad: [u8; 2]`
+    state: u8, _pad: [u8; 3],              // WindowState stored as u8, validated on load
     filled: u32,                           // number of buckets filled
-    sum_sq: Fixed,                         // sum of squared log returns of adjacent pairs
-    realized_var: Fixed,                   // set at finalize
-    // followed by: filled bitmap [u64; ceil((N + 1) / 64)] and prices [FixedBytes; N + 1]
+    sum_sq: FixedBytes,                    // [u8; 16]: sum of squared log returns of adjacent pairs
+    realized_var: FixedBytes,              // [u8; 16]: set at finalize
 }
+// Followed by three arrays, structure of arrays so every i64 stays 8-aligned:
+//   filled bitmap  [u64; ceil((N + 1) / 64)]
+//   prices         [i64; N + 1]   raw Pyth price of the canonical print per bucket
+//   exponents      [i8;  N + 1]   its exponent; converted to Fixed only to compute ln
 ```
 
-Running sums, not a ring buffer: settlement needs only `sum_sq` and the times. Each accepted
-sample is logged as an event (index, publish_time, price, return) so anyone can recompute the
-sum off-chain. A ring buffer would cost rent proportional to the window and adds nothing to
-settlement; it is listed as an open question for UI use.
+For `B = N + 1` buckets the serialized size is `bytes(B) = 144 + 8 × ceil(B / 64) + 9 × B`:
+6,729 bytes for 721 buckets (30 days hourly). `WindowSpec` fields are ordered by alignment
+(`feed`, `start`, `end`, `receiver_program`, then the `u32`s, then `max_conf: u16`) so its
+only padding is the explicit trailing `_pad`. An account created through a CPI is capped at
+10,240 bytes (`MAX_PERMITTED_DATA_INCREASE`, to verify in milestone 3), so the largest window
+has `B = 1,105` buckets (`bytes = 10,233`; 1,106 would be 10,242). `MAX_BUCKETS = 1_105` is a
+constant derived from this formula; milestone 3 replaces the sketch's 144 with
+`size_of::<WindowHeader>()` and a unit test asserts `bytes(MAX_BUCKETS) <= 10_240 <
+bytes(MAX_BUCKETS + 1)`. `set_feed_config` rejects `max_buckets > MAX_BUCKETS`;
+`create_window` rejects `N + 1 > max_buckets`.
+
+Every bucket's price is kept on-chain for the life of the window: buckets fill in any order,
+and filling bucket `k` adds the returns to whichever neighbours `k − 1` and `k + 1` are already
+filled, so their prices must be stored. Settlement reads only `sum_sq`; each accepted sample
+is also logged as an event (bucket range, publish_time, price, returns added) so anyone can
+recompute `sum_sq` off-chain. The stored price array also serves UIs, so no separate ring
+buffer is needed.
 
 ### 3.2 Instructions
 
 | # | Instruction | Signers | Accounts |
 | --- | --- | --- | --- |
 | 0 | `init_config` | admin, payer | config (w), system |
-| 0b | `set_feed_config` | admin | config, feed_config (w), system: validates `max_conf`, `tolerance > 0`, `backfill_deadline > 0`, `max_buckets` fits 10 KiB |
+| 0b | `set_feed_config` | admin | config, feed_config (w), system: validates `max_conf`, `tolerance > 0`, `backfill_deadline > 0`, `max_buckets <= MAX_BUCKETS` (3.1) |
 | 1 | `create_window` | payer | config, window (w), system |
 | 2 | `sample` | anyone (payer of fee only) | window (w), price_update (Pyth receiver account), clock sysvar |
 | 3 | `finalize` | anyone | window (w), clock |
@@ -208,24 +227,43 @@ So samples are **canonical**:
 - Buckets are a bitmap, filled in any order; there is no `k > last_index` rule, so a later
   bucket can never lock out an earlier one. `k` is derived from `publish_time` and must be
   inside `[0, N]` (both grid endpoints included); samples after finalization are rejected.
-- Each bucket stores the raw Pyth `price: i64` and `exponent: i8` (9 bytes; converted to
-  `Fixed` only to compute `ln`), so 721 buckets for 30 days hourly take about 6.5 KB with the
-  bitmap and header, under the 10 KiB limit for an account created through a CPI
-  (`MAX_PERMITTED_DATA_INCREASE`, to verify in milestone 3). `FeedConfig.max_buckets` caps
-  `N` at `create_window`. When bucket `k` is filled, the returns to its filled neighbours `k − 1`
+- Each bucket stores the raw Pyth `price: i64` and `exponent: i8` (9 bytes, in separate
+  arrays; converted to `Fixed` only to compute `ln`): 6,729 bytes for 721 buckets, under the
+  10,240-byte CPI creation cap, with `MAX_BUCKETS = 1_105` derived from the serialized size
+  in 3.1. `FeedConfig.max_buckets` caps `N + 1` at `create_window`. When bucket `k` is filled,
+  the returns to its filled neighbours `k − 1`
   and `k + 1` are added to `sum_sq`, so a sample costs at most two `ln` calls and finalize
   costs none.
 - Outages: the first print after `b_k` is canonical for every boundary it crosses, so after
-  an outage it fills all the gap's buckets with one price. That is not a bias: the gap's
-  whole move appears as one return spanning `m` intervals, whose square has the same
-  expectation as the sum of `m` squared returns (`σ² m Δ`); only unobserved reversals inside
-  the gap are lost, and nobody can choose them (varswap session). A tight halt bound would
-  instead turn every Pyth halt into an unwind, and halts cluster in stress events, when the
-  short is losing: the same free option as a tight confidence filter. So the only guard is a
-  long one: `publish_time <= b_k + tolerance` with `tolerance` in hours (proposed 6 h),
-  documented as an exceptional unwind; the bias study counts how often real SOL/USD history
-  would have tripped it. (metalbook keeps a short tolerance: its payoff is a mean of prices,
-  where one reopening print filling many slots would bias the mean.)
+  an outage it fills all the gap's buckets with one price, and the gap's whole move appears
+  as one return `R = r_1 + … + r_m` spanning `m` intervals.
+  - **Contractual payoff.** The contract pays on squared log returns between consecutive
+    canonical samples; across an outage that is `R²`, by definition. Nobody can choose the
+    samples (canonicity), so this is not a manipulation lever.
+  - **Latent grid variation.** The contract does not measure the variation `Σ r_i²` the
+    full grid would have seen; the two differ by `R² − Σ r_i² = 2 Σ_{i<j} r_i r_j`. In
+    expectation the gap is zero only for zero-mean, uncorrelated increments. Drift adds
+    `m (m − 1) μ²`; autocorrelation adds `2 Σ Cov(r_i, r_j)`; and halts are endogenous
+    (they cluster around large moves), so increments conditional on a halt need not be
+    zero-mean or uncorrelated. Examples: two equal moves `[a, a]` give `4a²` against `2a²`
+    (the long gains); a reversal `[a, −a]` gives `0` against `2a²` (the short gains). The
+    compression is not unbiased in general and the plan does not claim it is.
+  - **Guard, a policy choice.** A short guard turns every Pyth halt into an unwind, and
+    halts cluster in stress, when the short is losing: a free option for the short, as with
+    a tight confidence filter. No guard lets an arbitrarily long gap collapse into one
+    return. v1 takes `publish_time <= b_k + tolerance` with `tolerance = 6 h` (decided
+    2026-10-29): gaps up to 6 h settle on the compressed return, longer ones unwind. This
+    trades the two risks; it removes neither.
+  - **Quantified in milestone 5**, by simulation and not by counting alone: GBM with drift;
+    AR(1) returns with positive and negative `ρ`; and an endogenous-halt model (a halt
+    triggered by `|r|` above a threshold, lasting `L` intervals, with continuation and with
+    reversal). For each, and for `tolerance` in {1, 3, 6, 12, 24} h, report (a) the
+    distribution of `R² − Σ r_i²` summed over the window, in variance points and in USDC per
+    unit of variance notional, and (b) the unwind frequency. Real SOL/USD history supplies
+    only outage frequency and length, because the latent path inside a real outage is not
+    observed; counting how often the guard fires does not measure the error.
+  - (metalbook keeps a short tolerance: its payoff is a mean of prices, where one reopening
+    print filling many slots would bias the mean.)
 - Confidence: no tight filter. Canonicity and `Full` verification already remove the
   pusher's choice, and a tight `max_conf` would make a missing bucket (hence an unwind) most
   likely exactly when variance is high and the short is losing: a free option for the short
@@ -242,7 +280,9 @@ So samples are **canonical**:
 
 ### 4.2 Running sums vs ring buffer
 
-As in 3.1: running sums for settlement, events for auditability. **Recommended.**
+As in 3.1: `sum_sq` for settlement, plus every bucket's price on-chain (required by
+out-of-order neighbour updates), plus events for auditability. A separate ring buffer is not
+needed: the price array already holds the whole window.
 
 ### 4.3 Missing data
 
@@ -308,7 +348,8 @@ to build test accounts and to cross-check the decoder.
    either side's USDC account frozen (the other side still claims), and every forged account
    is rejected.
 5. **Benchmarks and manipulation study.** *Done when* `docs/benchmarks.md` has CU for every
-   instruction and the README has the pusher-bias table from 4.1.
+   instruction and the README has the pusher-bias table and the outage tables from 4.1
+   (compression error and unwind frequency per model and per `tolerance`).
 6. **SDK and devnet.** *Done when* a Rust SDK and a keeper example push samples on devnet for
    a live SOL/USD window and it finalizes.
 
@@ -369,5 +410,5 @@ the 0.12 generation together once 0.12-compatible token crates are released.
    `conf / price <= 10%` and outage guard `tolerance = 6 h`, both exceptional unwinds.
 3. Annualization for markets with closures: calendar time or trading time?
 4. Rounding dust to the short (proposed, simplest conservation) or to a treasury?
-5. Is a ring buffer of recent samples wanted for UIs, at extra rent?
+5. Resolved: no separate ring buffer; every bucket's price is stored on-chain (3.1).
 6. Should `open_swap` route through quotebook (a quote for a variance strike) in v1 or v2?
