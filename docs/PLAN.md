@@ -159,7 +159,10 @@ settlement; it is listed as an open question for UI use.
   empty, a run of at most `tolerance / interval + 1` buckets so CU stays bounded. Returns
   inside the run are zero; only the two edge returns go to `sum_sq` (still at most two `ln`
   calls). M3 test: an outage spanning 3 boundaries, one `sample` call, `sum_sq` equals one
-  return over 4 intervals. Each print converts to `Fixed` with its own
+  return over 4 intervals.
+  Floors and ceilings use `checked_div_euclid` (`prev_publish_time − start` is negative for
+  the print that fills `b_0`; truncating division would be off by one; test `b_0`), and
+  `k_lo > k_hi` is the typed error `NotOnGrid`, never a no-op. Each print converts to `Fixed` with its own
   exponent (log returns are scale invariant), so a Pyth exponent change mid-window does not
   brick it. Clock read with the Pinocchio syscall.
 - `open_swap`: both parties sign; window not finalized and `now < window.start` (no opening
