@@ -1,7 +1,8 @@
 //! Hermes: configuration and the [`HermesSource`] price source.
 //!
 //! The API key is read only from the environment, never from a file and never printed: `Debug`
-//! redacts it.
+//! and every error redact it, and the base URL too (a provider may put the key in its path or
+//! query).
 //!
 //! **UNVERIFIED: the authentication scheme.** Hermes' price endpoints answer 401 without a key
 //! (`docs/PLAN.md` verified facts), but Pyth's documentation does not yet state how the key is
@@ -129,7 +130,10 @@ impl HermesConfig {
 impl fmt::Debug for HermesConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("HermesConfig")
-            .field("base_url", &self.base_url)
+            .field(
+                "base_url",
+                &scrub(&self.base_url, &self.base_url, &self.api_key),
+            )
             .field("api_key", &"<redacted>")
             .field("auth", &self.auth)
             .finish()
@@ -303,16 +307,71 @@ pub fn parse_update(body: &str, feed: &[u8; 32]) -> Result<HermesUpdate, KeeperE
     })
 }
 
-/// Removes the API key from an error message, as a last line of defence: no error built in
-/// this module quotes a response, but a transport error could carry text from elsewhere.
-fn redact(e: KeeperError, key: &str) -> KeeperError {
-    let scrub = |msg: String| {
-        if key.is_empty() {
-            msg
-        } else {
-            msg.replace(key, "<redacted>")
-        }
+/// Placeholder for a redacted URL.
+const HIDDEN_URL: &str = "<hermes url>";
+
+/// Shortest URL path segment or query value treated as a possible key.
+const MIN_SECRET_LEN: usize = 8;
+
+/// The parts of `url` that can carry a key: path segments and query values of at least
+/// [`MIN_SECRET_LEN`] characters (`/?api-key=KEY`, `/TOKEN/`), longest first.
+fn secrets_of(url: &str) -> Vec<&str> {
+    let after_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
+    // Drop the host: everything up to the first `/` or `?`.
+    let tail = after_scheme
+        .find(['/', '?'])
+        .and_then(|i| after_scheme.split_at_checked(i))
+        .map_or("", |(_, tail)| tail);
+    let mut parts: Vec<&str> = tail
+        .split(['/', '?', '&', '=', '#'])
+        .filter(|p| p.len() >= MIN_SECRET_LEN)
+        .collect();
+    parts.sort_by_key(|p| std::cmp::Reverse(p.len()));
+    parts
+}
+
+/// `text` with `url`, the API key, every path segment or query value of `url` of 8 or more
+/// characters, and every other `http://` or `https://` URL replaced by placeholders. The HTTP
+/// client may quote a normalized form of the URL, so exact replacement of it is not enough.
+/// The same redactor as `varswap-admin`'s RPC errors.
+fn scrub(text: &str, url: &str, key: &str) -> String {
+    let mut text = if url.is_empty() {
+        text.to_owned()
+    } else {
+        text.replace(url, HIDDEN_URL)
     };
+    if !key.is_empty() {
+        text = text.replace(key, "<redacted>");
+    }
+    for secret in secrets_of(url) {
+        text = text.replace(secret, "<redacted>");
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text.as_str();
+    while let Some(start) = ["http://", "https://"]
+        .iter()
+        .filter_map(|scheme| rest.find(scheme))
+        .min()
+    {
+        let Some((before, tail)) = rest.split_at_checked(start) else {
+            break;
+        };
+        out.push_str(before);
+        out.push_str(HIDDEN_URL);
+        let end = tail
+            .find(|c: char| c.is_whitespace() || matches!(c, ')' | '"' | '\'' | '>'))
+            .unwrap_or(tail.len());
+        rest = tail.split_at_checked(end).map_or("", |(_, after)| after);
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Scrubs an error message with [`scrub`], as a last line of defence: no error built in this
+/// module quotes a response, but a transport error quotes the request URL and could carry text
+/// from elsewhere.
+fn redact(e: KeeperError, config: &HermesConfig) -> KeeperError {
+    let scrub = |msg: String| scrub(&msg, config.base_url(), config.api_key());
     match e {
         KeeperError::Source(msg) => KeeperError::Source(scrub(msg)),
         KeeperError::Chain(msg) => KeeperError::Chain(scrub(msg)),
@@ -341,7 +400,7 @@ pub struct HermesSource<H: HttpGet> {
 impl<H: HttpGet> HermesSource<H> {
     fn request(&self, url: &str, feed: &[u8; 32]) -> Result<Option<HermesUpdate>, KeeperError> {
         self.request_unredacted(url, feed)
-            .map_err(|e| redact(e, self.config.api_key()))
+            .map_err(|e| redact(e, &self.config))
     }
 
     fn request_unredacted(

@@ -19,7 +19,7 @@ use std::cell::RefCell;
 
 use varswap_keeper::{
     parse_update, HermesConfig, HermesSource, HttpGet, HttpResponse, KeeperError, PriceSource,
-    PrintMsg, TapeSource, HERMES_API_KEY_VAR,
+    PrintMsg, TapeSource, UreqHttp, HERMES_API_KEY_VAR, HERMES_URL_VAR,
 };
 
 const FEED: [u8; 32] = [
@@ -345,5 +345,38 @@ fn test_reflected_key_never_reaches_display_debug_or_the_example_output() {
         format!("hermes: {err}"),
     ] {
         assert!(!shown.contains("test-key"), "{shown}");
+    }
+}
+
+/// Codex's repro on #16: the key is also a path segment of the base URL. Neither the config's
+/// nor the source's `Debug` shows it, nor the URL, and a real transport error (nothing listens
+/// on port 9) quotes neither the URL, its host, nor the key.
+#[test]
+fn test_key_in_the_base_url_never_reaches_debug_or_transport_errors() {
+    let key = "SYNTHETIC-HERMES-KEY";
+    let lookup = |url: &'static str| {
+        move |n: &str| match n {
+            HERMES_API_KEY_VAR => Some(key.to_string()),
+            HERMES_URL_VAR => Some(url.to_string()),
+            _ => None,
+        }
+    };
+    let config =
+        HermesConfig::from_lookup(lookup("https://gateway.example/SYNTHETIC-HERMES-KEY")).unwrap();
+    let source = HermesSource::new(config.clone(), UreqHttp::new());
+    for shown in [format!("{config:?}"), format!("{source:?}")] {
+        assert!(!shown.contains(key), "{shown}");
+        assert!(!shown.contains("gateway.example"), "{shown}");
+    }
+
+    let config =
+        HermesConfig::from_lookup(lookup("http://127.0.0.1:9/SYNTHETIC-HERMES-KEY/")).unwrap();
+    let err = HermesSource::new(config, UreqHttp::new())
+        .first_at_or_after(&FEED, 1)
+        .unwrap_err();
+    assert!(matches!(err, KeeperError::Source(_)), "{err:?}");
+    let shown = format!("{err:?} {err}");
+    for leak in [key, "127.0.0.1", "http://"] {
+        assert!(!shown.contains(leak), "{shown}");
     }
 }
