@@ -1,0 +1,9 @@
+# Failing control for scripts/sbf-build.sh: a function with a 6 KB frame. Not a workspace
+# member; `make sbf-control` requires the stack check to reject it.
+[package]
+name = "stack-probe"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]

@@ -1,0 +1,20 @@
+[package]
+name = "varswap-core"
+description = "Realized-variance accumulator over canonical Pyth prints: window grid, bucket storage, sampling rules"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["variance", "pyth", "solana", "no-std"]
+categories = ["no-std", "finance"]
+
+[dependencies]
+bytemuck = { workspace = true }
+pyth-lite = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

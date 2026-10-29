@@ -13,10 +13,19 @@ all: fmt-check lint test
 build:
 	cargo build --workspace
 
-# Build the on-chain crates for SBF (proves they stay no_std with no host-only dependency)
+# Build the on-chain crates for SBF (proves they stay no_std with no host-only dependency);
+# fails on any stack frame over 4 KiB (scripts/sbf-build.sh).
 .PHONY: sbf
 sbf:
-	cargo build-sbf --manifest-path pyth-lite/Cargo.toml --arch $(SBF_ARCH)
+	@SBF_ARCH=$(SBF_ARCH) sh scripts/sbf-build.sh pyth-lite/Cargo.toml
+	@SBF_ARCH=$(SBF_ARCH) sh scripts/sbf-build.sh varswap-core/Cargo.toml
+
+# Failing control for the stack check: it must reject lint-control/stack-probe (6 KB frame).
+.PHONY: sbf-control
+sbf-control:
+	@if SBF_ARCH=$(SBF_ARCH) sh scripts/sbf-build.sh lint-control/stack-probe/Cargo.toml >/dev/null 2>&1; then \
+		echo "sbf-control: the stack check accepted a 6 KB frame"; exit 1; \
+	else echo "sbf-control: the stack check rejects an oversized frame"; fi
 
 # Run every test
 .PHONY: test
@@ -56,7 +65,7 @@ fixtures:
 
 # Pre-push checks: must pass with zero warnings
 .PHONY: pre-push
-pre-push: fmt-check lint lint-control sbf test doc
+pre-push: fmt-check lint lint-control sbf sbf-control test doc
 
 .PHONY: clean
 clean:
