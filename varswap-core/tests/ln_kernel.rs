@@ -198,10 +198,10 @@ proptest! {
         );
         prop_assert!(worst.is_finite());
 
-        // The conservative variance never exceeds the exact one. The exact sum is the
-        // per-term f64 references (each within 4 × 2^-53 relative, already checked above)
-        // summed with Neumaier compensation and given that error in the unfavourable
-        // direction; the closed-form ε also dominates the per-term bounds it is derived from.
+        // The conservative variance against the exact one. The exact sum is the per-term f64
+        // references (each within 4 × 2^-53 relative, already checked above) summed with
+        // Neumaier compensation and given that error in the unfavourable direction; the
+        // closed-form ε also dominates the per-term bounds it is derived from.
         let realized = w.realized_var().unwrap().unwrap();
         let cap = (25u128) << 64;
         let eps = LnKernel::realized_var_error_bound(Seconds::new(interval), cap, 0).unwrap();
@@ -227,10 +227,25 @@ proptest! {
                 "closed form {} below the per-term sum {}", eps, term_bounds
             );
         }
+        // The guarantee is on the capped values: ε(cap) bounds |min(V, cap) − min(V_exact,
+        // cap)|, so min(V_cons, cap) <= min(V_exact, cap). Above the cap the uncapped
+        // V_cons <= V_exact need not hold.
+        let cap_f = cap as f64;
         prop_assert!(
-            (cons as f64) <= exact_hi * (1.0 + 2.0 * f64::EPSILON),
-            "V_cons {} > V_exact {}", cons, exact_hi
+            (cons.min(cap) as f64) <= exact_hi.min(cap_f) * (1.0 + 2.0 * f64::EPSILON),
+            "min(V_cons, cap) {} > min(V_exact, cap) {}", cons.min(cap), exact_hi.min(cap_f)
         );
+        // The budget (PLAN 4.4): at the largest notional the limit allows (notional × ε <
+        // 2^64), the long is never overpaid and the short's advantage is under 3 atoms
+        // (under 2 from ±ε then −ε, at most 1 from the floor). Strike 1.0, collateral exact.
+        let notional = (u128::MAX >> 64) / eps;
+        let long_payout = (notional * cons.min(cap)) >> 64;
+        let exact_payout = notional as f64 * exact_hi.min(cap_f) / TWO_64;
+        // f64 resolution of the exact payout: the reference's relative error times its size.
+        let res = exact_payout * 8.0 * f64::EPSILON + 1e-6;
+        let advantage = exact_payout - long_payout as f64;
+        prop_assert!(advantage >= -res, "long overpaid by {} atoms", -advantage);
+        prop_assert!(advantage < 3.0 + res, "short advantage {} atoms >= 3", advantage);
         prop_assert!(cons <= realized && realized - cons <= eps);
 
         // Any gap degrades the window.

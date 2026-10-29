@@ -201,8 +201,8 @@ impl LnKernel {
     /// and `V − ε(V)` increases with `V`, so evaluating at `V = cap_var` covers every path.
     ///
     /// Payouts do not settle on the computed variance but on
-    /// [`LnKernel::conservative_realized_var`] (`V − ε`, never above the exact value), so the
-    /// error cannot move the long's payout up across an atom boundary.
+    /// [`LnKernel::conservative_realized_var`] (`V − ε`; capped, never above the capped exact
+    /// value), so the error cannot move the long's payout up across an atom boundary.
     ///
     /// # Errors
     ///
@@ -247,10 +247,16 @@ impl LnKernel {
 impl LnKernel {
     /// The realized variance a payout uses: `max(0, realized − ε)`, with `ε` the
     /// [`LnKernel::realized_var_error_bound`] of the window's interval and the swap's cap
-    /// (all in Q64.64 raw units). Because `|computed − exact| <= ε`, the result never exceeds
-    /// the exact realized variance, so the long's payout never exceeds the exact payout and
-    /// every rounding, the `ln` error included, goes to the short (`docs/PLAN.md` 4.4). Apply
-    /// it before the cap and before the payout's floor.
+    /// (all in Q64.64 raw units). Apply it before the cap and before the payout's floor.
+    ///
+    /// Guarantee, on the capped values: `ε` bounds `|min(V, cap) − min(V_exact, cap)|`, so
+    /// `min(V_cons, cap) <= min(V_exact, cap)` and the long is never overpaid. Above the cap
+    /// the uncapped `V_cons <= V_exact` need not hold, and nothing reads it.
+    ///
+    /// Budget (`docs/PLAN.md` 4.4): the `ln` error is within `±ε` and `ε` is then subtracted,
+    /// so the short gains at most `2ε × notional` from the bound, plus at most one atom from
+    /// the payout's floor. With the notional limit `notional × ε < 2^64` that is under three
+    /// atoms per swap.
     ///
     /// # Errors
     ///
