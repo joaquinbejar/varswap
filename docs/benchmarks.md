@@ -14,12 +14,12 @@ Toolchain: cargo-build-sbf 4.5.0, Default platform-tools: v1.57, Default Rust: 1
 | `create_window (B = 721)` | 6879 | 6879 | 0 | 30 days hourly, 6,729 B |
 | `create_window (B = 1,105)` | 7167 | 7167 | 0 | MAX_BUCKETS, 10,233 B (CPI cap 10,240) |
 | `sample (no neighbour)` | 3471 | 2816 | 655 | B = 721, first bucket, no kernel call |
-| `sample (both neighbours)` | 6673 | 5940 | 733 | B = 721, bucket 360 between two filled: 2 kernel calls |
-| `sample (outage run of 6)` | 7323 | 6590 | 733 | B = 721, one print fills 6 buckets (the 6 h guard maximum), 2 kernel calls |
-| `finalize (complete)` | 1148 | 1148 | 0 | B = 25, all filled: annualize |
-| `finalize (degraded)` | 1306 | 1306 | 0 | B = 721, empty after the deadline |
-| `open_swap` | 16427 | 16427 | 0 | create swap 288 B and vault 165 B, initialize_account3, two transfer_checked |
-| `settle_swap (finalized)` | 3018 | 3018 | 0 | inspect window, V_cons, payouts |
-| `settle_swap (degraded)` | 2073 | 2073 | 0 | unwind: each side's collateral |
+| `sample (both neighbours)` | 6869 | 6136 | 733 | B = 721, bucket 360 between two filled: 2 kernel calls |
+| `sample (outage run of 6)` | 7519 | 6786 | 733 | B = 721, one print fills 6 buckets (the 6 h guard maximum), 2 kernel calls |
+| `finalize (complete)` | 1421 | 1421 | 0 | B = 25, all filled: annualize |
+| `finalize (degraded)` | 1307 | 1307 | 0 | B = 721, empty after the deadline |
+| `open_swap` | 16862 | 16862 | 0 | create swap 288 B and vault 165 B, initialize_account3, two transfer_checked |
+| `settle_swap (finalized)` | 3677 | 3677 | 0 | inspect window, V_cons, payouts |
+| `settle_swap (degraded)` | 2510 | 2510 | 0 | unwind: each side's collateral |
 | `claim_long` | 3059 | 3059 | 0 | vault PDA check, transfer_checked signed by the swap PDA |
 | `close_swap` | 3093 | 3093 | 0 | empty vault: close_account, close the swap, rent to the payer |

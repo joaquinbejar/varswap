@@ -24,11 +24,13 @@ I64_MAX = (1 << 63) - 1
 
 
 def eps_bound(interval, cap_raw, max_delta_exp=0):
+    # sum_sq at 2^-96 (milestone 4, plan (B)): the per-term rounding is ceil(3Y / 2^32).
     y = -(-YEAR // interval)
     dr = 4 + max_delta_exp
     root = math.isqrt(cap_raw * y) + 1
     main = ((root * dr * 2) >> 32) + 1
-    return main + 3 * y + 2
+    rounding = (3 * y + (1 << 32) - 1) >> 32
+    return main + rounding + 2
 
 
 def v_exact(prices, interval):

@@ -33,21 +33,15 @@ pub enum Settlement {
     Unwind,
 }
 
-/// `floor(n × x / 2^64)` or the ceiling, exact, for `n < 2^64` and any `x`: `x = hi × 2^64 +
-/// lo` gives `n × hi + n × lo / 2^64`, each product below `2^128`.
+/// `floor(n × x / 2^64)` or the ceiling, exact (optfix's reviewed 256-bit
+/// `wide::mul_shr`).
 fn mul_shr64(n: u64, x: u128, round_up: bool) -> Result<u128, CoreError> {
-    let n = u128::from(n);
-    let hi = x.checked_shr(64).ok_or(CoreError::Overflow)?;
-    let lo = x & u128::from(u64::MAX);
-    let lo_prod = n.checked_mul(lo).ok_or(CoreError::Overflow)?;
-    let mut q = n
-        .checked_mul(hi)
-        .and_then(|a| a.checked_add(lo_prod.checked_shr(64)?))
-        .ok_or(CoreError::Overflow)?;
-    if round_up && lo_prod & u128::from(u64::MAX) != 0 {
-        q = q.checked_add(1).ok_or(CoreError::Overflow)?;
-    }
-    Ok(q)
+    let r = if round_up {
+        optfix::Rounding::Up
+    } else {
+        optfix::Rounding::Down
+    };
+    optfix::wide::mul_shr(u128::from(n), x, 64, r).map_err(|_| CoreError::Overflow)
 }
 
 fn to_atoms(x: u128) -> Result<u64, CoreError> {
