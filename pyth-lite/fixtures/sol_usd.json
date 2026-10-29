@@ -1,0 +1,28 @@
+{
+  "id": 1,
+  "jsonrpc": "2.0",
+  "request": {
+    "address": "7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE",
+    "bump": 252,
+    "feed_id": "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d",
+    "rpc": "https://api.mainnet-beta.solana.com",
+    "shard": 0
+  },
+  "result": {
+    "context": {
+      "apiVersion": "4.3.2",
+      "slot": 462940580
+    },
+    "value": {
+      "data": [
+        "IvEjY51+9M1gMUcENA3t3zcf1CRyFI8kjp0abRpesqw6zYt/1dayQwHvDYtv2izrpB2hXUCV0do5Kg0vjtDGx7wPTPrIwoC1bRYuPGMCAAAAeyw4AAAAAAD4////pm3jagAAAAClbeNqAAAAACqSMl8CAAAAG/c7AAAAAACd6ZcbAAAAAAA=",
+        "base64"
+      ],
+      "executable": false,
+      "lamports": 1825031,
+      "owner": "rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ",
+      "rentEpoch": 18446744073709551615,
+      "space": 134
+    }
+  }
+}
