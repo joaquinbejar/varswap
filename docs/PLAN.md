@@ -52,11 +52,9 @@ pub struct WindowSpec {
     pub end: UnixTimestamp,
     pub interval: Seconds,       // sampling grid, e.g. 3600
     // Copied at creation from the admin-written FeedConfig, never from the creator (3.3):
-    pub tolerance: Seconds,      // sample must have publish_time in [boundary, boundary + tolerance]
-    pub max_age: Seconds,        // <= tolerance, see 4.1; update older than this vs Clock is stale
     pub max_conf: Bps,           // conf / price above this is rejected
-    pub min_coverage: Bps,       // fraction of grid points that must be sampled
-    pub grace: Seconds,          // finalize waits until end + tolerance + max_age at least
+    pub backfill_deadline: Seconds, // buckets can be filled until end + this (4.1, 4.3)
+    pub receiver_program: Address,  // copied from FeedConfig; samples are checked against it
 }
 // Stored with explicit padding and state as u8: `#[repr(u8)]` enums and implicit padding
 // cannot derive Pod. Sizes are computed from the final field order in milestone 3.
@@ -70,13 +68,12 @@ pub enum SwapState { Open, Settled }
 
 Accumulator invariants:
 
-- Samples are strictly ordered by grid index and by `publish_time`.
-- `sum_sq_log_returns >= 0`; each return is `ln(p_i / p_{i−1})` computed with optfix `ln`.
-- `realized_var = sum_sq × YEAR_SECONDS / (t_last − t_first)` once finalized, so a missed grid
-  point makes one return span two intervals instead of biasing the estimate (quadratic
-  variation over elapsed time; see 4.3).
-- `Finalized` requires `samples >= min_coverage × grid_points` and a sample in the last
-  bucket; otherwise the window becomes `Degraded` (see 4.3).
+- Each bucket `k` in `[0, N]` holds at most one sample, the canonical print for `b_k` (4.1).
+- `sum_sq_log_returns >= 0`; it is the sum of `ln(p_k / p_{k−1})²` over the pairs of
+  consecutive buckets that are both filled, computed with optfix `ln`.
+- `Finalized` requires all `N + 1` buckets; then `realized_var = sum_sq × YEAR_SECONDS /
+  (b_N − b_0)`. Otherwise, after `end + backfill_deadline`, the window is `Degraded` and its
+  swaps unwind (4.3).
 
 Swap invariants:
 
@@ -109,7 +106,7 @@ pub enum VarswapError {
 | Account | Seeds | Owner | Size | Written by |
 | --- | --- | --- | --- | --- |
 | `Config` | `["config"]` | varswap | 8 + 32 + 32 + 8 | admin |
-| `FeedConfig` | `["feed", feed_id]` | varswap | ~64 | admin: risk parameters per feed (min_interval, tolerance, max_age, max_conf, min_coverage, grace) |
+| `FeedConfig` | `["feed", feed_id]` | varswap | ~64 | admin: risk parameters per feed (receiver program id, min_interval, max_conf, backfill_deadline) |
 | `Window` | `["window", feed_id, start_le, end_le, interval_le]` | varswap | ~200, computed in M3 | `create_window` (anyone), `sample` (anyone), `finalize` (anyone) |
 | `Swap` | `["swap", window, long, short, swap_index_le]` | varswap | 8 + 32×3 + 8×4 + 1 + 8×2 + 2 = ~162 | `open_swap`, `settle_swap`, `claim_*` (payouts and claimed flags, +18 bytes) |
 | Collateral vault | ATA of the `Swap` PDA for USDC | SPL Token | 165 | token CPIs only |
@@ -117,11 +114,10 @@ pub enum VarswapError {
 ```rust
 struct Window {
     hdr: Hdr, spec: WindowSpec, state: WindowState,
-    samples: u32, last_index: u32,         // grid index of the last sample
-    first_time: i64, last_time: i64,
-    last_price: Fixed,                     // normalized to the spec's exponent
-    sum_sq: Fixed,                         // running sum of squared log returns
+    filled: u32,                           // number of buckets filled
+    sum_sq: Fixed,                         // sum of squared log returns of adjacent pairs
     realized_var: Fixed,                   // set at finalize
+    // followed by: filled bitmap [u64; ceil((N + 1) / 64)] and prices [FixedBytes; N + 1]
 }
 ```
 
@@ -135,7 +131,7 @@ settlement; it is listed as an open question for UI use.
 | # | Instruction | Signers | Accounts |
 | --- | --- | --- | --- |
 | 0 | `init_config` | admin, payer | config (w), system |
-| 0b | `set_feed_config` | admin | config, feed_config (w), system: validates `max_age <= tolerance < min_interval` and `grace >= tolerance + max_age` |
+| 0b | `set_feed_config` | admin | config, feed_config (w), system: validates `max_conf`, `min_interval > 0`, `backfill_deadline > 0` |
 | 1 | `create_window` | payer | config, window (w), system |
 | 2 | `sample` | anyone (payer of fee only) | window (w), price_update (Pyth receiver account), clock sysvar |
 | 3 | `finalize` | anyone | window (w), clock |
@@ -152,20 +148,20 @@ settlement; it is listed as an open question for UI use.
   parameters copied from it (an anyone-can-create window must not let the first creator pick
   a loose tolerance or confidence and own the PDA), `start` in the future.
 - `sample`: the `price_update` account is owned by the Pyth receiver program (address pinned
-  in `Config`, verified at milestone 2), has the `PriceUpdateV2` discriminator,
+  in the window's `FeedConfig` copy, verified at milestone 2), has the `PriceUpdateV2` discriminator,
   `verification_level == Full`, `feed_id == window.spec.feed`, `price > 0`,
-  `conf × 10_000 <= price × max_conf` computed in `u128`, `now − publish_time <= max_age`.
-  The grid index is derived, not taken from data: `k = (publish_time − start) / interval`,
-  remainder `<= tolerance`, and `k > last_index`. Each print converts to `Fixed` with its own
+  `conf × 10_000 <= price × max_conf` computed in `u128`, `now <= end + backfill_deadline`,
+  window not finalized. The bucket is derived, not taken from data: `k = ceil((publish_time −
+  start) / interval)`, `0 <= k <= N`, the canonical crossing `prev_publish_time < b_k <=
+  publish_time` holds (4.1), and bucket `k` is empty. Each print converts to `Fixed` with its own
   exponent (log returns are scale invariant), so a Pyth exponent change mid-window does not
   brick it. Clock read with the Pinocchio syscall.
 - `open_swap`: both parties sign; window not finalized and `now < window.start` (no opening
   after sampling begins, so nobody trades on known returns); swap PDA; vault is the ATA of the
   swap PDA with the config's USDC mint; collateral amounts recomputed on-chain, not trusted
   from data.
-- `finalize`: only when the last bucket is sampled or `now > end + grace` (with `grace >=
-  tolerance + max_age`, the latest a valid last sample can arrive), so nobody can degrade a
-  window by finalizing early. Fewer than 2 samples or `t_last == t_first`: unwind explicitly
+- `finalize`: immediately when all `N + 1` buckets are filled, otherwise only after
+  `end + backfill_deadline`, so nobody can degrade a window by finalizing early. Fewer than 2 samples or `t_last == t_first`: unwind explicitly
   (no division by zero).
 - `settle_swap`: window `Finalized` or `Degraded`; swap `Open`. `claim_*`: swap `Settled`,
   destination owned by that side with the USDC mint, vault matches, claimed once.
@@ -175,44 +171,57 @@ settlement; it is listed as an open question for UI use.
 
 ## 4. Key design decisions
 
+Binding: a `Window` copies its `FeedConfig` (receiver program id, feed, risk parameters) at
+creation and a `Swap` stores its collateral mint and token program; `sample`, `settle_swap`
+and `claim_*` read only those copies, never mutable global config. Tested by mutating
+`Config` and `FeedConfig` mid-life.
+
 ### 4.1 Who pushes samples, and manipulation resistance
 
-Options: admin keeper only; anyone. **Recommended: anyone** (liveness does not depend on us),
-with the following limiting the pusher's choice:
+Anyone may push (liveness does not depend on us), but the pusher must have no choice. A
+first-write-wins rule with a tolerance window would still let the pusher pick among several valid
+prints, and a skipped bucket changes the payoff pathwise (codex review: prices
+`[100, 110, 100]` give `sum_sq ≈ 0.01817`; dropping the middle print gives 0 over the same
+elapsed time; a short gains by omitting reversals, a long by merging same-direction moves).
+So samples are **canonical**:
 
-- **Grid sampling**: one sample per bucket, and only a price published within `tolerance`
-  after the boundary. With `tolerance = 10 s` and Pyth's sub-second updates, the pusher picks
-  among about 25 prices in a 10-second interval, not freely over the hour. Smaller tolerance
-  is tighter but more likely to miss.
-- **Minimum interval** is the grid itself; extra updates for the same bucket are rejected.
-- **Confidence filter** rejects prints during dislocations (`max_conf`).
-- **No hindsight**: `max_age <= tolerance`, so a sample for bucket `k` must land by
-  `boundary_k + 2 × tolerance`; a pusher cannot wait to see where price went and then pick
-  the print. Validated at window creation.
-- Pull updates via Hermes are the realistic path (sponsored push feeds update on heartbeat or
-  deviation, so a 10 s tolerance would often miss them), and they are exactly where the
-  pusher picks the print; hence the rules above.
-- Residual risk: the pusher's choice inside the tolerance window and the choice to skip a
-  bucket (one return over two intervals). The bias study models a pusher who picks
-  extremes and is always first to post. Both are quantified in the plan's test suite with
-  simulated GBM paths: worst-case bias of a pusher picking extremes, reported in the README.
+- The sample for boundary `b_k = start + k × interval` is the unique Pyth print with
+  `prev_publish_time < b_k <= publish_time`, i.e. the first aggregate published at or after
+  the boundary. `PriceUpdateV2` carries `prev_publish_time`, so the program can check the
+  crossing; whether Pyth guarantees that `prev_publish_time` is the immediately preceding
+  aggregate (so the canonical print is unique) is verified in milestone 2 against the Pyth
+  receiver source and docs. If it cannot be proven, the fallback is the first-write-wins
+  rule with the residual selection risk quantified in the bias study and accepted
+  explicitly by you.
+- A canonical sample can be posted late (Hermes serves historical updates by timestamp), so
+  there is no hindsight to exploit and `max_age` no longer limits backfill: any bucket can be
+  filled until `end + backfill_deadline` (proposed 24 h).
+- Buckets are a bitmap, filled in any order; there is no `k > last_index` rule, so a later
+  bucket can never lock out an earlier one. `k` is derived from `publish_time` and must be
+  inside `[0, N]` (both grid endpoints included); samples after finalization are rejected.
+- Each bucket stores its normalized price (8 bytes × `N + 1`; 721 buckets for 30 days
+  hourly is 5.8 KB). When bucket `k` is filled, the returns to its filled neighbours `k − 1`
+  and `k + 1` are added to `sum_sq`, so a sample costs at most two `ln` calls and finalize
+  costs none.
+- Confidence filter (`max_conf`) still rejects prints during dislocations; a rejected
+  canonical print leaves the bucket missing (handled by 4.3).
 
 ### 4.2 Running sums vs ring buffer
 
 As in 3.1: running sums for settlement, events for auditability. **Recommended.**
 
-### 4.3 Gaps
+### 4.3 Missing data
 
-- A missed bucket costs coverage, not correctness, because variance is normalized by elapsed
-  time.
-- If coverage at finalize is below `min_coverage`, or the last bucket is missing within
-  `end + grace`, the window is `Degraded`. Swaps on a degraded window settle at the variance
-  estimated from the samples present (still elapsed-time normalized) only if coverage is above
-  a hard floor (for example 50%); below the floor, swaps unwind: each side gets its collateral
-  back. Open question 2 (the varswap session leans "always unwind" in v1).
-- Market closures (weekends for metals, see metalbook) must be excluded from the grid, or
-  they appear as one long return across the weekend. v1: grid spec includes an optional
-  "trading-hours calendar" for 24/7 feeds vs metals; first windows target SOL/USD (24/7).
+With canonical backfill, a bucket is missing only if nobody posts it before
+`end + backfill_deadline` or its canonical print failed the confidence filter. v1 policy is
+strict and honest about the payoff: the contract is "sum of squared log returns between
+consecutive grid points from `b_0` to `b_N`". If any bucket (including either endpoint) is
+missing at the deadline, the window is `Degraded` and every swap on it unwinds: each side
+gets its collateral back. No partial-coverage settlement: coverage thresholds do not bound
+the pathwise error. `min_coverage` is removed.
+
+Market closures (weekends for metals) would appear as long returns across the closure; v1
+windows target 24/7 SOL/USD only, and a trading-hours calendar is a v2 question.
 
 ### 4.4 Collateral and payoff cap
 
@@ -251,14 +260,18 @@ to build test accounts and to cross-check the decoder.
    finalize as pure functions. *Done when* proptest against an f64 reference on simulated GBM
    paths shows realized variance within the documented bound, including random gaps.
 2. **`pyth-lite`.** *Done when* it decodes real `PriceUpdateV2` accounts fetched from mainnet
-   (fixtures committed) for Full and Partial levels, rejects wrong owner/discriminator, and the
-   receiver program id is verified and cited.
+   (fixtures committed) for Full and Partial levels, rejects wrong owner/discriminator and
+   malformed, truncated and unknown-verification-tag fixtures, the receiver program id is
+   verified and cited, and the `prev_publish_time` canonical-print property of 4.1 is
+   verified (or the fallback is chosen with you).
 3. **Window program.** `init_config`, `create_window`, `sample`, `finalize` with LiteSVM and a
    negative test per rule in 3.3. *Done when* all pass and a 24-sample SOL/USD replay from
    fixtures finalizes to the off-chain value.
 4. **Swaps.** `open_swap`, `settle_swap`, `close_swap`. *Done when* conservation
    (`payouts == collateral`) holds in proptest across realized in `[0, 2 × cap]`, degraded and
-   unwind paths are tested, and every forged account is rejected.
+   unwind paths are tested, `claim_long` and `claim_short` are tested in both orders and with
+   either side's USDC account frozen (the other side still claims), and every forged account
+   is rejected.
 5. **Benchmarks and manipulation study.** *Done when* `docs/benchmarks.md` has CU for every
    instruction and the README has the pusher-bias table from 4.1.
 6. **SDK and devnet.** *Done when* a Rust SDK and a keeper example push samples on devnet for
@@ -318,8 +331,8 @@ companion releases. Proposal: (a), re-checked on crates.io at the start of the m
 ## 6. Open questions
 
 1. First underlying: SOL/USD (24/7, simplest) proposed. Or straight to XAU?
-2. Degraded windows: settle on partial data above a 50% floor and unwind below it, or always
-   unwind?
+2. Degraded windows: always unwind in v1 (proposed after the codex review; the varswap
+   session agrees). OK?
 3. Annualization for markets with closures: calendar time or trading time?
 4. Rounding dust to the short (proposed, simplest conservation) or to a treasury?
 5. Is a ring buffer of recent samples wanted for UIs, at extra rent?
