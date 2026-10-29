@@ -260,6 +260,18 @@ const ROWS: &[Row] = &[
         },
     },
     Row {
+        name: "claim_short",
+        note: "vault PDA check, transfer_checked signed by the swap PDA",
+        run: || {
+            let (mut env, open) = settled_fixture();
+            let p = env.payer.insecure_clone();
+            cu(env.send(
+                &[ix_claim(false, &open.swap(), &open.short_src, &open.mint)],
+                &[&p],
+            ))
+        },
+    },
+    Row {
         name: "close_swap",
         note: "empty vault: close_account, close the swap, rent to the payer",
         run: || {

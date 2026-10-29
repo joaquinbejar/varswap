@@ -22,4 +22,5 @@ Toolchain: cargo-build-sbf 4.5.0, Default platform-tools: v1.57, Default Rust: 1
 | `settle_swap (finalized)` | 3677 | 3677 | 0 | inspect window, V_cons, payouts |
 | `settle_swap (degraded)` | 2510 | 2510 | 0 | unwind: each side's collateral |
 | `claim_long` | 3059 | 3059 | 0 | vault PDA check, transfer_checked signed by the swap PDA |
+| `claim_short` | 3061 | 3061 | 0 | vault PDA check, transfer_checked signed by the swap PDA |
 | `close_swap` | 3093 | 3093 | 0 | empty vault: close_account, close the swap, rent to the payer |
