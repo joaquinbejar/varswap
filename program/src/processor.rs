@@ -109,7 +109,7 @@ pub fn set_feed_config(
     if c.admin != admin.address().to_bytes() {
         return Err(VarswapError::NotAuthority.into());
     }
-    if a._pad != [0; 2] {
+    if a._pad != [0; 1] {
         return Err(VarswapError::InvalidInstructionData.into());
     }
     let new = FeedConfigData {
@@ -121,7 +121,8 @@ pub fn set_feed_config(
         backfill_deadline: a.backfill_deadline,
         max_buckets: a.max_buckets,
         max_conf: a.max_conf,
-        _pad: [0; 6],
+        exponent: a.exponent,
+        _pad: [0; 5],
     };
     state::risk(&new).check().map_err(core)?;
     if a.min_interval == 0 || a.max_buckets < 2 || a.max_buckets > MAX_BUCKETS {

@@ -242,7 +242,7 @@ fn test_set_feed_config_parameter_rejections() {
         (
             "padding",
             code::INVALID_INSTRUCTION_DATA,
-            Box::new(|a| a._pad = [1, 0]),
+            Box::new(|a| a._pad = [1]),
         ),
     ];
     for (name, want, m) in cases {

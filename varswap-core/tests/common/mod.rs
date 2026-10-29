@@ -13,22 +13,40 @@ pub const RECEIVER: [u8; 32] = [9; 32];
 /// The tests' kernel is the crate's exact integer kernel; the alias keeps the test names.
 pub use varswap_core::IntegerKernel as ExactKernel;
 
+/// Risk parameters with the exponent pinned at −8 (SOL/USD).
 pub fn risk(tolerance: u32, backfill: u32) -> RiskParams {
+    risk_exp(tolerance, backfill, -8)
+}
+
+pub fn risk_exp(tolerance: u32, backfill: u32, exponent: i8) -> RiskParams {
     RiskParams {
         tolerance: Seconds::new(tolerance),
         max_conf: Bps::new(1_000),
         backfill_deadline: Seconds::new(backfill),
         receiver_program: RECEIVER,
+        exponent,
     }
 }
 
+/// A window whose prints use exponent −8.
 pub fn spec(start: i64, interval: u32, n: u32, tolerance: u32, backfill: u32) -> WindowSpec {
+    spec_exp(start, interval, n, tolerance, backfill, -8)
+}
+
+pub fn spec_exp(
+    start: i64,
+    interval: u32,
+    n: u32,
+    tolerance: u32,
+    backfill: u32,
+    exponent: i8,
+) -> WindowSpec {
     WindowSpec::try_new(
         FEED,
         UnixTimestamp::new(start),
         UnixTimestamp::new(start + i64::from(interval) * i64::from(n)),
         Seconds::new(interval),
-        risk(tolerance, backfill),
+        risk_exp(tolerance, backfill, exponent),
     )
     .unwrap()
 }

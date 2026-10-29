@@ -200,9 +200,10 @@ buffer is needed.
   return over 4 intervals.
   Floors and ceilings use `checked_div_euclid` (`prev_publish_time − start` is negative for
   the print that fills `b_0`; truncating division would be off by one; test `b_0`), and
-  `k_lo > k_hi` is the typed error `NotOnGrid`, never a no-op. Each print converts to `Fixed` with its own
-  exponent (log returns are scale invariant), so a Pyth exponent change mid-window does not
-  brick it. Clock read with the Pinocchio syscall.
+  `k_lo > k_hi` is the typed error `NotOnGrid`, never a no-op. The print's exponent must equal the
+  exponent the window copied from its `FeedConfig` (`ExponentMismatch` otherwise; 4.4): an
+  exponent change, which only a Pyth admin re-init causes, degrades the window instead of
+  widening the error bound. Clock read with the Pinocchio syscall.
 - `open_swap`: both parties sign; window not finalized and `now < window.start` (no opening
   after sampling begins, so nobody trades on known returns); swap PDA; vault is the `["vault", swap]` PDA token account
   for the swap's USDC mint; collateral amounts recomputed on-chain, not trusted
@@ -330,7 +331,14 @@ needed: the price array already holds the whole window.
 ### 4.3 Missing data
 
 With canonical backfill, a bucket is missing only if nobody posts it before
-`end + backfill_deadline` or its canonical print failed the confidence filter. v1 policy is
+`end + backfill_deadline`, or it has no acceptable canonical print. The unwind triggers are:
+- no canonical print within the outage guard (a halt longer than `tolerance`, 4.1);
+- the canonical print fails the confidence sanity bound (4.1);
+- the canonical print is the first after a Pyth `init_price` (`prev_publish_time = 0`, 3.3);
+- the canonical print's exponent differs from the one the window pinned, which only a Pyth
+  admin re-init causes (3.3, 4.4);
+- a VAA that nobody verified within 24 h of a guardian set rotation (4.1);
+- nobody posts the print before the deadline. v1 policy is
 strict and honest about the payoff: the contract is "sum of squared log returns between
 consecutive grid points from `b_0` to `b_N`". If any bucket (including either endpoint) is
 missing at the deadline, the window is `Degraded` and every swap on it unwinds: each side
@@ -365,14 +373,34 @@ is at most
 `ε(interval, cap) = 2 δr √(cap × Y) + 3 Y + 2` raw units, `Y = ceil(YEAR_SECONDS / interval)`,
 
 independent of the number of buckets (`LnKernel::realized_var_error_bound`; derivation in its
-docs). The payoff reads `min(realized, cap_var)`, so the bound is evaluated at `cap_var`. Worst
-case, with `cap_var = 25` (500% vol) and exponent changes up to 255 (`δr = 259`):
+docs). The payoff reads `min(realized, cap_var)`, so the bound is evaluated at `cap_var`.
+
+The exponent is pinned (coordinator, 2026-10-29): `FeedConfig` records the feed's Pyth
+exponent, every window copies it, and `sample` rejects a print with another one
+(`ExponentMismatch`), so `Δe = 0` and `δr = 4`. Pyth changes a feed's exponent only through an
+admin `init_price` (feed creation or re-init; the same event that yields the
+`prev_publish_time = 0` print rejected in 3.3). After such a change no print can fill the
+window's remaining buckets, so it degrades and its swaps unwind; the admin updates
+`FeedConfig` for new windows. A liveness cost on a rare admin event, not a safety one. With
+`cap_var = 25` (500% vol):
 
 | Interval | ε (raw) | ε (variance) | Max notional for ε < 1 atom (atoms per unit variance) |
 | --- | ---: | ---: | ---: |
-| 1 s | 109,152,646 | `5.9 × 10^-12` | `1.69 × 10^11` (169k USDC) |
-| 60 s | 3,454,508 | `1.9 × 10^-13` | `5.34 × 10^12` (5.3M USDC) |
-| 3,600 s | 268,693 | `1.5 × 10^-14` | `6.87 × 10^13` (68.7M USDC) |
+| 1 s | 94,832,630 | `5.1 × 10^-12` | `1.95 × 10^11` (195k USDC) |
+| 60 s | 1,605,802 | `8.7 × 10^-14` | `1.15 × 10^13` (11.5M USDC) |
+| 3,600 s | 30,026 | `1.6 × 10^-15` | `6.14 × 10^14` (614M USDC) |
+
+Unpinned (`Δe` up to 255) the 60 s row would be 3,454,508 raw (5.3M USDC). At short intervals
+the `3 Y` term dominates: one raw unit of `mul_down` truncation per term plus the bound's own
+round-up.
+
+**Milestone 4 plan (B), approved 2026-10-29:** accumulate `sum_sq` at `2^-96` instead of
+`2^-64`: each term is the 256-bit product `r × r` shifted to `2^-96` (rounded down), so the
+per-term truncation falls from `2^-64` to `2^-96` and the `3 Y` term to about `2^-32 × 3 Y`;
+the `u128` sum still holds `2^32` units of `Σ r²`. `annualize` converts back to Q64.64
+(rounded down). The widening multiply-and-shift comes from optfix as a public, reviewed
+function (requested by the coordinator), not a copy; milestone 4 pins that optfix rev and
+regenerates this table with exact limits from `realized_var_error_bound`.
 
 **Which case applies: the bound holds by enforcement, so the `ln` error is dropped.**
 `open_swap` (milestone 4) rejects any swap with `notional × ε(window.interval, cap_var) >=
@@ -480,7 +508,8 @@ to build test accounts and to cross-check the decoder.
    unwind paths are tested, `claim_long` and `claim_short` are tested in both orders and with
    either side's USDC account frozen (the other side still claims), every forged account
    is rejected, and `open_swap` rejects `notional × LnKernel::realized_var_error_bound(
-   window.interval, cap_var, 255) >= 2^64` (the realized variance error bound of 4.4), with a
+   window.interval, cap_var, 0) >= 2^64` (exponent pinned), with `sum_sq` accumulated at
+   `2^-96` per plan (B) of 4.4 and the 4.4 table regenerated from it (the realized variance error bound of 4.4), with a
    test at the limit and one just above it.
 5. **Benchmarks and manipulation study.** *Done when* `docs/benchmarks.md` has CU for every
    instruction and the README has the pusher-bias table and the outage tables from 4.1

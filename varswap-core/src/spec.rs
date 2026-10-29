@@ -23,6 +23,7 @@ pub struct WindowSpec {
     max_conf: Bps,
     backfill_deadline: Seconds,
     receiver_program: Address,
+    exponent: i8,
     /// `N`, cached.
     last: u32,
 }
@@ -38,6 +39,9 @@ pub struct RiskParams {
     pub backfill_deadline: Seconds,
     /// Pyth receiver program id.
     pub receiver_program: Address,
+    /// The feed's Pyth exponent, pinned: Pyth keeps it fixed except on an admin re-init
+    /// (`docs/PLAN.md` 3.3, 4.4).
+    pub exponent: i8,
 }
 
 /// An inclusive, non-empty range of bucket indices `[first, last]`.
@@ -145,6 +149,7 @@ impl WindowSpec {
             max_conf: risk.max_conf,
             backfill_deadline: risk.backfill_deadline,
             receiver_program: risk.receiver_program,
+            exponent: risk.exponent,
             last,
         })
     }
@@ -220,6 +225,13 @@ impl WindowSpec {
     #[must_use]
     pub const fn receiver_program(&self) -> Address {
         self.receiver_program
+    }
+
+    /// The pinned Pyth exponent.
+    #[inline]
+    #[must_use]
+    pub const fn exponent(&self) -> i8 {
+        self.exponent
     }
 
     /// `N`, the index of the last bucket.
@@ -339,7 +351,8 @@ impl WindowSpec {
             tolerance: self.tolerance.get(),
             backfill_deadline: self.backfill_deadline.get(),
             max_conf: self.max_conf.get(),
-            _pad: [0; 2],
+            exponent: self.exponent,
+            _pad: [0; 1],
         }
     }
 
@@ -350,7 +363,7 @@ impl WindowSpec {
     /// [`CoreError::InvalidAccountData`] if the padding is not zero, else as
     /// [`WindowSpec::try_new`].
     pub fn from_raw(raw: &WindowSpecRaw) -> Result<Self, CoreError> {
-        if raw._pad != [0; 2] {
+        if raw._pad != [0; 1] {
             return Err(CoreError::InvalidAccountData);
         }
         Self::try_new(
@@ -363,6 +376,7 @@ impl WindowSpec {
                 max_conf: Bps::new(raw.max_conf),
                 backfill_deadline: Seconds::new(raw.backfill_deadline),
                 receiver_program: raw.receiver_program,
+                exponent: raw.exponent,
             },
         )
     }

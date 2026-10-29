@@ -44,8 +44,10 @@ pub struct WindowSpecRaw {
     pub backfill_deadline: u32,
     /// Confidence sanity bound, bps.
     pub max_conf: u16,
+    /// The feed's Pyth exponent; prints with another exponent are rejected.
+    pub exponent: i8,
     /// Explicit padding, zero.
-    pub _pad: [u8; 2],
+    pub _pad: [u8; 1],
 }
 
 /// Window account header, 144 bytes; followed by the filled bitmap

@@ -132,7 +132,7 @@ pub fn load_feed_config(
     owned(a, program_id).map_err(|_| VarswapError::InvalidAccountOwner)?;
     let f: FeedConfigData = read(a)?;
     check_hdr(&f.hdr, FEED_CONFIG_TAG).map_err(|_| VarswapError::InvalidAccountData)?;
-    if f._pad != [0; 6] {
+    if f._pad != [0; 5] {
         return Err(VarswapError::InvalidAccountData);
     }
     pda::verify(
@@ -153,6 +153,7 @@ pub fn risk(f: &FeedConfigData) -> RiskParams {
         max_conf: Bps::new(f.max_conf),
         backfill_deadline: Seconds::new(f.backfill_deadline),
         receiver_program: f.receiver_program,
+        exponent: f.exponent,
     }
 }
 

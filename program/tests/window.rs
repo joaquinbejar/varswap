@@ -576,6 +576,7 @@ fn test_replay_synthetic_24_samples_matches_off_chain() {
             max_conf: Bps::new(MAX_CONF),
             backfill_deadline: Seconds::new(BACKFILL),
             receiver_program: pyth_lite::RECEIVER_PROGRAM_ID,
+            exponent: -8,
         },
     )
     .unwrap();
@@ -641,4 +642,22 @@ fn test_sample_event_logged() {
         )),
         "{line}"
     );
+}
+
+#[test]
+fn test_sample_exponent_mismatch_rejected() {
+    // The SOL feed config pins −8; a print at −7 is the same feed after a Pyth re-init.
+    let (mut env, w) = Env::with_window(24);
+    env.set_time(b(2));
+    let u = PriceUpdate {
+        exponent: -7,
+        ..at(1, 10_000_000)
+    };
+    expect_code(&env.sample(&w, &u), code::EXPONENT_MISMATCH);
+    // The window keeps its copy even if the admin re-pins the feed afterwards.
+    let mut a = feed_args(SOL);
+    a.exponent = -7;
+    env.set_feed(a).unwrap();
+    expect_code(&env.sample(&w, &u), code::EXPONENT_MISMATCH);
+    env.sample(&w, &at(1, 100_000_000)).unwrap();
 }

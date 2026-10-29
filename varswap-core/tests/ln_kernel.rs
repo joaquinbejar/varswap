@@ -159,7 +159,7 @@ proptest! {
         missing in any::<u32>(),
     ) {
         let prices = gbm(seed, s0, mu, sigma, interval, n, exp);
-        let s = spec(1_000_000, interval, n, interval, 86_400);
+        let s = spec_exp(1_000_000, interval, n, interval, 86_400, exp);
         let mut data = vec![0u8; varswap_core::window_size(n + 1).unwrap()];
         let mut w = Window::init(&mut data, s, 0).unwrap();
         let now = s.deadline().unwrap();
@@ -287,19 +287,22 @@ fn test_realized_var_error_bound_covers_gbm_windows() {
 
 #[test]
 fn test_realized_var_error_bound_worst_case_numbers() {
-    // The values PLAN 4.4 quotes: cap 25 (500% vol), exponent changes up to 255.
+    // The values PLAN 4.4 quotes: cap 25 (500% vol), the exponent pinned (Δe = 0).
     let cap_raw = 25u128 << 64;
-    let b60 = LnKernel::realized_var_error_bound(Seconds::new(60), cap_raw, 255).unwrap();
-    let b1 = LnKernel::realized_var_error_bound(Seconds::new(1), cap_raw, 255).unwrap();
-    let b3600 = LnKernel::realized_var_error_bound(Seconds::new(3_600), cap_raw, 255).unwrap();
+    let b60 = LnKernel::realized_var_error_bound(Seconds::new(60), cap_raw, 0).unwrap();
+    let b1 = LnKernel::realized_var_error_bound(Seconds::new(1), cap_raw, 0).unwrap();
+    let b3600 = LnKernel::realized_var_error_bound(Seconds::new(3_600), cap_raw, 0).unwrap();
     // Max notional (atoms per unit variance) with error under one atom: 2^64 / ε.
     let n60 = (1u128 << 64) / b60;
     let n1 = (1u128 << 64) / b1;
     let n3600 = (1u128 << 64) / b3600;
     eprintln!("bound 60 s {b60} -> {n60}; 1 s {b1} -> {n1}; 3600 s {b3600} -> {n3600}");
-    assert_eq!((b60, n60), (3_454_508, 5_339_904_864_516));
-    assert_eq!((b1, n1), (109_152_646, 168_999_513_522));
-    assert_eq!((b3600, n3600), (268_693, 68_653_608_667_548));
+    assert_eq!((b60, n60), (1_605_802, 11_487_558_287_827));
+    assert_eq!((b1, n1), (94_832_630, 194_518_954_854));
+    assert_eq!((b3600, n3600), (30_026, 614_359_024_635_634));
+    // Unpinned (Δe up to 255), for comparison.
+    let u60 = LnKernel::realized_var_error_bound(Seconds::new(60), cap_raw, 255).unwrap();
+    assert_eq!(u60, 3_454_508);
     assert_eq!(
         LnKernel::realized_var_error_bound(Seconds::new(0), cap_raw, 0),
         Err(varswap_core::CoreError::ZeroInterval)

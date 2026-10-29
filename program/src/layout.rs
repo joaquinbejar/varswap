@@ -40,8 +40,10 @@ pub struct FeedConfigData {
     pub max_buckets: u32,
     /// Confidence sanity bound, bps.
     pub max_conf: u16,
+    /// The feed's Pyth exponent, copied by windows; prints with another one are rejected.
+    pub exponent: i8,
     /// Explicit padding, zero.
-    pub _pad: [u8; 6],
+    pub _pad: [u8; 5],
 }
 
 /// `set_feed_config` payload, 84 bytes.
@@ -62,8 +64,10 @@ pub struct SetFeedConfigArgs {
     pub max_buckets: u32,
     /// Confidence bound, bps, in `(0, 10_000]`.
     pub max_conf: u16,
+    /// The feed's Pyth exponent.
+    pub exponent: i8,
     /// Explicit padding, zero.
-    pub _pad: [u8; 2],
+    pub _pad: [u8; 1],
 }
 
 /// `create_window` payload, 24 bytes. The feed comes from the `FeedConfig` account.

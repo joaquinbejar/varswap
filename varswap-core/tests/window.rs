@@ -62,7 +62,8 @@ fn test_layout_sizes_offsets_and_alignment() {
     assert_eq!(offset_of!(WindowSpecRaw, tolerance), 84);
     assert_eq!(offset_of!(WindowSpecRaw, backfill_deadline), 88);
     assert_eq!(offset_of!(WindowSpecRaw, max_conf), 92);
-    assert_eq!(offset_of!(WindowSpecRaw, _pad), 94);
+    assert_eq!(offset_of!(WindowSpecRaw, exponent), 94);
+    assert_eq!(offset_of!(WindowSpecRaw, _pad), 95);
     assert_eq!(offset_of!(WindowHeader, spec), 8);
     assert_eq!(offset_of!(WindowHeader, state), 104);
     assert_eq!(offset_of!(WindowHeader, filled), 108);
@@ -178,7 +179,7 @@ fn test_spec_raw_roundtrip_and_padding_checked() {
     let s = hourly(720);
     assert_eq!(WindowSpec::from_raw(&s.to_raw()), Ok(s));
     let mut raw = s.to_raw();
-    raw._pad = [0, 1];
+    raw._pad = [1];
     assert_eq!(
         WindowSpec::from_raw(&raw),
         Err(CoreError::InvalidAccountData)
@@ -381,27 +382,24 @@ fn test_sample_fills_and_adds_edge_returns_only() {
 }
 
 #[test]
-fn test_sample_exponents_kept_per_bucket() {
+fn test_sample_exponent_mismatch_rejected() {
+    // The window pins −8; the same price written with another exponent is rejected, and the
+    // bytes are untouched.
     let s = hourly(2);
     let mut data = account(&s);
     let mut w = Window::init(&mut data, s, 1).unwrap();
     let now = t(b(&s, 2));
-    w.sample(
-        &print(1_000, -3, b(&s, 0) + 1, b(&s, 0) - 1),
-        now,
-        &ExactKernel,
-    )
-    .unwrap();
-    // Same price 1.0 written with another exponent: zero return.
-    w.sample(
-        &print(100_000, -5, b(&s, 1) + 1, b(&s, 1) - 1),
-        now,
-        &ExactKernel,
-    )
-    .unwrap();
-    assert_eq!(w.sum_sq().raw(), 0);
-    assert_eq!(w.price(0).unwrap().unwrap().exponent(), -3);
-    assert_eq!(w.price(1).unwrap().unwrap().exponent(), -5);
+    for e in [-7, -9, 0] {
+        let p = print(1, e, b(&s, 0) + 1, b(&s, 0) - 1);
+        assert_eq!(
+            w.sample(&p, now, &ExactKernel),
+            Err(CoreError::ExponentMismatch)
+        );
+    }
+    assert_eq!(w.filled(), 0);
+    w.sample(&print(1, -8, b(&s, 0) + 1, b(&s, 0) - 1), now, &ExactKernel)
+        .unwrap();
+    assert_eq!(w.price(0).unwrap().unwrap().exponent(), -8);
 }
 
 #[test]
@@ -610,7 +608,7 @@ fn test_load_rejects_corruption() {
         ("uninitialized", Box::new(|d| d[0] = 0)),
         ("version", Box::new(|d| d[1] = 2)),
         ("hdr pad", Box::new(|d| d[3] = 1)),
-        ("spec pad", Box::new(|d| d[8 + 94] = 1)),
+        ("spec pad", Box::new(|d| d[8 + 95] = 1)),
         (
             "spec interval",
             Box::new(|d| d[8 + 80..8 + 84].copy_from_slice(&0u32.to_le_bytes())),
