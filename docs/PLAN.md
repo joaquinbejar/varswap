@@ -355,6 +355,21 @@ down). Documented
 as "rounding toward the short", a deliberate, symmetric-enough choice that keeps the
 conservation invariant trivial; open question 4.
 
+Realized variance error (milestone 1b, decided 2026-10-29). optfix `ln` is within 2 ulp
+(`2^-64`) and rounds to nearest, so its error is undirected. Per squared log return, with
+`δr <= 4 + |Δe|` raw units (two `ln` calls plus the half-ulp `ln 10` constant scaled by the
+exponent change), the error is at most `2 |r| δr + δr² + 1` raw units
+(`LnKernel::term_error_bound`): 3 raw units for an hourly `|r| <= 5%`. A 30-day hourly window
+(720 terms) is then within 2,160 raw units (`1.2 × 10^-16`) in `sum_sq` and, after
+annualization (`× YEAR_SECONDS / span`, about 12.2), within `1.4 × 10^-15` in realized
+variance: under one atom of payoff for a variance notional up to `7 × 10^14` atoms
+(`7 × 10^8` USDC) per unit of variance. The contract settles on the computed realized
+variance; the undirected part is below an atom at these notionals, and the directed parts
+(`r²` and the annualization rounded down) lower the realized variance, which is the short's
+side, consistent with the payout rounding above. So the residual goes to the short, like the
+other rounding, and is documented rather than compensated. Milestone 4 checks the notional
+cap against this bound.
+
 ### 4.5 Annualization
 
 `YEAR_SECONDS = 31_536_000` matching optfix `Years`. Industry variance swaps annualize with
@@ -391,9 +406,15 @@ to build test accounts and to cross-check the decoder.
      brute-force reference exactly in filled buckets, prices, `sum_sq`, final state and
      realized variance; canonical runs match brute force; a coverage test checks the
      strategy produces complete and degraded windows, multi-bucket runs and guarded prints.
-   - **1b, after optfix `ln`:** the optfix kernel. *Done when* proptest against an f64
-     reference on simulated GBM paths shows realized variance within the documented bound,
-     and that any gap yields `Degraded`.
+   - **1b, done:** `LnKernel` on optfix `ln` (git dependency pinned at `fd1e81c`, Q64.64):
+     `r = ln(p_to) − ln(p_from) + (e_to − e_from) × ln 10`, each `ln` on a price mantissa,
+     so no ratio can overflow whatever the exponents; `r²` rounded down, annualization
+     rounded down. Error bound per term in 4.4. *Done:* a proptest on GBM paths (σ 5% to
+     300%, drift ±100%, intervals 1 min to 1 day, up to 720 intervals, four price scales)
+     checks every squared return against an f64 `ln_1p` reference within the documented
+     bound plus the reference's own `4 × 2^-53` relative error, that `sum_sq` and the
+     realized variance are exactly the sum of those terms and its annualization, and that
+     dropping any one bucket yields `Degraded`. A mutation of 50 raw units per term fails it.
 
    The workspace carries the shared lint control (`rules/global_rules.md`,
    synced from optfix `afb9d4d`; set up with milestone 2, which ran first; the
@@ -421,7 +442,8 @@ to build test accounts and to cross-check the decoder.
      `insecure-test-kernel` feature, and without it the program is a `compile_error!`, so no
      deployable ELF can be built; `make sbf-control` requires the default `cargo build-sbf`
      to fail with that error. Tests and the bench build with the feature; milestone 1b
-     removes the gate by making the optfix kernel the default. LiteSVM loads it
+     removed the gate by making the optfix kernel the default (the integer kernel stays
+     behind the feature, for `varswap-core`'s own tests). LiteSVM loads it
      through the upgradeable loader. Negative tests with forged accounts for every rule of
      3.3; the `FeedConfig` binding test; the 10,240-byte CPI cap exercised by creating a
      `MAX_BUCKETS` window (10,233 bytes) through the system program CPI. The replay is a
@@ -435,7 +457,9 @@ to build test accounts and to cross-check the decoder.
      `varswap:sample first= last= publish_time= price= expo=` (pinocchio-log); the event's
      CU is measured separately in `docs/benchmarks.md`. The `added` field was dropped after
      measuring it (4,131 CU for the event with it, most of it formatting the `u128`).
-   - **3b, after milestone 1b:** the optfix kernel on-chain, CU table regenerated.
+   - **3b, done with 1b:** the program runs `LnKernel`; the synthetic replay is byte-identical
+     between SBF and the host; `sample` with two kernel calls is 6,616 CU
+     (`docs/benchmarks.md`).
    - The replay from real SOL/USD prints moves to milestone 6, where keepers need Hermes
      access anyway (verified facts, 2026-10-29).
 4. **Swaps.** `open_swap`, `settle_swap`, `close_swap`. *Done when* conservation
@@ -534,7 +558,7 @@ whenever it is added or touched.
 | `pinocchio-system` | 0.7.0 (0.6.1 used) | `0.6`, decided exception below |
 | `pinocchio-token` | 0.7.0 | `0.7`, see conflict below |
 | `rust_decimal` (SDK conversions) | 1.43.0 | `1.43` |
-| `optfix` | unpublished | git, pinned `rev` |
+| `optfix` | unpublished | git, pinned `rev = fd1e81c5726c0b0a0e6e252f497f821cbcf92b97` (optfix M3) |
 | `litesvm-token` (dev) | 0.18.1 | `0.18` |
 | `pyth-solana-receiver-sdk` (dev only, fixtures and cross-check) | 2.0.0 | `2.0` |
 | `anchor-lang` (dev only, pyth-lite cross-check; approved 2026-10-29) | 1.2.2 | `1.2` |

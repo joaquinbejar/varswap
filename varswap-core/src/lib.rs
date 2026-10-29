@@ -9,8 +9,9 @@
 //!
 //! [`Window`] is a view over the account bytes: the [`layout::WindowHeader`], a filled bitmap
 //! and the per-bucket price and exponent arrays, of [`window_size`] bytes. The squared log
-//! return and the annualization are behind the [`ReturnKernel`] trait, so this crate does not
-//! depend on the choice of `ln` (optfix milestone 3); its tests use an exact integer kernel.
+//! return and the annualization are behind the [`ReturnKernel`] trait: [`LnKernel`] (optfix
+//! `ln`, Q64.64) is the production kernel, and [`IntegerKernel`] an exact stand-in that the
+//! accumulator tests use to compare windows bit for bit.
 
 #![cfg_attr(not(test), no_std)]
 
@@ -25,7 +26,7 @@ mod window;
 pub use error::CoreError;
 #[cfg(feature = "insecure-test-kernel")]
 pub use kernel::IntegerKernel;
-pub use kernel::{ReturnKernel, SumSq};
+pub use kernel::{LnKernel, ReturnKernel, SumSq, LN_10_RAW};
 pub use print::{Print, StoredPrice};
 pub use spec::{BucketRun, RiskParams, WindowSpec};
 pub use types::{Address, Bps, Seconds, WindowState, YEAR_SECONDS};

@@ -1,6 +1,6 @@
 //! Shared test helpers: an exact integer return kernel and spec builders.
 
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 
 use std::num::NonZeroU64;
 
