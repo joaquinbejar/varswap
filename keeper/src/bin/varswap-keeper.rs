@@ -61,13 +61,11 @@ fn run(args: &Args) -> Result<(), String> {
         .map(|w| address(w))
         .collect::<Result<Vec<_>, _>>()?;
     let payer = read_keypair(&args.keypair)?;
-    let hermes = || {
-        HermesConfig::from_env()
-            .map(|c| HermesSource::new(c, UreqHttp::new()))
-            .map_err(|e: KeeperError| e.to_string())
-    };
-    let source = hermes()?;
-    let mut chain = ReceiverChain::new(RpcTransport::new(&args.url), hermes()?, payer, program_id);
+    // One source for the price queries and the posts: one cache, one rate limit.
+    let source = HermesConfig::from_env()
+        .map(|c| HermesSource::new(c, UreqHttp::new()))
+        .map_err(|e: KeeperError| e.to_string())?;
+    let mut chain = ReceiverChain::new(RpcTransport::new(&args.url), &source, payer, program_id);
     let keeper = Keeper::new(program_id);
     let mut printed = 0;
     loop {
@@ -82,8 +80,13 @@ fn run(args: &Args) -> Result<(), String> {
             match report {
                 Ok(r) => {
                     eprintln!(
-                        "{window}: posted {}, already filled {}, skipped {}, finalized {:?}, done {}",
-                        r.posted, r.already_filled, r.skipped, r.finalized, r.done
+                        "{window}: posted {}, already filled {}, skipped {}, finalized {:?}, done {}, open encoded VAAs {:?}",
+                        r.posted,
+                        r.already_filled,
+                        r.skipped,
+                        r.finalized,
+                        r.done,
+                        chain.orphans()
                     );
                     all_done &= r.done || r.finalized.is_some();
                 }

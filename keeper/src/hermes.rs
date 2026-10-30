@@ -452,7 +452,10 @@ impl<H: HttpGet> pyth_post::UpdateSource for HermesSource<H> {
     fn update(&self, feed: &[u8; 32], publish_time: i64) -> Result<Vec<u8>, pyth_post::PostError> {
         let u = self
             .first_at_or_after(feed, publish_time)
-            .map_err(|e| pyth_post::PostError::Source(e.to_string()))?
+            .map_err(|e| match e {
+                KeeperError::RateLimited => pyth_post::PostError::RateLimited,
+                other => pyth_post::PostError::Source(other.to_string()),
+            })?
             .ok_or_else(|| {
                 pyth_post::PostError::Source("Hermes has no update at that time".into())
             })?;

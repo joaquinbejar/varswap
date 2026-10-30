@@ -121,7 +121,12 @@ Example transactions:
 [`init_config`](https://explorer.solana.com/tx/5HV3i3dFWJMKPZBMJxViWpsjpB6GkdzQUp8Vg1SH4duRyKL1JsjsgHGgCa5hA7dFugvpEuMhRFcrTPvGsXLeQaEf?cluster=devnet),
 [`set_feed_config`](https://explorer.solana.com/tx/5c2ssG2VB53XiugwEKNXbQVWRtTbyNKwZBAb979yrZXE6DMijLtHkSpcJxzLtDdwLUBXnvDi2PiiAG9t95SWaCDm?cluster=devnet),
 [`create_window`](https://explorer.solana.com/tx/4sudzjBz4ZU6Bw5QNq9pVJPhVUoyoaN3mg2gPMW36GKL5PymMeS5MWeSbs6UJiFR8tKBF9Wi44MhEr6UwtRJMdY9?cluster=devnet).
-`sample` and `finalize` follow once the keeper runs on devnet.
+A demo window
+([`9P3vhP8pe8WcebFXZ77njPHddnCtLLFGFHLiAucQ2Wz8`](https://explorer.solana.com/address/9P3vhP8pe8WcebFXZ77njPHddnCtLLFGFHLiAucQ2Wz8?cluster=devnet),
+ten 60 s intervals) was sampled live by `varswap-keeper` and finalized: one
+[post with `sample`](https://explorer.solana.com/tx/3QaW1FW6EkTR3AZmeqwnFmbXLH8eBTNuRrBmh3oEKBSaXjFPqcDjv6BwE8QutoL4rzaJQM1fNNzSUvnyX2g6pcNF?cluster=devnet)
+(`post_update`, `sample`, `reclaim_rent`, `close_encoded_vaa`) and the
+[`finalize`](https://explorer.solana.com/tx/4HoUsuSYMEvY4ydVsapcciXT2M9rXEk8e4mHRu45WnYg3EdiNUotMHnGhs3zCUodGmUiq4dNFjsM2F1idcrhXU3t?cluster=devnet).
 
 To reproduce against `api.devnet.solana.com` (a funded keypair; the program id keypair is
 yours):

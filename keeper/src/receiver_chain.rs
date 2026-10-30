@@ -2,7 +2,7 @@
 //! a `Full` `PriceUpdateV2` and is sampled in the transaction that posts it
 //! ([`pyth_post::post`]), over any [`Transport`] (an RPC client on a cluster, LiteSVM in tests).
 
-use pyth_post::{post, AccumulatorUpdate, Transport, UpdateSource};
+use pyth_post::{close_if_open, post, AccumulatorUpdate, PostError, Transport, UpdateSource};
 use solana_instruction::Instruction;
 use solana_keypair::Keypair;
 use solana_signer::Signer;
@@ -18,6 +18,8 @@ pub struct ReceiverChain<T: Transport, U: UpdateSource> {
     program_id: Address,
     treasury_id: u8,
     signatures: Vec<String>,
+    /// Encoded VAAs that failed posts left open, retried before every later send.
+    orphans: Vec<Address>,
 }
 
 impl<T: Transport, U: UpdateSource> ReceiverChain<T, U> {
@@ -31,7 +33,22 @@ impl<T: Transport, U: UpdateSource> ReceiverChain<T, U> {
             program_id,
             treasury_id: 0,
             signatures: Vec::new(),
+            orphans: Vec::new(),
         }
+    }
+
+    /// Encoded VAAs still open after failed posts (each holds its rent). The chain retries
+    /// closing them before every later post or finalize.
+    #[must_use]
+    pub fn orphans(&self) -> &[Address] {
+        &self.orphans
+    }
+
+    /// Retries closing every orphaned encoded VAA; keeps those still open.
+    fn close_orphans(&mut self) {
+        let (transport, payer) = (&mut self.transport, &self.payer);
+        self.orphans
+            .retain(|a| close_if_open(transport, payer, a).is_some());
     }
 
     /// The signatures of every transaction this chain sent, in order.
@@ -52,6 +69,7 @@ impl<T: Transport, U: UpdateSource> ReceiverChain<T, U> {
     }
 
     fn send(&mut self, instructions: &[Instruction]) -> Result<(), KeeperError> {
+        self.close_orphans();
         let signature = self.transport.send(instructions, &self.payer, None)?;
         self.signatures.push(signature);
         Ok(())
@@ -101,17 +119,28 @@ impl<T: Transport, U: UpdateSource> Chain for ReceiverChain<T, U> {
                 "the update's message is not the print to post",
             ));
         }
+        self.close_orphans();
         let (program_id, window) = (self.program_id, *window);
-        let signatures = post(
+        let posted = post(
             &mut self.transport,
             &self.payer,
             &accumulator,
             update,
             self.treasury_id,
             |price_update| vec![ix::sample(&program_id, &window, price_update)],
-        )?;
-        self.signatures.extend(signatures);
-        Ok(())
+        );
+        match posted {
+            Ok(signatures) => {
+                self.signatures.extend(signatures);
+                Ok(())
+            }
+            Err(e) => {
+                if let PostError::Orphaned { encoded_vaa, .. } = &e {
+                    self.orphans.push(*encoded_vaa);
+                }
+                Err(e.into())
+            }
+        }
     }
 
     fn finalize(&mut self, window: &Address) -> Result<(), KeeperError> {

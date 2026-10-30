@@ -379,20 +379,29 @@ fn test_a_landed_close_is_not_retried() {
     assert_eq!(open_vaas(&t.0.inner, &payer.pubkey()), 0);
 }
 
-/// Every send after the first is dropped: the encoded VAA cannot be closed, and the error says
-/// which account is left open after the bounded attempts.
+/// Every send after the first is dropped: the encoded VAA cannot be closed, and the error is
+/// `Orphaned` with its address after the bounded attempts. Once sends go through again,
+/// `close_if_open` closes it.
 #[test]
-fn test_an_unclosable_encoded_vaa_is_reported() {
+fn test_an_unclosable_encoded_vaa_is_reported_and_closed_later() {
     let (svm, payer) = Svm::new();
     let mut t = Faulty::new(svm, &[], Some(1));
     let acc = AccumulatorUpdate::parse(&hermes_update(T0)).unwrap();
     let update = acc.updates[0].clone();
     let err = post(&mut t, &payer, &acc, &update, 0, |_| vec![]).unwrap_err();
-    let PostError::Chain(msg) = err else {
+    let PostError::Orphaned { encoded_vaa, cause } = err else {
         panic!("{err:?}")
     };
-    assert!(msg.starts_with("dropped; encoded VAA "), "{msg}");
-    assert!(msg.contains("is still open"), "{msg}");
-    assert_eq!(t.closes, 2);
+    assert_eq!(cause, "chain operation failed: dropped");
+    assert_eq!(t.closes, pyth_post::CLOSE_ATTEMPTS);
     assert_eq!(open_vaas(&t.inner, &payer.pubkey()), 1);
+    assert!(t.inner.account(&encoded_vaa).unwrap().is_some());
+
+    t.drop_from = None;
+    assert_eq!(pyth_post::close_if_open(&mut t, &payer, &encoded_vaa), None);
+    assert_eq!(open_vaas(&t.inner, &payer.pubkey()), 0);
+    // Already closed: nothing more is sent.
+    let closes = t.closes;
+    assert_eq!(pyth_post::close_if_open(&mut t, &payer, &encoded_vaa), None);
+    assert_eq!(t.closes, closes);
 }

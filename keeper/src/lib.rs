@@ -37,6 +37,6 @@ pub use hermes::{
     UreqHttp, DEFAULT_HERMES_URL, HERMES_API_KEY_VAR, HERMES_AUTH_VAR, HERMES_URL_VAR,
 };
 pub use keeper::{Keeper, TickReport};
-pub use pyth_post::{RpcTransport, Transport, UpdateSource};
+pub use pyth_post::{PostError, RpcTransport, Transport, UpdateSource};
 pub use receiver_chain::ReceiverChain;
 pub use source::{PriceSource, PrintMsg, TapeSource};

@@ -31,6 +31,15 @@ pub enum KeeperError {
     /// Hermes' timestamp endpoint, `retry-after` 60). Back off and retry.
     #[error("price source rate limit (HTTP 429): back off and retry")]
     RateLimited,
+    /// A post failed (`cause`) and left its encoded VAA open at `encoded_vaa`.
+    /// `ReceiverChain` retries closing it before every later post.
+    #[error("{cause}; encoded VAA {encoded_vaa} is still open")]
+    Orphaned {
+        /// The open encoded VAA account.
+        encoded_vaa: varswap_sdk::Address,
+        /// The failure of the post, as text.
+        cause: String,
+    },
     /// A chain operation (read, post, finalize) failed.
     #[error("chain operation failed: {0}")]
     Chain(String),
@@ -45,6 +54,10 @@ impl From<pyth_post::PostError> for KeeperError {
             pyth_post::PostError::Update(what) => Self::Update(what),
             pyth_post::PostError::Source(msg) => Self::Source(msg),
             pyth_post::PostError::Chain(msg) => Self::Chain(msg),
+            pyth_post::PostError::RateLimited => Self::RateLimited,
+            pyth_post::PostError::Orphaned { encoded_vaa, cause } => {
+                Self::Orphaned { encoded_vaa, cause }
+            }
         }
     }
 }

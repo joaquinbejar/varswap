@@ -95,6 +95,8 @@ type Sent = Rc<RefCell<Vec<(Vec<Instruction>, usize)>>>;
 struct Recorder {
     sent: Sent,
     fail_at: Option<usize>,
+    /// Every send from this index on fails (without landing), while set.
+    fail_from: Rc<std::cell::Cell<Option<usize>>>,
     /// Accounts a landed transaction created and none closed (the encoded VAA).
     open: Vec<Address>,
 }
@@ -127,7 +129,7 @@ impl Transport for Recorder {
             1 + usize::from(extra.is_some()),
             "signers of send {n}"
         );
-        if Some(n) == self.fail_at {
+        if Some(n) == self.fail_at || self.fail_from.get().is_some_and(|f| n >= f) {
             return Err(PostError::Chain("rejected".into()));
         }
         for ix in ixs {
@@ -217,4 +219,54 @@ fn test_failed_post_closes_the_encoded_vaa() {
     assert_eq!(close.len(), 1);
     assert_eq!(close[0].data, [48, 221, 174, 198, 231, 7, 152, 38]);
     assert_eq!(close[0].accounts[1].pubkey, sent[0].0[0].accounts[1].pubkey);
+}
+
+/// A 429 from the update source on the posting path stays `RateLimited` (the binary backs off
+/// on it), and nothing is sent.
+#[test]
+fn test_rate_limit_on_the_posting_path_is_rate_limited() {
+    struct Limited;
+    impl UpdateSource for Limited {
+        fn update(&self, _: &[u8; 32], _: i64) -> Result<Vec<u8>, PostError> {
+            Err(PostError::RateLimited)
+        }
+    }
+    let rec = Recorder::default();
+    let sent = Rc::clone(&rec.sent);
+    let mut chain = ReceiverChain::new(rec, Limited, Keypair::new(), Address::new_unique());
+    let err = chain
+        .post_sample(&Address::new_unique(), &SOL, &print(1_793_404_800))
+        .unwrap_err();
+    assert_eq!(err, KeeperError::RateLimited);
+    assert!(sent.borrow().is_empty());
+}
+
+/// A post that cannot close its encoded VAA leaves it in `orphans()`; the next post first
+/// closes it, then posts.
+#[test]
+fn test_orphaned_encoded_vaas_are_closed_before_the_next_post() {
+    let p = print(1_793_404_800);
+    let bytes = pnau(&vaa(4, 13), &[(message(&SOL, &p), proof(12))]);
+    let rec = Recorder::default();
+    let (sent, fail_from) = (Rc::clone(&rec.sent), Rc::clone(&rec.fail_from));
+    fail_from.set(Some(1));
+    let mut chain = ReceiverChain::new(rec, Updates(bytes), Keypair::new(), Address::new_unique());
+    let window = Address::new_unique();
+    let err = chain.post_sample(&window, &SOL, &p).unwrap_err();
+    let KeeperError::Orphaned { encoded_vaa, .. } = err else {
+        panic!("{err:?}")
+    };
+    assert_eq!(chain.orphans(), [encoded_vaa]);
+    assert_eq!(sent.borrow()[0].0[0].accounts[1].pubkey, encoded_vaa);
+
+    fail_from.set(None);
+    let before = sent.borrow().len();
+    chain.post_sample(&window, &SOL, &p).unwrap();
+    assert!(chain.orphans().is_empty());
+    let sent = sent.borrow();
+    let first = &sent[before].0;
+    assert_eq!(first.len(), 1, "the orphan's close comes first");
+    assert_eq!(first[0].data, [48, 221, 174, 198, 231, 7, 152, 38]);
+    assert_eq!(first[0].accounts[1].pubkey, encoded_vaa);
+    assert_eq!(sent.len(), before + 1 + 3);
 }

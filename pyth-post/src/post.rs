@@ -73,6 +73,9 @@ pub trait Transport {
 }
 
 /// Where a poster gets Hermes' binary update.
+///
+/// Implemented for references too, so one source (one cache, one rate limit) can serve both
+/// the price queries and the posts.
 pub trait UpdateSource {
     /// The binary accumulator update whose message for `feed` was published at
     /// `publish_time` (Hermes `GET /v2/updates/price/{publish_time}`, the first update at or
@@ -80,8 +83,15 @@ pub trait UpdateSource {
     ///
     /// # Errors
     ///
-    /// `PostError::Source` if the source cannot answer or has no such update.
+    /// `PostError::Source` if the source cannot answer or has no such update,
+    /// `PostError::RateLimited` on a 429.
     fn update(&self, feed: &[u8; 32], publish_time: i64) -> Result<Vec<u8>, PostError>;
+}
+
+impl<U: UpdateSource + ?Sized> UpdateSource for &U {
+    fn update(&self, feed: &[u8; 32], publish_time: i64) -> Result<Vec<u8>, PostError> {
+        (**self).update(feed, publish_time)
+    }
 }
 
 /// Which fresh keypair, besides the payer, a transaction of a post needs.
@@ -213,7 +223,7 @@ pub fn post_plan(
 /// `PostError::Update` for a VAA that cannot be planned, `PostError::Chain` from the
 /// transport. After any failed send the encoded VAA is re-read and closed if it exists (a
 /// transaction whose confirmation was lost may have landed); if it is still open after two
-/// closes, the error names its address.
+/// closes, the error is [`PostError::Orphaned`] with its address.
 pub fn post<T: Transport>(
     transport: &mut T,
     payer: &Keypair,
@@ -256,16 +266,10 @@ pub fn post<T: Transport>(
                 // chain, not this loop, says whether the encoded VAA exists.
                 return Err(match close_if_open(transport, payer, &vaa.pubkey()) {
                     None => e,
-                    Some(left) => {
-                        let cause = match e {
-                            PostError::Chain(msg) => msg,
-                            other => other.to_string(),
-                        };
-                        PostError::Chain(format!(
-                            "{cause}; encoded VAA {left} is still open: close it with \
-                             ix::close_encoded_vaa"
-                        ))
-                    }
+                    Some(encoded_vaa) => PostError::Orphaned {
+                        encoded_vaa,
+                        cause: e.to_string(),
+                    },
                 });
             }
         }
@@ -274,13 +278,15 @@ pub fn post<T: Transport>(
 }
 
 /// How many times [`close_if_open`] sends `close_encoded_vaa` before giving up.
-const CLOSE_ATTEMPTS: usize = 2;
+pub const CLOSE_ATTEMPTS: usize = 2;
 
-/// Closes the encoded VAA at `address` if the chain still holds it (owned by Wormhole), and
-/// re-reads after every attempt: a close whose confirmation was lost but that landed is seen
-/// as closed, so it is never retried. Returns the address if it is still open (or cannot be
-/// read) after [`CLOSE_ATTEMPTS`] closes.
-fn close_if_open<T: Transport>(
+/// Closes the encoded VAA at `address` (written by `payer`) if the chain still holds it (owned
+/// by Wormhole), re-reading after every attempt: a close whose confirmation was lost but that
+/// landed is seen as closed, so it is never retried. Returns the address if it is still open
+/// (or cannot be read) after [`CLOSE_ATTEMPTS`] closes. [`post`] calls it after a failed send;
+/// callers retry a [`PostError::Orphaned`] address with it.
+#[must_use]
+pub fn close_if_open<T: Transport>(
     transport: &mut T,
     payer: &Keypair,
     address: &Address,

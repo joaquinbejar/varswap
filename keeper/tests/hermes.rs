@@ -394,7 +394,9 @@ fn test_answers_are_cached_and_429_is_rate_limited() {
     let b = 10_500;
     let first = hermes.first_at_or_after(&FEED, b).unwrap().unwrap();
     assert_eq!(hermes.first_at_or_after(&FEED, b).unwrap().unwrap(), first);
-    hermes.update(&FEED, first.print.publish_time).unwrap();
+    // Through a shared reference too (the binary's single source for queries and posts).
+    let shared: &dyn UpdateSource = &&hermes;
+    shared.update(&FEED, first.print.publish_time).unwrap();
     assert_eq!(fake.seen.borrow().len(), 1);
 
     let mut limited = FakeHermes::new(tape);
@@ -408,5 +410,9 @@ fn test_answers_are_cached_and_429_is_rate_limited() {
         hermes.first_at_or_after(&FEED, b),
         Err(KeeperError::RateLimited)
     );
-    assert_eq!(limited.seen.borrow().len(), 2);
+    assert_eq!(
+        hermes.update(&FEED, b),
+        Err(varswap_keeper::PostError::RateLimited)
+    );
+    assert_eq!(limited.seen.borrow().len(), 3);
 }
