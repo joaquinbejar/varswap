@@ -27,6 +27,10 @@ pub enum KeeperError {
     /// A fixed category; the bytes are never quoted.
     #[error("price update cannot be decoded: {0}")]
     Update(&'static str),
+    /// The price source answered 429: the key's rate limit (about 10 requests a minute on
+    /// Hermes' timestamp endpoint, `retry-after` 60). Back off and retry.
+    #[error("price source rate limit (HTTP 429): back off and retry")]
+    RateLimited,
     /// A chain operation (read, post, finalize) failed.
     #[error("chain operation failed: {0}")]
     Chain(String),

@@ -17,6 +17,8 @@
 //! `publish_time >= t`. Its parsed form carries `price` and `conf` as decimal strings, `expo`,
 //! `publish_time` and `metadata.prev_publish_time` (`apps/hermes/server/src/api/types.rs`).
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt;
 
 use base64::Engine;
@@ -336,12 +338,17 @@ fn hex(bytes: &[u8; 32]) -> String {
 }
 
 /// A [`PriceSource`] backed by Hermes (`/v2/updates/price/{t}`, the first update with
-/// `publish_time >= t`): one request per `canonical_at`. Errors never carry response content,
+/// `publish_time >= t`): at most one request per `(feed, t)`, every 200 answer cached (history
+/// is immutable, and the key's rate limit is shared), a 429 reported as
+/// [`KeeperError::RateLimited`]. Errors never carry response content,
 /// and the API key is scrubbed from any error text. Ported from metalbook-keeper (#17).
 #[derive(Debug)]
 pub struct HermesSource<H: HttpGet> {
     config: HermesConfig,
     http: H,
+    /// Every 200 answer of `first_at_or_after`, by `(feed, t)`: history is immutable, and the
+    /// key's timestamp endpoint allows about 10 requests a minute (shared between keepers).
+    cache: RefCell<HashMap<([u8; 32], i64), HermesUpdate>>,
 }
 
 impl<H: HttpGet> HermesSource<H> {
@@ -359,6 +366,7 @@ impl<H: HttpGet> HermesSource<H> {
         match response.status {
             200 => parse_update(&response.body, feed).map(Some),
             404 => Ok(None),
+            429 => Err(KeeperError::RateLimited),
             401 | 403 => Err(KeeperError::Source(format!(
                 "Hermes rejected the API key ({}); the auth scheme is unverified, see VARSWAP_HERMES_AUTH",
                 response.status
@@ -370,7 +378,11 @@ impl<H: HttpGet> HermesSource<H> {
     /// A source using `config` over `http`.
     #[must_use]
     pub fn new(config: HermesConfig, http: H) -> Self {
-        Self { config, http }
+        Self {
+            config,
+            http,
+            cache: RefCell::new(HashMap::new()),
+        }
     }
 
     /// The first update of `feed` with `publish_time >= t`, or `None` if Hermes has none yet
@@ -385,12 +397,25 @@ impl<H: HttpGet> HermesSource<H> {
         feed: &[u8; 32],
         t: i64,
     ) -> Result<Option<HermesUpdate>, KeeperError> {
+        if let Some(u) = self.cache.borrow().get(&(*feed, t)) {
+            return Ok(Some(u.clone()));
+        }
         let url = format!(
             "{}/v2/updates/price/{t}?ids%5B%5D={}&encoding=base64&parsed=true",
             self.config.base_url().trim_end_matches('/'),
             hex(feed)
         );
-        self.request(&url, feed)
+        let update = self.request(&url, feed)?;
+        if let Some(u) = &update {
+            let mut cache = self.cache.borrow_mut();
+            cache.insert((*feed, t), u.clone());
+            // The same update answers a query at its own publish time (the keeper's second
+            // request for a canonical print).
+            if u.print.publish_time >= t {
+                cache.insert((*feed, u.print.publish_time), u.clone());
+            }
+        }
+        Ok(update)
     }
 
     /// The latest update of `feed` (`/v2/updates/price/latest`), or `None` if Hermes has none.

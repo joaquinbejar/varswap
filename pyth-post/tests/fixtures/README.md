@@ -27,3 +27,14 @@ solana account 8d9szTd157GKCLcxBqiLUgB7mek3v65rbsy2ErRyjwQ5 --url devnet --outpu
 
 The Hermes responses were fetched with the API key in the `Authorization: Bearer` header. The
 key is not in any file.
+
+## `metalbook/`
+
+These are copied from metalbook #25 (`metalbook-tests/tests/fixtures/pyth/`, merged as `56a5cb8`)
+together with the two receiver tests ported in `tests/metalbook_xau.rs`:
+
+- `hermes_xau_update.json`: an XAU/USD Hermes update recorded by metalbook on 2026-10-30,
+  with its parsed fields.
+- `receiver_config.json` and `guardian_set_1.json`: metalbook's records of the same devnet
+  accounts. The test checks that each `data_base64` equals `receiver_config.bin` and
+  `guardian_set_1.bin` above byte for byte.

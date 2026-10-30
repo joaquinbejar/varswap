@@ -3,7 +3,8 @@
 //! Each tick posts every published canonical print a window is missing (Hermes, then Wormhole
 //! and the Pyth receiver, then `sample` in the same transaction) and finalizes the window once
 //! it is complete or past its backfill deadline. With `--watch SECONDS` it repeats until every
-//! window is final. Every transaction signature is printed, one per line.
+//! window is final, and backs off at least 61 s after a Hermes 429 (the key's limit, about 10
+//! requests a minute, is shared). Every transaction signature is printed, one per line.
 //!
 //! Configuration comes from the environment: `SOLANA_URL`, `VARSWAP_PROGRAM_ID`,
 //! `VARSWAP_KEYPAIR` (a keypair file path), and `VARSWAP_HERMES_API_KEY` (never printed),
@@ -71,6 +72,7 @@ fn run(args: &Args) -> Result<(), String> {
     let mut printed = 0;
     loop {
         let mut all_done = true;
+        let mut rate_limited = false;
         for window in &windows {
             let report = keeper.tick(&mut chain, &source, window);
             for s in chain.signatures().iter().skip(printed) {
@@ -87,12 +89,17 @@ fn run(args: &Args) -> Result<(), String> {
                 }
                 Err(e) => {
                     eprintln!("{window}: {e}");
+                    rate_limited |= e == KeeperError::RateLimited;
                     all_done = false;
                 }
             }
         }
         match args.watch {
-            Some(secs) if !all_done => std::thread::sleep(Duration::from_secs(secs)),
+            // Hermes' 429 asks for 60 s (`retry-after`); the key is shared with other keepers.
+            Some(secs) if !all_done => {
+                let wait = if rate_limited { secs.max(61) } else { secs };
+                std::thread::sleep(Duration::from_secs(wait));
+            }
             _ => return Ok(()),
         }
     }
