@@ -1,10 +1,9 @@
 # Devnet deployment
 
 varswap runs on Solana devnet at the addresses below, deployed on 2026-10-30 from `main` at
-`aef8e3a`. What is live: the program, `Config`, the SOL/USD `FeedConfig` and one hourly
-window. Not live yet: sampling. The keeper's Hermes source needs the API key, and the
-production RPC `Chain` (posting the print through the Pyth receiver, then `sample`) comes
-with it.
+`aef8e3a`. Live: the program, `Config`, the SOL/USD `FeedConfig`, a demo window sampled to
+the end and finalized by `varswap-keeper` (real Hermes prints through Wormhole and the Pyth
+receiver), and the 2026-10-31 hourly window, which a detached keeper fills hour by hour.
 
 ## Addresses
 
@@ -91,12 +90,63 @@ varswap-admin show-window 7s5KJ79XRwBzeL8t42ut6RkQ1yLhrRMg8z5dHQtNXTeA
 
 Every write command takes `--dry-run` to print the instruction without sending it.
 
-## Next
+## Live sampling: the demo window
 
-These steps need the Hermes API key (`VARSWAP_HERMES_API_KEY`, environment only):
+`varswap-keeper` (built from PR #22) sampled a SOL/USD window of ten 60-second intervals,
+2026-10-30 12:37:00Z to 12:47:00Z, with `--watch 30`. Each canonical print was fetched from
+Hermes, then posted in three transactions: the encoded VAA was created and written; it was
+verified under guardian set 1; then `post_update`, `sample`, `reclaim_rent` and
+`close_encoded_vaa` ran in one transaction. When the last bucket filled, the keeper
+finalized the window.
 
-1. The production RPC `Chain`: post each canonical print through the receiver
-   (`post_update`), then call `sample`.
-2. Run the keeper on the window above until it finalizes, and record the signatures here.
-3. Commit 24 real canonical SOL/USD prints from Hermes as fixtures, and show that their
-   replay finalizes to the off-chain value.
+| What | Value |
+| --- | --- |
+| Window | `9P3vhP8pe8WcebFXZ77njPHddnCtLLFGFHLiAucQ2Wz8` (`start = 1793363820`, `end = 1793364420`, `interval = 60`, 11 buckets) |
+| `create_window` | `5VsQaAF6gfGT7VuSsQvK7uZTubYySQKjH9fUNHiNeGh9V4yXWqe1fpxRFT9wxyjKvsvKmFTHmwyAP3UKCyET4oXG` |
+| Final state | `Finalized`, 11 of 11 buckets, annualized realized variance `0.196050085777` (`show-window`) |
+| `finalize` | `4HoUsuSYMEvY4ydVsapcciXT2M9rXEk8e4mHRu45WnYg3EdiNUotMHnGhs3zCUodGmUiq4dNFjsM2F1idcrhXU3t` |
+| Left open | none: no encoded VAA or `PriceUpdateV2` written by the payer remains (`getProgramAccounts` on Wormhole and on the receiver) |
+
+Posts, one row per bucket:
+
+| Bucket | Create + init + write | Verify | `post_update` + `sample` + closes |
+| ---: | --- | --- | --- |
+| 0 | `i4FsAEjzaArm72T6rDYJUEfVqdQ79hfKbLBETDctfmrxJpP5yd49b6wuWeZ2bik53MYJzqubN23gBYmQNM59MGK` | `T48RXNi5uQVBFomTVBofDWEt1o5EmRwWnVbfP8hgLDNMBRjDcaZdyHj85hhpUpFFJ1ThWXCrQiWpHdEnvXJDNMN` | `3QaW1FW6EkTR3AZmeqwnFmbXLH8eBTNuRrBmh3oEKBSaXjFPqcDjv6BwE8QutoL4rzaJQM1fNNzSUvnyX2g6pcNF` |
+| 1 | `2kghi4SqDGYYFdNEPhfy1nZ8uLjSVhzvCQTCLFgn3WRwiWmtoSf2qEfRKmoSqDsYxzujiqBpHxZXNNfrvQyHwbj6` | `5S1m7bSjdFAXX6pvMDowaGoUFBLzxYFNKPcNk9ZT6yHdvQyi7dA52aHvYXoKw9a2FygVckqPvwkKqJrFmAbnEdaY` | `2pkcwnJMEC9RVa9VaPPSo3d8PwudMUH1mV7wpWJyZxH7TGcXA64J46yMkBDtwzebXfujFe7w1nVuZDvKmVQPXz3b` |
+| 2 | `2d88iaLn21SzerPirpch3MhVNbR2DK4xU2eC8qDVR9HMs9SvfoPjqcZAfqHY7mRosYtUf1Mbc3rrLQRqYXCuoHGF` | `2yxqQyp3rhwbphLn75e1uFX6VjkR2maPEd6GNL75r6jYT4H8pYLW9ZvPZas4aDBonnQtd9CjvgsgK1zVtA1Fv2EG` | `h3f8qkkdbJthPUPHHqNEoxPuMAaFsV56L6X9jnpBVBe5VXRWY92PtM7vc4pEcy9obpdZUFwXpAc1sbpdtLU1hK6` |
+| 3 | `6AC6diTGMs2pFtvH3vyxHyFnsa25oNBG8wcDNe6WKVEhL41otC1bggdNCKcVbgUa84XY31CMuqdefTamf5m3n3x` | `2v9WMyCkSi5B2CPyCkJoXkqoFrmNkJNdtgaaNKG7Uyh4X8yhKRU9wZTrNsW7erS2mKodqzBuTqkPx2kjFiSC2Tav` | `5mmJioL7A2pTXu2vyzsVYcNaS5v4sdumuGHHaXnxrVXgBMYd2R55Yi8ALDYuNYpYZKj3UniSyAKNsFTF2JNDKvcv` |
+| 4 | `9mAXj1VoyYwqezfPjbWTvPCuDC5rxssvAe3rG7oDJBfiqw61q8tU6x1vF881BnhFF22rVFQyk5G8XVJcQ8gaBBX` | `SqXXdXGFd6XyPw6H7mhXw7pcRV468VdYLH9DLs9m9jQDguYJxkygvaHpEPYh1gwG6BihG7PRom7UYMkCQKhLfD4` | `4Ao1P4Ubx9E8MsqGJkDg4pK5Z6k89rPjN1Vdx3eFVUyTjEvhHMJPgs28a2XXw74afpgbEqMLutYpckkQZbSpGb96` |
+| 5 | `3ikADGubYgMuJGAzvJPDks9JvuoDKSGEtw3pNf21S3a32y1XgtrG7BLAqaPGjsV2ukPTtxT1JGPuGabyPEEtFpxz` | `32a38AQEmQ8BDKhDusa7voX3PNWAmThVGhrEAjXe2QWyn2XjCVs2oe2UAkWFAtRVFjp7GVa14Lh9mUEFuYnspMki` | `2MqQQxH2yUKpywtq3cQFjSv2g5cSzciSToaqpR9QFwkrqB4tyZrbMqz1bZuZkhY2dhRqLdLph4hfNqpyeaLhQFL6` |
+| 6 | `38KSfnDixS8EEnXvoFCTbshe8ugpyqb6Ga5MGeRMp7TxrMLcc5m9AdcnAfRtgXXQ2238N4ySzkUTZf6M3hY8DU3N` | `2Jv7bkYFZnbTvMwm62PvMhWLaQATSHi2VdebjezLNmYjLAsfDoWqJKJuu2TAmryTVBrfcAo3BRa39haPvVQWg4Hr` | `3g6i9E6gCCdFM9mNGQ1zpCfxygQJQrnLWA2ZeM9NmVGqFgUPkVqedzqrrdhTYsMFeRPXWz8XAbkpmtbQsMbMBo39` |
+| 7 | `6513i1aVhyvnL2HPuRxErK7JuEkdNgkhD8ud45qgwJw22pdJXN2tEb9fivWpsi8VqgQ8b7A3iMLTaGP5bsSVrAQ7` | `MskvUJJQ2K4mdDc6xzd9etgjCKnUPLkFvU1gh849i5oBFmKvrbmbDZwkJMt6TTB23QKFvar3Nfy3P355MitTRHZ` | `5FHvTJjLeHngXBvCX5iBrCrQPUd9kRt2B1PoWNjzySA4rRQvG5swv2VBojfM6YuNd8CRNgpwC3TXoSaLZeMfbjao` |
+| 8 | `4vtYTRsdPGwLGZw2SJhZpkkM1hFEiZqdKostWPsMVqwiFZFG1mA9SLC14VHjj8xrotoWZHSbbpLoxw8nA5iY4f6A` | `5kNcoJd2ZhvPucYCV8XZjoMZPWp8u1uzELWJwMNmEM7ZMb1uLTZvajwgNjd4kf5TkvUYfHJ4Q7w8jBbkVW3pWJat` | `2WVZuwapJnRqMRyq9EyHoKtxCfAUTRuMn99H9tt7HWteqdEL8epX7YazSdc5UQn9p25fYLzVV29UsVVzmbMqanRU` |
+| 9 | `5EUeY9b7wVZ9pfb651Zgjr7gVgNGDZVLsL9Cyy5FXzoz1psgX7B4JaccsKbxQvBdMGmgAkWqhfiXSL7wUdNuTXNT` | `3p7ANhaGL3HU5Res77h6NJwkXnkK32wjw9XsA5jKrjeC2YnGeh7S3diRi4wVrt1BAPvFhDZ26aUBfnj86fUsUb11` | `3tE4bftNbY6hswsZP2rzrBSyDFgmnzb3Nz7urz3zgofFct5EgjyR1h3hYwVZEhrCBYuj7xZNYP4NhgihjpHmmF42` |
+| 10 | `5At7Wyb1NFTYBfaSAKT59EKrwVrVA9baAsCbwbn4FPWPdNE82qKd6VAbqkkwWH1dMLdAHm4XLPbjt9bx35s8btXN` | `51r9fEf9NYCjdoDevDoS4YWEX21Z1jLZdR2Vz5zyZHdKR16RmkCbWbR8CS5PYkSx8X4hR2xEEZcwVqDSdFockmp9` | `4AwLNk1F4rrcL1HB3i4iqXxC5tm8FtCJEfoyNoeR3c344HFWaNUC5pRgKg2DjcUPn5WiHb8C6DSkxTnE2Ubzz8K7` |
+
+## The 2026-10-31 window
+
+A detached keeper fills window `7s5KJ79XRwBzeL8t42ut6RkQ1yLhrRMg8z5dHQtNXTeA` hour by hour
+and finalizes it after 2026-11-01T00:00:00Z. Its backfill deadline is 2026-11-02T00:00:00Z.
+
+| What | Value |
+| --- | --- |
+| Process | PID `96116` on the Studio, `varswap-keeper --watch 300` (built from PR #22 at `ed92a42`) |
+| Log | `/Users/joaquin/tmp/worktrees/varswap/keeper-run/7s5K.log` (one report line per tick) |
+| Signatures | `/Users/joaquin/tmp/worktrees/varswap/keeper-run/7s5K.sigs` |
+| Stop | `kill 96116` (that exact PID only) |
+
+It reads `SOLANA_URL`, `VARSWAP_PROGRAM_ID`, `VARSWAP_KEYPAIR` and `VARSWAP_HERMES_API_KEY`
+from the environment; the key is never printed. It scans the payer's encoded VAAs at start
+and every 12 rounds, and closes any it finds before the next post. Every Hermes answer is cached. After a 429 the
+keeper waits at least 61 s, because the key's limit (about 10 requests a minute on the
+timestamp endpoint) is shared with metalbook.
+
+## Run a keeper
+
+```sh
+export SOLANA_URL=https://api.devnet.solana.com
+export VARSWAP_PROGRAM_ID=BWqsaXvASrbErApP1ovz7vSvBLYqXGaMaZANEYf1xrB9
+export VARSWAP_KEYPAIR=~/.config/solana/id.json   # pays fees only
+export VARSWAP_HERMES_API_KEY=...                  # environment only
+cargo run -p varswap-keeper --release --bin varswap-keeper -- --watch 30 <window>
+```

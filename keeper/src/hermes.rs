@@ -17,6 +17,8 @@
 //! `publish_time >= t`. Its parsed form carries `price` and `conf` as decimal strings, `expo`,
 //! `publish_time` and `metadata.prev_publish_time` (`apps/hermes/server/src/api/types.rs`).
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt;
 
 use base64::Engine;
@@ -307,64 +309,11 @@ pub fn parse_update(body: &str, feed: &[u8; 32]) -> Result<HermesUpdate, KeeperE
     })
 }
 
-/// Placeholder for a redacted URL.
+/// Placeholder for a redacted Hermes URL.
 const HIDDEN_URL: &str = "<hermes url>";
 
-/// Shortest URL path segment or query value treated as a possible key.
-const MIN_SECRET_LEN: usize = 8;
-
-/// The parts of `url` that can carry a key: path segments and query values of at least
-/// [`MIN_SECRET_LEN`] characters (`/?api-key=KEY`, `/TOKEN/`), longest first.
-fn secrets_of(url: &str) -> Vec<&str> {
-    let after_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
-    // Drop the host: everything up to the first `/` or `?`.
-    let tail = after_scheme
-        .find(['/', '?'])
-        .and_then(|i| after_scheme.split_at_checked(i))
-        .map_or("", |(_, tail)| tail);
-    let mut parts: Vec<&str> = tail
-        .split(['/', '?', '&', '=', '#'])
-        .filter(|p| p.len() >= MIN_SECRET_LEN)
-        .collect();
-    parts.sort_by_key(|p| std::cmp::Reverse(p.len()));
-    parts
-}
-
-/// `text` with `url`, the API key, every path segment or query value of `url` of 8 or more
-/// characters, and every other `http://` or `https://` URL replaced by placeholders. The HTTP
-/// client may quote a normalized form of the URL, so exact replacement of it is not enough.
-/// The same redactor as `varswap-admin`'s RPC errors.
 fn scrub(text: &str, url: &str, key: &str) -> String {
-    let mut text = if url.is_empty() {
-        text.to_owned()
-    } else {
-        text.replace(url, HIDDEN_URL)
-    };
-    if !key.is_empty() {
-        text = text.replace(key, "<redacted>");
-    }
-    for secret in secrets_of(url) {
-        text = text.replace(secret, "<redacted>");
-    }
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text.as_str();
-    while let Some(start) = ["http://", "https://"]
-        .iter()
-        .filter_map(|scheme| rest.find(scheme))
-        .min()
-    {
-        let Some((before, tail)) = rest.split_at_checked(start) else {
-            break;
-        };
-        out.push_str(before);
-        out.push_str(HIDDEN_URL);
-        let end = tail
-            .find(|c: char| c.is_whitespace() || matches!(c, ')' | '"' | '\'' | '>'))
-            .unwrap_or(tail.len());
-        rest = tail.split_at_checked(end).map_or("", |(_, after)| after);
-    }
-    out.push_str(rest);
-    out
+    pyth_post::redact::scrub(text, url, key, HIDDEN_URL)
 }
 
 /// Scrubs an error message with [`scrub`], as a last line of defence: no error built in this
@@ -389,12 +338,17 @@ fn hex(bytes: &[u8; 32]) -> String {
 }
 
 /// A [`PriceSource`] backed by Hermes (`/v2/updates/price/{t}`, the first update with
-/// `publish_time >= t`): one request per `canonical_at`. Errors never carry response content,
+/// `publish_time >= t`): at most one request per `(feed, t)`, every 200 answer cached (history
+/// is immutable, and the key's rate limit is shared), a 429 reported as
+/// [`KeeperError::RateLimited`]. Errors never carry response content,
 /// and the API key is scrubbed from any error text. Ported from metalbook-keeper (#17).
 #[derive(Debug)]
 pub struct HermesSource<H: HttpGet> {
     config: HermesConfig,
     http: H,
+    /// Every 200 answer of `first_at_or_after`, by `(feed, t)`: history is immutable, and the
+    /// key's timestamp endpoint allows about 10 requests a minute (shared between keepers).
+    cache: RefCell<HashMap<([u8; 32], i64), HermesUpdate>>,
 }
 
 impl<H: HttpGet> HermesSource<H> {
@@ -412,6 +366,7 @@ impl<H: HttpGet> HermesSource<H> {
         match response.status {
             200 => parse_update(&response.body, feed).map(Some),
             404 => Ok(None),
+            429 => Err(KeeperError::RateLimited),
             401 | 403 => Err(KeeperError::Source(format!(
                 "Hermes rejected the API key ({}); the auth scheme is unverified, see VARSWAP_HERMES_AUTH",
                 response.status
@@ -423,7 +378,11 @@ impl<H: HttpGet> HermesSource<H> {
     /// A source using `config` over `http`.
     #[must_use]
     pub fn new(config: HermesConfig, http: H) -> Self {
-        Self { config, http }
+        Self {
+            config,
+            http,
+            cache: RefCell::new(HashMap::new()),
+        }
     }
 
     /// The first update of `feed` with `publish_time >= t`, or `None` if Hermes has none yet
@@ -438,12 +397,25 @@ impl<H: HttpGet> HermesSource<H> {
         feed: &[u8; 32],
         t: i64,
     ) -> Result<Option<HermesUpdate>, KeeperError> {
+        if let Some(u) = self.cache.borrow().get(&(*feed, t)) {
+            return Ok(Some(u.clone()));
+        }
         let url = format!(
             "{}/v2/updates/price/{t}?ids%5B%5D={}&encoding=base64&parsed=true",
             self.config.base_url().trim_end_matches('/'),
             hex(feed)
         );
-        self.request(&url, feed)
+        let update = self.request(&url, feed)?;
+        if let Some(u) = &update {
+            let mut cache = self.cache.borrow_mut();
+            cache.insert((*feed, t), u.clone());
+            // The same update answers a query at its own publish time (the keeper's second
+            // request for a canonical print).
+            if u.print.publish_time >= t {
+                cache.insert((*feed, u.print.publish_time), u.clone());
+            }
+        }
+        Ok(update)
     }
 
     /// The latest update of `feed` (`/v2/updates/price/latest`), or `None` if Hermes has none.
@@ -470,6 +442,24 @@ impl<H: HttpGet> HermesSource<H> {
             .first_at_or_after(feed, t)?
             .map(|u| u.print)
             .filter(|m| m.publish_time <= now))
+    }
+}
+
+/// The binary update of a print published at `publish_time`: the first update at or after it.
+/// For a canonical print that is the print itself (nothing is published between its boundary
+/// and it); `ReceiverChain` checks the message before posting.
+impl<H: HttpGet> pyth_post::UpdateSource for HermesSource<H> {
+    fn update(&self, feed: &[u8; 32], publish_time: i64) -> Result<Vec<u8>, pyth_post::PostError> {
+        let u = self
+            .first_at_or_after(feed, publish_time)
+            .map_err(|e| match e {
+                KeeperError::RateLimited => pyth_post::PostError::RateLimited,
+                other => pyth_post::PostError::Source(other.to_string()),
+            })?
+            .ok_or_else(|| {
+                pyth_post::PostError::Source("Hermes has no update at that time".into())
+            })?;
+        Ok(u.update_data)
     }
 }
 

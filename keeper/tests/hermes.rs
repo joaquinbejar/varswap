@@ -380,3 +380,39 @@ fn test_key_in_the_base_url_never_reaches_debug_or_transport_errors() {
         assert!(!shown.contains(leak), "{shown}");
     }
 }
+
+/// History is immutable and the key's rate limit is shared: a second query for the same
+/// `(feed, t)`, and the update query at a canonical print's own publish time, are answered from
+/// the cache. A 429 is `RateLimited`, and nothing is cached for it.
+#[test]
+fn test_answers_are_cached_and_429_is_rate_limited() {
+    use varswap_keeper::UpdateSource;
+    let tape = tape();
+    let mut fake = FakeHermes::new(tape.clone());
+    fake.now = 20_000;
+    let hermes = HermesSource::new(config(), &fake);
+    let b = 10_500;
+    let first = hermes.first_at_or_after(&FEED, b).unwrap().unwrap();
+    assert_eq!(hermes.first_at_or_after(&FEED, b).unwrap().unwrap(), first);
+    // Through a shared reference too (the binary's single source for queries and posts).
+    let shared: &dyn UpdateSource = &&hermes;
+    shared.update(&FEED, first.print.publish_time).unwrap();
+    assert_eq!(fake.seen.borrow().len(), 1);
+
+    let mut limited = FakeHermes::new(tape);
+    limited.status = Some(429);
+    let hermes = HermesSource::new(config(), &limited);
+    assert_eq!(
+        hermes.first_at_or_after(&FEED, b),
+        Err(KeeperError::RateLimited)
+    );
+    assert_eq!(
+        hermes.first_at_or_after(&FEED, b),
+        Err(KeeperError::RateLimited)
+    );
+    assert_eq!(
+        hermes.update(&FEED, b),
+        Err(varswap_keeper::PostError::RateLimited)
+    );
+    assert_eq!(limited.seen.borrow().len(), 3);
+}

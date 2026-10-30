@@ -81,9 +81,10 @@ crates.io.
 | --- | --- |
 | `varswap-core` | `no_std` window grid, canonical print acceptance (`accept_print`, shared by the program and the keeper), bucket storage, the optfix `ln` kernel (`LnKernel`) and its error bound, swap terms (`SwapTerms`) and settlement, every account and payload layout |
 | `pyth-lite` | `no_std` reader for Pyth `PriceUpdateV2` accounts: owner, discriminator, layout, Full verification, feed, price, staleness, confidence |
+| `pyth-post` | off chain poster of Pyth prices from Hermes updates: the `PNAU` parser, Wormhole encoded VAA and receiver builders, and `post` (VAA written and verified, `Full` `PriceUpdateV2` posted, your instructions, every account closed) over a `Transport`; `RpcTransport` over `solana-rpc-client`. Tested against the devnet receiver and Wormhole programs with real Hermes updates |
 | `program` (`varswap-program`) | the on chain Pinocchio program: config, feed configs, windows, swaps ([`docs/errors.md`](docs/errors.md), [`docs/benchmarks.md`](docs/benchmarks.md)) |
 | `sdk` (`varswap-sdk`) | a builder per instruction (`ix`), PDAs (`pda`) and account decoders (`decode`); every builder matches the test harness encoding byte for byte |
-| `keeper` (`varswap-keeper`) | `Keeper::tick` over the `Chain` and `PriceSource` traits, plus a Hermes source (`HermesSource`) |
+| `keeper` (`varswap-keeper`) | `Keeper::tick` over the `Chain` and `PriceSource` traits, a Hermes source (`HermesSource`), the production `ReceiverChain` (posts through `pyth-post`, samples in the posting transaction) and the `varswap-keeper` binary |
 | `cli` (`varswap-cli`) | the `varswap-admin` binary: thin admin CLI over the SDK |
 | `study` (`varswap-study`) | off chain simulation study (`make study` writes [`docs/study.md`](docs/study.md)) |
 | `lint-control` | failing controls for the lint set and the SBF stack check |
@@ -120,7 +121,12 @@ Example transactions:
 [`init_config`](https://explorer.solana.com/tx/5HV3i3dFWJMKPZBMJxViWpsjpB6GkdzQUp8Vg1SH4duRyKL1JsjsgHGgCa5hA7dFugvpEuMhRFcrTPvGsXLeQaEf?cluster=devnet),
 [`set_feed_config`](https://explorer.solana.com/tx/5c2ssG2VB53XiugwEKNXbQVWRtTbyNKwZBAb979yrZXE6DMijLtHkSpcJxzLtDdwLUBXnvDi2PiiAG9t95SWaCDm?cluster=devnet),
 [`create_window`](https://explorer.solana.com/tx/4sudzjBz4ZU6Bw5QNq9pVJPhVUoyoaN3mg2gPMW36GKL5PymMeS5MWeSbs6UJiFR8tKBF9Wi44MhEr6UwtRJMdY9?cluster=devnet).
-`sample` and `finalize` follow once the keeper runs on devnet.
+A demo window
+([`9P3vhP8pe8WcebFXZ77njPHddnCtLLFGFHLiAucQ2Wz8`](https://explorer.solana.com/address/9P3vhP8pe8WcebFXZ77njPHddnCtLLFGFHLiAucQ2Wz8?cluster=devnet),
+ten 60 s intervals) was sampled live by `varswap-keeper` and finalized: one
+[post with `sample`](https://explorer.solana.com/tx/3QaW1FW6EkTR3AZmeqwnFmbXLH8eBTNuRrBmh3oEKBSaXjFPqcDjv6BwE8QutoL4rzaJQM1fNNzSUvnyX2g6pcNF?cluster=devnet)
+(`post_update`, `sample`, `reclaim_rent`, `close_encoded_vaa`) and the
+[`finalize`](https://explorer.solana.com/tx/4HoUsuSYMEvY4ydVsapcciXT2M9rXEk8e4mHRu45WnYg3EdiNUotMHnGhs3zCUodGmUiq4dNFjsM2F1idcrhXU3t?cluster=devnet).
 
 To reproduce against `api.devnet.solana.com` (a funded keypair; the program id keypair is
 yours):
@@ -350,9 +356,21 @@ fn run<C: Chain>(chain: &mut C, program_id: Address, window: Address) -> Result<
 }
 ```
 
-`Chain` is the node interface (`now`, `account`, `post_sample`, `finalize`); the production RPC
-implementation with the receiver's post path comes with the devnet milestone, and the tests use
-LiteSVM.
+`Chain` is the node interface (`now`, `account`, `post_sample`, `finalize`). In production it
+is `ReceiverChain` over `pyth_post::RpcTransport`: each print is fetched from Hermes, checked to
+be the exact print the keeper chose, posted through Wormhole and the Pyth receiver as a `Full`
+`PriceUpdateV2`, sampled in the posting transaction, and both accounts are closed (fees only).
+The `varswap-keeper` binary runs it:
+
+```shell
+export SOLANA_URL=https://api.devnet.solana.com VARSWAP_PROGRAM_ID=<program id>
+export VARSWAP_KEYPAIR=~/.config/solana/id.json   # pays fees only
+export VARSWAP_HERMES_API_KEY=...                  # environment only, never printed
+cargo run -p varswap-keeper --release --bin varswap-keeper -- --watch 30 <window> [<window> ...]
+```
+
+It prints each transaction signature on stdout and one report line per window and tick on
+stderr. With `--watch` it repeats until every window is final.
 
 ### Testing and Benchmarks
 

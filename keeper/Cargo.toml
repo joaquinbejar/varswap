@@ -16,6 +16,17 @@ base64 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 ureq = { workspace = true }
+pyth-post = { workspace = true }
+# The keeper binary's arguments (as varswap-admin).
+clap = { workspace = true }
+# The generation varswap-sdk builds instructions with (LiteSVM's, docs/PLAN.md exception).
+solana-instruction = { workspace = true }
+solana-keypair = { workspace = true }
+solana-signer = { workspace = true }
+
+[dev-dependencies]
+solana-transaction = { workspace = true }
+solana-rpc-client = { workspace = true }
 
 [lints]
 workspace = true

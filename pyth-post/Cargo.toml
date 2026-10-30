@@ -1,0 +1,39 @@
+[package]
+name = "pyth-post"
+description = "Posts Pyth prices on Solana from Hermes updates: PNAU parser, Wormhole encoded VAA and Pyth receiver builders, and an RPC poster"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["pyth", "oracle", "solana", "wormhole", "hermes"]
+categories = ["cryptography::cryptocurrencies"]
+readme = "README.md"
+# Program and account dumps, and recorded Hermes responses, stay in the repository.
+exclude = ["tests/"]
+
+[dependencies]
+pyth-lite = { workspace = true }
+thiserror = { workspace = true }
+# The generation LiteSVM uses (docs/PLAN.md exception), and the RPC client varswap-admin uses.
+solana-address = { workspace = true, features = ["curve25519", "decode"] }
+solana-instruction = { workspace = true }
+solana-keypair = { workspace = true }
+solana-signer = { workspace = true }
+solana-transaction = { workspace = true }
+solana-rpc-client = { workspace = true }
+solana-rpc-client-api = { workspace = true }
+solana-commitment-config = { workspace = true }
+
+[dev-dependencies]
+# Cross-checks of the receiver layouts against Pyth's own Borsh types (as pyth-lite).
+anchor-lang = { workspace = true }
+pyth-solana-receiver-sdk = { workspace = true }
+base64 = { workspace = true }
+serde_json = { workspace = true }
+litesvm = { workspace = true }
+solana-account = { workspace = true }
+solana-clock = { workspace = true }
+
+[lints]
+workspace = true

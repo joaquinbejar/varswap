@@ -16,6 +16,10 @@
 //! failed post is benign only if the window, re-read, already holds that bucket (someone else
 //! posted the same canonical print); otherwise the tick returns the error without finalizing.
 //!
+//! In production the [`Chain`] is a [`ReceiverChain`] over an [`RpcTransport`]: each print is
+//! posted through Wormhole and the Pyth receiver as a `Full` `PriceUpdateV2` (`pyth-post`),
+//! sampled and closed in the same transaction.
+//!
 //! The Hermes API key is read only from the environment ([`HermesConfig::from_env`]), never
 //! from a file, and never printed (the metalbook-keeper pattern).
 
@@ -23,6 +27,7 @@ mod chain;
 mod error;
 mod hermes;
 mod keeper;
+mod receiver_chain;
 mod source;
 
 pub use chain::Chain;
@@ -32,4 +37,6 @@ pub use hermes::{
     UreqHttp, DEFAULT_HERMES_URL, HERMES_API_KEY_VAR, HERMES_AUTH_VAR, HERMES_URL_VAR,
 };
 pub use keeper::{Keeper, TickReport};
+pub use pyth_post::{PostError, RpcTransport, Transport, UpdateSource};
+pub use receiver_chain::{Orphan, ReceiverChain};
 pub use source::{PriceSource, PrintMsg, TapeSource};

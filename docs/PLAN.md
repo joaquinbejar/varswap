@@ -617,8 +617,19 @@ to build test accounts and to cross-check the decoder.
    node message redacted as a whole after the preflight logs are appended, including each URL
    path segment or query value of 8 or more characters as a bare token, ported from
    metalbook-cli); 6d devnet deployment done 2026-10-30 (`docs/devnet.md`: program, config,
-   the SOL/USD feed config and a 25-bucket hourly window; live sampling waits on the Hermes
-   key and the RPC `Chain`). *Done when* a Rust SDK and a keeper example push samples on devnet for
+   the SOL/USD feed config and a 25-bucket hourly window); 6e the posting path done
+   2026-10-30: `pyth-post`, a reusable off-chain crate (metalbook M7b-2 uses it), parses
+   Hermes' `PNAU` update and posts one message as a `Full` `PriceUpdateV2` in three
+   transactions (encoded VAA created and written, then written and verified, then
+   `post_update`, the caller's instructions and both closes, so a post costs fees only), tested
+   in LiteSVM against the receiver and Wormhole programs dumped from devnet with 25 real hourly
+   SOL/USD updates of 2026-10-29 (fixtures committed; a tampered VAA and a tampered message are
+   rejected). Real VAAs are signed under Wormhole guardian set 1 (5 keys) with 3 signatures,
+   which the devnet Wormhole accepts. `varswap-keeper`'s `ReceiverChain` posts each canonical
+   print and samples it in the posting transaction; the replay of the 24 real returns
+   (`program/tests/replay.rs`) finalizes with `sum_sq` and the realized variance equal to
+   `varswap-core` fed the same prints and within `1e-12` of an `f64` reference (annualized
+   variance 1.017, about 101% volatility). *Done when* a Rust SDK and a keeper example push samples on devnet for
    a live SOL/USD window and it finalizes, and a replay of 24 real canonical SOL/USD prints
    (fixtures fetched from Hermes, committed) finalizes to the off-chain value. Keepers read
    the Hermes API key from an environment variable; it is never committed.

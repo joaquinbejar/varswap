@@ -23,12 +23,66 @@ pub enum KeeperError {
         /// What was wrong, from a fixed set of descriptions.
         what: &'static str,
     },
+    /// A Hermes binary update (accumulator update, VAA or price message) cannot be decoded.
+    /// A fixed category; the bytes are never quoted.
+    #[error("price update cannot be decoded: {0}")]
+    Update(&'static str),
+    /// The price source answered 429: the key's rate limit (about 10 requests a minute on
+    /// Hermes' timestamp endpoint, `retry-after` 60). Back off and retry.
+    #[error("price source rate limit (HTTP 429): back off and retry")]
+    RateLimited,
+    /// A post failed (`cause`) and left its encoded VAA open at `encoded_vaa`.
+    /// `ReceiverChain` retries closing it before every later post.
+    #[error("{cause}; encoded VAA {encoded_vaa} is still open")]
+    Orphaned {
+        /// The open encoded VAA account.
+        encoded_vaa: varswap_sdk::Address,
+        /// The failure of the post, as text.
+        cause: String,
+    },
+    /// A post's first transaction failed without a confirmation and its encoded VAA does not
+    /// exist yet, but the transaction can still land until block height `valid_until`.
+    /// `ReceiverChain` keeps the address until then and closes it if it appears.
+    #[error(
+        "{cause}; encoded VAA {encoded_vaa} may still be created until block height {valid_until}"
+    )]
+    Uncertain {
+        /// The encoded VAA the in-flight transaction would create.
+        encoded_vaa: varswap_sdk::Address,
+        /// The last block height at which it can land.
+        valid_until: u64,
+        /// The failure of the post, as text.
+        cause: String,
+    },
     /// A chain operation (read, post, finalize) failed.
     #[error("chain operation failed: {0}")]
     Chain(String),
     /// A configuration value is missing or invalid.
     #[error("configuration: {0}")]
     Config(&'static str),
+}
+
+impl From<pyth_post::PostError> for KeeperError {
+    fn from(e: pyth_post::PostError) -> Self {
+        match e {
+            pyth_post::PostError::Update(what) => Self::Update(what),
+            pyth_post::PostError::Source(msg) => Self::Source(msg),
+            pyth_post::PostError::Chain(msg) => Self::Chain(msg),
+            pyth_post::PostError::RateLimited => Self::RateLimited,
+            pyth_post::PostError::Orphaned { encoded_vaa, cause } => {
+                Self::Orphaned { encoded_vaa, cause }
+            }
+            pyth_post::PostError::Uncertain {
+                encoded_vaa,
+                valid_until,
+                cause,
+            } => Self::Uncertain {
+                encoded_vaa,
+                valid_until,
+                cause,
+            },
+        }
+    }
 }
 
 impl From<varswap_core::CoreError> for KeeperError {
