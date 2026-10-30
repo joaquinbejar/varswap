@@ -89,6 +89,15 @@ fn test_client_error_preflight_failures_carry_the_program_logs() {
         ),
         "{text}"
     );
+    // Each log line once: the client's own message already renders them (seen on devnet,
+    // where every line was printed twice).
+    for line in [
+        "Program 4d invoke [1]",
+        "Program 4d failed: custom program error: 0x6c",
+    ] {
+        assert_eq!(text.matches(line).count(), 1, "{line} in {text}");
+    }
+    assert_eq!(text.matches("2 log messages:").count(), 1, "{text}");
 }
 
 #[test]
