@@ -48,7 +48,10 @@ Milestones 1 to 5 are done (accumulator, `pyth-lite`, window program, swaps, CU 
 the outage study), and so are the three parts of milestone 6 that run off chain: `varswap-sdk`,
 `varswap-keeper` and the `varswap-admin` CLI. What remains is the devnet run (a keeper pushing
 samples for a live SOL/USD window until it finalizes, and a replay of 24 real canonical prints).
-**The program is not deployed** on any cluster, and no crate is published on crates.io.
+The program is deployed on **devnet only**, at `BWqsaXvASrbErApP1ovz7vSvBLYqXGaMaZANEYf1xrB9`
+([docs/devnet.md](docs/devnet.md): config, the SOL/USD feed config and one hourly window;
+live sampling waits on the Hermes key). It is not on mainnet, and no crate is published on
+crates.io.
 
 ### Features
 
