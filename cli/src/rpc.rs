@@ -83,20 +83,24 @@ impl Rpc for Cluster {
     }
 }
 
-/// An RPC client error as a [`CliError::Rpc`]: its message followed by the program logs of a
-/// failed preflight simulation, the whole text redacted (a provider may echo its URL or key
-/// anywhere, logs included).
+/// An RPC client error as a [`CliError::Rpc`]: its message with the program logs of a failed
+/// preflight simulation, the whole text redacted (a provider may echo its URL or key anywhere,
+/// logs included). `solana-rpc-client` 4.3 already renders the logs in the message
+/// (`; N log messages:` and one line per log); a log line is appended only if the message does
+/// not carry it, so each appears once.
 #[must_use]
 pub fn client_error(e: &ClientError, url: &str) -> CliError {
-    let mut message = e.to_string();
+    let mut message = e.to_string().trim_end().to_owned();
     if let ErrorKind::RpcError(RpcError::RpcResponseError {
         data: RpcResponseErrorData::SendTransactionPreflightFailure(simulation),
         ..
     }) = e.kind()
     {
         for line in simulation.logs.iter().flatten() {
-            message.push_str("\n  ");
-            message.push_str(line);
+            if !message.contains(line.as_str()) {
+                message.push_str("\n  ");
+                message.push_str(line);
+            }
         }
     }
     CliError::Rpc(redact(&message, url))
