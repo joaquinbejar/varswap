@@ -13,7 +13,7 @@ repository = "https://github.com/joaquinbejar/varswap"
 # Versions checked on crates.io (max_stable_version) on 2026-10-29.
 pyth-lite = { path = "pyth-lite", version = "0.1" }
 varswap-core = { path = "varswap-core", version = "0.1" }
-varswap-sdk = { path = "sdk" }
+varswap-sdk = { path = "sdk", version = "0.1" }
 varswap-keeper = { path = "keeper" }
 # Off-chain only (varswap-keeper): the same set as metalbook-keeper. Checked on crates.io on
 # 2026-10-29: ureq 3.5.0, serde 1.0.229, serde_json 1.0.154, base64 0.23.1, thiserror 2.0.21.
@@ -37,9 +37,9 @@ solana-commitment-config = "3.1"
 solana-hash = "4.6"
 bytemuck = { version = "1.25", default-features = false, features = ["derive"] }
 proptest = "1.12"
-# Unpublished sibling (crates.io at its milestone 7): git, pinned by rev (rules/global_rules.md).
-# 622b343 = optfix#10 merge: adds `wide::mul_shr` (exact 256-bit multiply-and-shift).
-optfix = { git = "https://github.com/joaquinbejar/optfix", rev = "622b343b7416d5fa1b31ac8d2a55b3528ce39584" }
+# optfix 0.1.0 (crates.io, 2026-10-30; the first release, which includes `wide::mul_shr` from
+# optfix#10 and the same `ln` results as the rev 622b343 this crate used before).
+optfix = "0.1"
 # Pinocchio 0.11 generation: decided exception to the latest-stable rule (docs/PLAN.md).
 pinocchio = { version = "0.11", default-features = false, features = ["cpi"] }
 pinocchio-system = "0.6"
