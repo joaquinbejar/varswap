@@ -130,13 +130,14 @@ and finalizes it after 2026-11-01T00:00:00Z. Its backfill deadline is 2026-11-02
 
 | What | Value |
 | --- | --- |
-| Process | PID `79846` on the Studio, `varswap-keeper --watch 300` (built from PR #22 at `ca027eb`) |
+| Process | PID `96116` on the Studio, `varswap-keeper --watch 300` (built from PR #22 at `ed92a42`) |
 | Log | `/Users/joaquin/tmp/worktrees/varswap/keeper-run/7s5K.log` (one report line per tick) |
 | Signatures | `/Users/joaquin/tmp/worktrees/varswap/keeper-run/7s5K.sigs` |
-| Stop | `kill 79846` (that exact PID only) |
+| Stop | `kill 96116` (that exact PID only) |
 
 It reads `SOLANA_URL`, `VARSWAP_PROGRAM_ID`, `VARSWAP_KEYPAIR` and `VARSWAP_HERMES_API_KEY`
-from the environment; the key is never printed. Every Hermes answer is cached. After a 429 the
+from the environment; the key is never printed. It scans the payer's encoded VAAs at start
+and every 12 rounds, and closes any it finds before the next post. Every Hermes answer is cached. After a 429 the
 keeper waits at least 61 s, because the key's limit (about 10 requests a minute on the
 timestamp endpoint) is shared with metalbook.
 
