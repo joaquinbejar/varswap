@@ -4,6 +4,30 @@ All notable changes to the published crates are recorded here. The format follow
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crates follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] - 2026-10-30
+
+Adds `pyth-post` 0.1.0 to crates.io. `pyth-lite`, `varswap-core` and `varswap-sdk` are unchanged
+and stay at 0.1.0. The keeper and the CLI are still built from the repository.
+
+### pyth-post 0.1.0
+
+- `AccumulatorUpdate::parse` reads Hermes' binary update (`PNAU`): the VAA and every message
+  with its merkle proof. `find` picks one feed's `PriceFeedMessage`.
+- `ix` builds the Wormhole encoded VAA instructions (create, init, write,
+  `verify_encoded_vaa_v1`, close) and the Pyth receiver's `post_update` and `reclaim_rent`.
+- `post_plan` and `post` work over any `Transport` in three transactions. The first creates the
+  encoded VAA and writes it, the second verifies it, and the third posts a `Full`
+  `PriceUpdateV2`, runs the caller's instructions and closes both accounts. A post costs fees
+  only, and every transaction fits the packet limit for up to 19 signatures.
+- Recovery after a failed send: the encoded VAA is re-read and closed if it exists. An open one
+  is returned as `PostError::Orphaned`. A first transaction that may still land is returned as
+  `PostError::Uncertain`, with its last valid block height. `close_if_open` closes one later,
+  and `scan_encoded_vaas` finds leftovers by write authority.
+- `RpcTransport` is a `Transport` over `solana-rpc-client ~4.3`. Its URL is hidden from `Debug`
+  and from errors.
+- Tested in LiteSVM against the receiver and Wormhole programs dumped from devnet, with real
+  Hermes updates, fault injection, and metalbook's receiver tests.
+
 ## [0.1.0] - 2026-10-30
 
 First release on crates.io: `pyth-lite`, `varswap-core` and `varswap-sdk`. The program, the
