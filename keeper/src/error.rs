@@ -23,6 +23,10 @@ pub enum KeeperError {
         /// What was wrong, from a fixed set of descriptions.
         what: &'static str,
     },
+    /// A Hermes binary update (accumulator update, VAA or price message) cannot be decoded.
+    /// A fixed category; the bytes are never quoted.
+    #[error("price update cannot be decoded: {0}")]
+    Update(&'static str),
     /// A chain operation (read, post, finalize) failed.
     #[error("chain operation failed: {0}")]
     Chain(String),

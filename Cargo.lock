@@ -6575,9 +6575,18 @@ dependencies = [
 name = "varswap-keeper"
 version = "0.1.0"
 dependencies = [
+ "anchor-lang",
  "base64 0.23.1",
+ "pyth-solana-receiver-sdk",
  "serde",
  "serde_json",
+ "solana-commitment-config",
+ "solana-instruction 3.5.1",
+ "solana-keypair",
+ "solana-rpc-client",
+ "solana-rpc-client-api",
+ "solana-signer",
+ "solana-transaction",
  "thiserror 2.0.21",
  "ureq",
  "varswap-core",

@@ -22,7 +22,7 @@ use std::fmt;
 use base64::Engine;
 use serde::Deserialize;
 
-use crate::{KeeperError, PriceSource, PrintMsg};
+use crate::{KeeperError, PriceSource, PrintMsg, UpdateSource};
 
 /// Environment variable that holds the Hermes API key.
 pub const HERMES_API_KEY_VAR: &str = "VARSWAP_HERMES_API_KEY";
@@ -307,64 +307,11 @@ pub fn parse_update(body: &str, feed: &[u8; 32]) -> Result<HermesUpdate, KeeperE
     })
 }
 
-/// Placeholder for a redacted URL.
+/// Placeholder for a redacted Hermes URL.
 const HIDDEN_URL: &str = "<hermes url>";
 
-/// Shortest URL path segment or query value treated as a possible key.
-const MIN_SECRET_LEN: usize = 8;
-
-/// The parts of `url` that can carry a key: path segments and query values of at least
-/// [`MIN_SECRET_LEN`] characters (`/?api-key=KEY`, `/TOKEN/`), longest first.
-fn secrets_of(url: &str) -> Vec<&str> {
-    let after_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
-    // Drop the host: everything up to the first `/` or `?`.
-    let tail = after_scheme
-        .find(['/', '?'])
-        .and_then(|i| after_scheme.split_at_checked(i))
-        .map_or("", |(_, tail)| tail);
-    let mut parts: Vec<&str> = tail
-        .split(['/', '?', '&', '=', '#'])
-        .filter(|p| p.len() >= MIN_SECRET_LEN)
-        .collect();
-    parts.sort_by_key(|p| std::cmp::Reverse(p.len()));
-    parts
-}
-
-/// `text` with `url`, the API key, every path segment or query value of `url` of 8 or more
-/// characters, and every other `http://` or `https://` URL replaced by placeholders. The HTTP
-/// client may quote a normalized form of the URL, so exact replacement of it is not enough.
-/// The same redactor as `varswap-admin`'s RPC errors.
 fn scrub(text: &str, url: &str, key: &str) -> String {
-    let mut text = if url.is_empty() {
-        text.to_owned()
-    } else {
-        text.replace(url, HIDDEN_URL)
-    };
-    if !key.is_empty() {
-        text = text.replace(key, "<redacted>");
-    }
-    for secret in secrets_of(url) {
-        text = text.replace(secret, "<redacted>");
-    }
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text.as_str();
-    while let Some(start) = ["http://", "https://"]
-        .iter()
-        .filter_map(|scheme| rest.find(scheme))
-        .min()
-    {
-        let Some((before, tail)) = rest.split_at_checked(start) else {
-            break;
-        };
-        out.push_str(before);
-        out.push_str(HIDDEN_URL);
-        let end = tail
-            .find(|c: char| c.is_whitespace() || matches!(c, ')' | '"' | '\'' | '>'))
-            .unwrap_or(tail.len());
-        rest = tail.split_at_checked(end).map_or("", |(_, after)| after);
-    }
-    out.push_str(rest);
-    out
+    crate::redact::scrub(text, url, key, HIDDEN_URL)
 }
 
 /// Scrubs an error message with [`scrub`], as a last line of defence: no error built in this
@@ -470,6 +417,22 @@ impl<H: HttpGet> HermesSource<H> {
             .first_at_or_after(feed, t)?
             .map(|u| u.print)
             .filter(|m| m.publish_time <= now))
+    }
+}
+
+/// The binary update of a canonical print: the first update at or after its own
+/// `publish_time`, which is that print (nothing is published between its boundary and it).
+impl<H: HttpGet> UpdateSource for HermesSource<H> {
+    fn update(&self, feed: &[u8; 32], print: &PrintMsg) -> Result<Vec<u8>, KeeperError> {
+        let u = self
+            .first_at_or_after(feed, print.publish_time)?
+            .ok_or_else(|| KeeperError::Source("Hermes has no update for the print".into()))?;
+        if u.print != *print {
+            return Err(KeeperError::Source(
+                "Hermes returned another print at that publish time".into(),
+            ));
+        }
+        Ok(u.update_data)
     }
 }
 

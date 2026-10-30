@@ -16,6 +16,20 @@ base64 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 ureq = { workspace = true }
+# The generation varswap-sdk builds instructions with (LiteSVM's, docs/PLAN.md exception), and
+# the RPC client varswap-admin uses.
+solana-instruction = { workspace = true }
+solana-keypair = { workspace = true }
+solana-signer = { workspace = true }
+solana-transaction = { workspace = true }
+solana-rpc-client = { workspace = true }
+solana-rpc-client-api = { workspace = true }
+solana-commitment-config = { workspace = true }
+
+[dev-dependencies]
+# Cross-checks of the receiver layouts against Pyth's own Borsh types (as pyth-lite).
+anchor-lang = { workspace = true }
+pyth-solana-receiver-sdk = { workspace = true }
 
 [lints]
 workspace = true
