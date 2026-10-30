@@ -248,3 +248,151 @@ fn test_tampered_message_fails_the_merkle_proof() {
     let err = post(&mut svm, &payer, &acc, &update, 0, |_| vec![]).unwrap_err();
     assert!(matches!(err, PostError::Chain(_)), "{err:?}");
 }
+
+/// A transport whose sends land on the real programs but whose confirmations fail at chosen
+/// sends (`lie`: the transaction lands, the call returns `Err`) or that drops sends (`drop_from`:
+/// the transaction never reaches the chain).
+struct Faulty {
+    inner: Svm,
+    sends: usize,
+    lie: Vec<usize>,
+    drop_from: Option<usize>,
+    closes: usize,
+}
+
+impl Faulty {
+    fn new(inner: Svm, lie: &[usize], drop_from: Option<usize>) -> Self {
+        Self {
+            inner,
+            sends: 0,
+            lie: lie.to_vec(),
+            drop_from,
+            closes: 0,
+        }
+    }
+}
+
+impl Transport for Faulty {
+    fn now(&self) -> Result<i64, PostError> {
+        self.inner.now()
+    }
+    fn account(&self, a: &Address) -> Result<Option<(Address, Vec<u8>)>, PostError> {
+        self.inner.account(a)
+    }
+    fn rent_exempt(&self, len: usize) -> Result<u64, PostError> {
+        self.inner.rent_exempt(len)
+    }
+    fn send(
+        &mut self,
+        ixs: &[Instruction],
+        payer: &Keypair,
+        extra: Option<&Keypair>,
+    ) -> Result<String, PostError> {
+        let n = self.sends;
+        self.sends += 1;
+        if ixs.len() == 1 && ixs[0].data == [48, 221, 174, 198, 231, 7, 152, 38] {
+            self.closes += 1;
+        }
+        if self.drop_from.is_some_and(|d| n >= d) {
+            return Err(PostError::Chain("dropped".into()));
+        }
+        let landed = self.inner.send(ixs, payer, extra);
+        if self.lie.contains(&n) {
+            return Err(PostError::Chain("confirmation lost".into()));
+        }
+        landed
+    }
+}
+
+/// The encoded VAA accounts a post opened, from the payer's create instructions: none may be
+/// left once `post` returns.
+fn open_vaas(svm: &Svm, payer: &Address) -> usize {
+    // Every encoded VAA is owned by Wormhole and written by `payer` (bytes 9..41).
+    svm.0
+        .get_program_accounts(&WORMHOLE_PROGRAM)
+        .iter()
+        .filter(|(_, a)| a.lamports > 0 && a.data.get(9..41) == Some(payer.as_ref()))
+        .count()
+}
+
+/// Lost confirmations at each step: the transaction landed, `post` errs, and the encoded VAA
+/// is closed anyway (re-read, found, closed), for fees only. When the last transaction (which
+/// closes everything itself) is the one that lied, no close is sent at all.
+#[test]
+fn test_lost_confirmations_never_leave_the_encoded_vaa_open() {
+    for (lie_at, closes) in [(0, 1), (1, 1), (2, 0)] {
+        let (svm, payer) = Svm::new();
+        let before = svm.lamports(&payer.pubkey());
+        let mut t = Faulty::new(svm, &[lie_at], None);
+        let acc = AccumulatorUpdate::parse(&hermes_update(T0)).unwrap();
+        let update = acc.updates[0].clone();
+        let err = post(&mut t, &payer, &acc, &update, 0, |_| vec![]).unwrap_err();
+        assert_eq!(
+            err,
+            PostError::Chain("confirmation lost".into()),
+            "lie at {lie_at}"
+        );
+        assert_eq!(t.closes, closes, "lie at {lie_at}");
+        assert_eq!(open_vaas(&t.inner, &payer.pubkey()), 0, "lie at {lie_at}");
+        let spent = before - t.inner.lamports(&payer.pubkey());
+        assert!(spent <= 5_000 * 6, "lie at {lie_at}: spent {spent}");
+    }
+}
+
+/// The close itself lands but its confirmation is lost: the re-read sees the account gone, so
+/// the close is not retried.
+#[test]
+fn test_a_landed_close_is_not_retried() {
+    let (svm, payer) = Svm::new();
+    // Send 1 (verify) is dropped, send 2 (the close) lands and lies.
+    let t = Faulty::new(svm, &[2], None);
+    let acc = AccumulatorUpdate::parse(&hermes_update(T0)).unwrap();
+    let update = acc.updates[0].clone();
+    struct DropOne(Faulty);
+    impl Transport for DropOne {
+        fn now(&self) -> Result<i64, PostError> {
+            self.0.now()
+        }
+        fn account(&self, a: &Address) -> Result<Option<(Address, Vec<u8>)>, PostError> {
+            self.0.account(a)
+        }
+        fn rent_exempt(&self, len: usize) -> Result<u64, PostError> {
+            self.0.rent_exempt(len)
+        }
+        fn send(
+            &mut self,
+            ixs: &[Instruction],
+            payer: &Keypair,
+            extra: Option<&Keypair>,
+        ) -> Result<String, PostError> {
+            if self.0.sends == 1 {
+                self.0.sends += 1;
+                return Err(PostError::Chain("verify dropped".into()));
+            }
+            self.0.send(ixs, payer, extra)
+        }
+    }
+    let mut t = DropOne(t);
+    let err = post(&mut t, &payer, &acc, &update, 0, |_| vec![]).unwrap_err();
+    assert_eq!(err, PostError::Chain("verify dropped".into()));
+    assert_eq!(t.0.closes, 1, "one close, not retried");
+    assert_eq!(open_vaas(&t.0.inner, &payer.pubkey()), 0);
+}
+
+/// Every send after the first is dropped: the encoded VAA cannot be closed, and the error says
+/// which account is left open after the bounded attempts.
+#[test]
+fn test_an_unclosable_encoded_vaa_is_reported() {
+    let (svm, payer) = Svm::new();
+    let mut t = Faulty::new(svm, &[], Some(1));
+    let acc = AccumulatorUpdate::parse(&hermes_update(T0)).unwrap();
+    let update = acc.updates[0].clone();
+    let err = post(&mut t, &payer, &acc, &update, 0, |_| vec![]).unwrap_err();
+    let PostError::Chain(msg) = err else {
+        panic!("{err:?}")
+    };
+    assert!(msg.starts_with("dropped; encoded VAA "), "{msg}");
+    assert!(msg.contains("is still open"), "{msg}");
+    assert_eq!(t.closes, 2);
+    assert_eq!(open_vaas(&t.inner, &payer.pubkey()), 1);
+}

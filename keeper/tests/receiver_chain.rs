@@ -95,14 +95,19 @@ type Sent = Rc<RefCell<Vec<(Vec<Instruction>, usize)>>>;
 struct Recorder {
     sent: Sent,
     fail_at: Option<usize>,
+    /// Accounts a landed transaction created and none closed (the encoded VAA).
+    open: Vec<Address>,
 }
 
 impl Transport for Recorder {
     fn now(&self) -> Result<i64, PostError> {
         Ok(0)
     }
-    fn account(&self, _: &Address) -> Result<Option<(Address, Vec<u8>)>, PostError> {
-        Ok(None)
+    fn account(&self, a: &Address) -> Result<Option<(Address, Vec<u8>)>, PostError> {
+        Ok(self
+            .open
+            .contains(a)
+            .then(|| (pyth_post::ix::WORMHOLE_PROGRAM, vec![])))
     }
     fn rent_exempt(&self, len: usize) -> Result<u64, PostError> {
         Ok(u64::try_from(len).unwrap() * 10)
@@ -124,6 +129,14 @@ impl Transport for Recorder {
         );
         if Some(n) == self.fail_at {
             return Err(PostError::Chain("rejected".into()));
+        }
+        for ix in ixs {
+            if ix.program_id == pyth_post::ix::SYSTEM_PROGRAM {
+                self.open.push(ix.accounts[1].pubkey);
+            }
+            if ix.data == [48, 221, 174, 198, 231, 7, 152, 38] {
+                self.open.retain(|a| *a != ix.accounts[1].pubkey);
+            }
         }
         Ok(format!("sig{n}"))
     }

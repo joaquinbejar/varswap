@@ -11,9 +11,10 @@
 //!    caller's instructions that read it, then `reclaim_rent` and `close_encoded_vaa`, so a post
 //!    leaves no account behind and returns all its rent.
 //!
-//! Every transaction fits the 1,232-byte packet limit for a VAA of 19 signatures (tested). If a
-//! step fails after the encoded VAA exists, [`post`] tries to close it before returning the
-//! error, so a failed post costs fees only.
+//! Every transaction fits the 1,232-byte packet limit for a VAA of 19 signatures (tested). When a
+//! send fails, [`post`] re-reads the encoded VAA and closes it if the chain holds it, whatever
+//! the failed send reported (its transaction may have landed with the confirmation lost), so a
+//! failed post costs fees only.
 
 use solana_address::Address;
 use solana_instruction::Instruction;
@@ -210,8 +211,9 @@ pub fn post_plan(
 /// # Errors
 ///
 /// `PostError::Update` for a VAA that cannot be planned, `PostError::Chain` from the
-/// transport. After a failure past the first transaction the encoded VAA is closed, best
-/// effort.
+/// transport. After any failed send the encoded VAA is re-read and closed if it exists (a
+/// transaction whose confirmation was lost may have landed); if it is still open after two
+/// closes, the error names its address.
 pub fn post<T: Transport>(
     transport: &mut T,
     payer: &Keypair,
@@ -250,15 +252,52 @@ pub fn post<T: Transport>(
         match transport.send(&step.instructions, payer, extra) {
             Ok(signature) => signatures.push(signature),
             Err(e) => {
-                if !signatures.is_empty() {
-                    // Best effort: return the encoded VAA's rent; the post's error is the one
-                    // that matters.
-                    let close = [ix::close_encoded_vaa(&payer.pubkey(), &vaa.pubkey())];
-                    let _ = transport.send(&close, payer, None);
-                }
-                return Err(e);
+                // The failed transaction may still have landed (a lost confirmation), so the
+                // chain, not this loop, says whether the encoded VAA exists.
+                return Err(match close_if_open(transport, payer, &vaa.pubkey()) {
+                    None => e,
+                    Some(left) => {
+                        let cause = match e {
+                            PostError::Chain(msg) => msg,
+                            other => other.to_string(),
+                        };
+                        PostError::Chain(format!(
+                            "{cause}; encoded VAA {left} is still open: close it with \
+                             ix::close_encoded_vaa"
+                        ))
+                    }
+                });
             }
         }
     }
     Ok(signatures)
+}
+
+/// How many times [`close_if_open`] sends `close_encoded_vaa` before giving up.
+const CLOSE_ATTEMPTS: usize = 2;
+
+/// Closes the encoded VAA at `address` if the chain still holds it (owned by Wormhole), and
+/// re-reads after every attempt: a close whose confirmation was lost but that landed is seen
+/// as closed, so it is never retried. Returns the address if it is still open (or cannot be
+/// read) after [`CLOSE_ATTEMPTS`] closes.
+fn close_if_open<T: Transport>(
+    transport: &mut T,
+    payer: &Keypair,
+    address: &Address,
+) -> Option<Address> {
+    let open = |t: &T| match t.account(address) {
+        Ok(Some((owner, _))) => owner == WORMHOLE_PROGRAM,
+        Ok(None) => false,
+        // Unknown: treat as open, so the caller hears about it.
+        Err(_) => true,
+    };
+    for _ in 0..CLOSE_ATTEMPTS {
+        if !open(transport) {
+            return None;
+        }
+        let close = [ix::close_encoded_vaa(&payer.pubkey(), address)];
+        // The result is not trusted either way; the next read decides.
+        let _ = transport.send(&close, payer, None);
+    }
+    open(transport).then_some(*address)
 }
