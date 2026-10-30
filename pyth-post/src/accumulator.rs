@@ -16,7 +16,7 @@
 //!
 //! Parse errors are fixed categories: the bytes come from a price source and are never quoted.
 
-use crate::{KeeperError, PrintMsg};
+use crate::PostError;
 
 /// The accumulator update magic.
 pub const PNAU_MAGIC: [u8; 4] = *b"PNAU";
@@ -29,6 +29,27 @@ const PRICE_FEED_MESSAGE: u8 = 0;
 
 /// Length of a serialized `PriceFeedMessage`.
 pub const PRICE_FEED_MESSAGE_LEN: usize = 85;
+
+/// A Pyth `PriceFeedMessage`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PriceFeedMessage {
+    /// Feed id.
+    pub feed_id: [u8; 32],
+    /// Price mantissa.
+    pub price: i64,
+    /// Confidence mantissa.
+    pub conf: u64,
+    /// Decimal exponent.
+    pub exponent: i32,
+    /// Publish time, seconds.
+    pub publish_time: i64,
+    /// Previous successful aggregate's publish time, seconds.
+    pub prev_publish_time: i64,
+    /// Exponential moving average price mantissa.
+    pub ema_price: i64,
+    /// Exponential moving average confidence mantissa.
+    pub ema_conf: u64,
+}
 
 /// One message of an accumulator update with its merkle proof, as the receiver's `post_update`
 /// takes it.
@@ -54,23 +75,21 @@ impl AccumulatorUpdate {
     ///
     /// # Errors
     ///
-    /// `KeeperError::Update` for a wrong magic or version, an unknown proof type, a truncated
+    /// `PostError::Update` for a wrong magic or version, an unknown proof type, a truncated
     /// field or trailing bytes.
-    pub fn parse(bytes: &[u8]) -> Result<Self, KeeperError> {
+    pub fn parse(bytes: &[u8]) -> Result<Self, PostError> {
         let mut r = Reader(bytes);
         if r.array::<4>()? != PNAU_MAGIC {
-            return Err(KeeperError::Update("not an accumulator update"));
+            return Err(PostError::Update("not an accumulator update"));
         }
         let (major, _minor) = (r.u8()?, r.u8()?);
         if major != 1 {
-            return Err(KeeperError::Update(
-                "unsupported accumulator update version",
-            ));
+            return Err(PostError::Update("unsupported accumulator update version"));
         }
         let trailing = usize::from(r.u8()?);
         r.take(trailing)?;
         if r.u8()? != WORMHOLE_MERKLE {
-            return Err(KeeperError::Update("unknown accumulator proof type"));
+            return Err(PostError::Update("unknown accumulator proof type"));
         }
         let vaa_len = usize::from(r.u16()?);
         let vaa = r.take(vaa_len)?.to_vec();
@@ -87,7 +106,7 @@ impl AccumulatorUpdate {
             updates.push(MerkleUpdate { message, proof });
         }
         if !r.0.is_empty() {
-            return Err(KeeperError::Update(
+            return Err(PostError::Update(
                 "trailing bytes after the accumulator update",
             ));
         }
@@ -96,11 +115,11 @@ impl AccumulatorUpdate {
 
     /// The update whose `PriceFeedMessage` is for `feed`, with the message decoded.
     #[must_use]
-    pub fn find(&self, feed: &[u8; 32]) -> Option<(&MerkleUpdate, PrintMsg)> {
+    pub fn find(&self, feed: &[u8; 32]) -> Option<(&MerkleUpdate, PriceFeedMessage)> {
         self.updates
             .iter()
             .find_map(|u| match price_feed_message(&u.message) {
-                Ok((id, print)) if &id == feed => Some((u, print)),
+                Ok(m) if &m.feed_id == feed => Some((u, m)),
                 _ => None,
             })
     }
@@ -109,71 +128,65 @@ impl AccumulatorUpdate {
     ///
     /// # Errors
     ///
-    /// `KeeperError::Update` if the VAA is not version 1 or is truncated.
-    pub fn guardian_set_index(&self) -> Result<u32, KeeperError> {
+    /// `PostError::Update` if the VAA is not version 1 or is truncated.
+    pub fn guardian_set_index(&self) -> Result<u32, PostError> {
         let mut r = Reader(&self.vaa);
         if r.u8()? != 1 {
-            return Err(KeeperError::Update("unsupported VAA version"));
+            return Err(PostError::Update("unsupported VAA version"));
         }
         Ok(u32::from_be_bytes(r.array::<4>()?))
     }
 }
 
-/// Decodes a `PriceFeedMessage`: its feed id and the print.
+/// Decodes a `PriceFeedMessage`.
 ///
 /// # Errors
 ///
-/// `KeeperError::Update` if `message` is not an 85-byte `PriceFeedMessage`.
-pub fn price_feed_message(message: &[u8]) -> Result<([u8; 32], PrintMsg), KeeperError> {
+/// `PostError::Update` if `message` is not an 85-byte `PriceFeedMessage`.
+pub fn price_feed_message(message: &[u8]) -> Result<PriceFeedMessage, PostError> {
     if message.len() != PRICE_FEED_MESSAGE_LEN {
-        return Err(KeeperError::Update("not a price feed message"));
+        return Err(PostError::Update("not a price feed message"));
     }
     let mut r = Reader(message);
     if r.u8()? != PRICE_FEED_MESSAGE {
-        return Err(KeeperError::Update("not a price feed message"));
+        return Err(PostError::Update("not a price feed message"));
     }
-    let feed = r.array::<32>()?;
-    let price = i64::from_be_bytes(r.array::<8>()?);
-    let conf = u64::from_be_bytes(r.array::<8>()?);
-    let expo = i32::from_be_bytes(r.array::<4>()?);
-    let publish_time = i64::from_be_bytes(r.array::<8>()?);
-    let prev_publish_time = i64::from_be_bytes(r.array::<8>()?);
-    Ok((
-        feed,
-        PrintMsg {
-            price,
-            conf,
-            expo,
-            publish_time,
-            prev_publish_time,
-        },
-    ))
+    Ok(PriceFeedMessage {
+        feed_id: r.array::<32>()?,
+        price: i64::from_be_bytes(r.array::<8>()?),
+        conf: u64::from_be_bytes(r.array::<8>()?),
+        exponent: i32::from_be_bytes(r.array::<4>()?),
+        publish_time: i64::from_be_bytes(r.array::<8>()?),
+        prev_publish_time: i64::from_be_bytes(r.array::<8>()?),
+        ema_price: i64::from_be_bytes(r.array::<8>()?),
+        ema_conf: u64::from_be_bytes(r.array::<8>()?),
+    })
 }
 
 /// A cursor over a byte slice; every read is bounds checked.
 struct Reader<'a>(&'a [u8]);
 
 impl<'a> Reader<'a> {
-    fn take(&mut self, n: usize) -> Result<&'a [u8], KeeperError> {
+    fn take(&mut self, n: usize) -> Result<&'a [u8], PostError> {
         let (head, rest) = self
             .0
             .split_at_checked(n)
-            .ok_or(KeeperError::Update("truncated accumulator update"))?;
+            .ok_or(PostError::Update("truncated accumulator update"))?;
         self.0 = rest;
         Ok(head)
     }
 
-    fn array<const N: usize>(&mut self) -> Result<[u8; N], KeeperError> {
+    fn array<const N: usize>(&mut self) -> Result<[u8; N], PostError> {
         self.take(N)?
             .try_into()
-            .map_err(|_| KeeperError::Update("truncated accumulator update"))
+            .map_err(|_| PostError::Update("truncated accumulator update"))
     }
 
-    fn u8(&mut self) -> Result<u8, KeeperError> {
+    fn u8(&mut self) -> Result<u8, PostError> {
         Ok(u8::from_be_bytes(self.array::<1>()?))
     }
 
-    fn u16(&mut self) -> Result<u16, KeeperError> {
+    fn u16(&mut self) -> Result<u16, PostError> {
         Ok(u16::from_be_bytes(self.array::<2>()?))
     }
 }

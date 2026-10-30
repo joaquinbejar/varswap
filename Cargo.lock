@@ -2995,6 +2995,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "pyth-post"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "base64 0.23.1",
+ "litesvm",
+ "pyth-lite",
+ "pyth-solana-receiver-sdk",
+ "serde_json",
+ "solana-account",
+ "solana-address 2.7.0",
+ "solana-clock 3.2.1",
+ "solana-commitment-config",
+ "solana-instruction 3.5.1",
+ "solana-keypair",
+ "solana-rpc-client",
+ "solana-rpc-client-api",
+ "solana-signer",
+ "solana-transaction",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "pyth-sdk"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6575,16 +6598,14 @@ dependencies = [
 name = "varswap-keeper"
 version = "0.1.0"
 dependencies = [
- "anchor-lang",
  "base64 0.23.1",
- "pyth-solana-receiver-sdk",
+ "clap",
+ "pyth-post",
  "serde",
  "serde_json",
- "solana-commitment-config",
  "solana-instruction 3.5.1",
  "solana-keypair",
  "solana-rpc-client",
- "solana-rpc-client-api",
  "solana-signer",
  "solana-transaction",
  "thiserror 2.0.21",
@@ -6605,6 +6626,8 @@ dependencies = [
  "pinocchio-system",
  "pinocchio-token",
  "pyth-lite",
+ "pyth-post",
+ "serde_json",
  "solana-account",
  "solana-address 2.7.0",
  "solana-clock 3.2.1",

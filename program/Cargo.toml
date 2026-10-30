@@ -39,6 +39,8 @@ litesvm = { workspace = true }
 litesvm-token = { workspace = true }
 varswap-sdk = { workspace = true }
 varswap-keeper = { workspace = true }
+pyth-post = { workspace = true }
+serde_json = { workspace = true }
 varswap-cli = { workspace = true }
 solana-hash = { workspace = true }
 solana-account = { workspace = true }

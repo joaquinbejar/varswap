@@ -35,6 +35,16 @@ pub enum KeeperError {
     Config(&'static str),
 }
 
+impl From<pyth_post::PostError> for KeeperError {
+    fn from(e: pyth_post::PostError) -> Self {
+        match e {
+            pyth_post::PostError::Update(what) => Self::Update(what),
+            pyth_post::PostError::Source(msg) => Self::Source(msg),
+            pyth_post::PostError::Chain(msg) => Self::Chain(msg),
+        }
+    }
+}
+
 impl From<varswap_core::CoreError> for KeeperError {
     fn from(e: varswap_core::CoreError) -> Self {
         Self::Core(e)

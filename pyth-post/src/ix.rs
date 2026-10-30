@@ -20,10 +20,16 @@
 //! On devnet and mainnet the receiver's config (`["config"]`) names Wormhole
 //! [`WORMHOLE_PROGRAM`] (read on devnet: fee 0, data source chain 26).
 
+use solana_address::Address;
 use solana_instruction::{AccountMeta, Instruction};
-use varswap_sdk::{Address, PYTH_RECEIVER, SYSTEM_PROGRAM};
 
 use crate::accumulator::MerkleUpdate;
+
+/// The Pyth receiver program (mainnet and devnet), `pyth_lite::RECEIVER_PROGRAM_ID`.
+pub const PYTH_RECEIVER: Address = Address::new_from_array(pyth_lite::RECEIVER_PROGRAM_ID);
+
+/// The system program.
+pub const SYSTEM_PROGRAM: Address = Address::from_str_const("11111111111111111111111111111111");
 
 /// The Wormhole program the Pyth receiver verifies VAAs with (its config's `wormhole` field).
 pub const WORMHOLE_PROGRAM: Address =
@@ -40,7 +46,7 @@ pub const ENCODED_VAA_HEADER: usize = 46;
 /// Space of a `PriceUpdateV2` account (pyth-solana-receiver-sdk `PriceUpdateV2::LEN`).
 pub const PRICE_UPDATE_LEN: usize = 134;
 
-/// The receiver's discriminators and seeds.
+/// Anchor instruction discriminators, `sha256("global:<name>")[..8]`.
 mod disc {
     pub const POST_UPDATE: [u8; 8] = [133, 95, 207, 175, 11, 79, 118, 44];
     pub const RECLAIM_RENT: [u8; 8] = [218, 200, 19, 197, 227, 89, 192, 22];

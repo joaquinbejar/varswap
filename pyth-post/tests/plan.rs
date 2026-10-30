@@ -1,7 +1,6 @@
-//! The receiver path without a cluster: the accumulator update parser against an independent
-//! encoder, the instruction layouts against pyth-solana-receiver-sdk's Borsh types, the post
-//! plan (every transaction under the packet limit, the VAA written exactly once, in order),
-//! and [`ReceiverChain`] over a recording transport.
+//! The posting path without a cluster: the accumulator update parser against an independent
+//! encoder, the instruction layouts against pyth-solana-receiver-sdk's Borsh types, and the post
+//! plan (every transaction under the packet limit, the VAA written exactly once, in order).
 
 #![allow(
     clippy::unwrap_used,
@@ -12,23 +11,14 @@
     clippy::disallowed_macros
 )]
 
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use anchor_lang::prelude::{AnchorDeserialize, AnchorSerialize};
-use solana_instruction::Instruction;
-use solana_keypair::Keypair;
-use solana_signer::Signer;
+use pyth_post::accumulator::{price_feed_message, AccumulatorUpdate, MerkleUpdate};
+use pyth_post::ix::{self as receiver, PYTH_RECEIVER, SYSTEM_PROGRAM, WORMHOLE_PROGRAM};
+use pyth_post::{post_plan, Extra, PostAccounts, PostError, PriceFeedMessage, FIRST_CHUNK};
+use solana_address::Address;
+use solana_instruction::{AccountMeta, Instruction};
 use solana_transaction::Transaction;
-use varswap_keeper::accumulator::{price_feed_message, AccumulatorUpdate, MerkleUpdate};
-use varswap_keeper::receiver::{self, WORMHOLE_PROGRAM};
-use varswap_keeper::{
-    post_plan, Chain, Extra, KeeperError, PostAccounts, PrintMsg, ReceiverChain, Transport,
-    UpdateSource, FIRST_CHUNK,
-};
-use varswap_sdk::{Address, PYTH_RECEIVER, SYSTEM_PROGRAM};
 
-/// Solana's packet limit for a serialized transaction.
 const PACKET_DATA_SIZE: usize = 1232;
 
 const SOL: [u8; 32] = [
@@ -36,27 +26,30 @@ const SOL: [u8; 32] = [
     0x2a, 0x0d, 0x2f, 0x8e, 0xd0, 0xc6, 0xc7, 0xbc, 0x0f, 0x4c, 0xfa, 0xc8, 0xc2, 0x80, 0xb5, 0x6d,
 ];
 
-fn print(publish_time: i64) -> PrintMsg {
-    PrintMsg {
+fn print(publish_time: i64) -> PriceFeedMessage {
+    PriceFeedMessage {
+        feed_id: SOL,
         price: 15_012_345_678,
         conf: 7_654_321,
-        expo: -8,
+        exponent: -8,
         publish_time,
         prev_publish_time: publish_time - 1,
+        ema_price: 15_000_000_000,
+        ema_conf: 7_000_000,
     }
 }
 
 /// A `PriceFeedMessage` written field by field from the pythnet-sdk definition.
-fn message(feed: &[u8; 32], p: &PrintMsg) -> Vec<u8> {
+fn message(feed: &[u8; 32], p: &PriceFeedMessage) -> Vec<u8> {
     let mut m = vec![0];
     m.extend_from_slice(feed);
     m.extend_from_slice(&p.price.to_be_bytes());
     m.extend_from_slice(&p.conf.to_be_bytes());
-    m.extend_from_slice(&p.expo.to_be_bytes());
+    m.extend_from_slice(&p.exponent.to_be_bytes());
     m.extend_from_slice(&p.publish_time.to_be_bytes());
     m.extend_from_slice(&p.prev_publish_time.to_be_bytes());
-    m.extend_from_slice(&p.price.to_be_bytes()); // ema_price
-    m.extend_from_slice(&p.conf.to_be_bytes()); // ema_conf
+    m.extend_from_slice(&p.ema_price.to_be_bytes());
+    m.extend_from_slice(&p.ema_conf.to_be_bytes());
     m
 }
 
@@ -109,7 +102,16 @@ fn test_parse_finds_the_feed_message_and_its_proof() {
     let bytes = pnau(
         &v,
         &[
-            (message(&other, &print(1)), proof(3)),
+            (
+                message(
+                    &other,
+                    &PriceFeedMessage {
+                        feed_id: other,
+                        ..print(1)
+                    },
+                ),
+                proof(3),
+            ),
             (message(&SOL, &p), proof(11)),
         ],
     );
@@ -120,7 +122,7 @@ fn test_parse_finds_the_feed_message_and_its_proof() {
     let (u, decoded) = acc.find(&SOL).unwrap();
     assert_eq!(decoded, p);
     assert_eq!(u.proof, proof(11));
-    assert_eq!(price_feed_message(&u.message).unwrap(), (SOL, p));
+    assert_eq!(price_feed_message(&u.message).unwrap(), p);
     assert!(acc.find(&[9; 32]).is_none());
 }
 
@@ -131,7 +133,7 @@ fn test_parse_rejects_every_truncation_and_bad_framing() {
         assert!(
             matches!(
                 AccumulatorUpdate::parse(&bytes[..n]),
-                Err(KeeperError::Update(_))
+                Err(PostError::Update(_))
             ),
             "prefix {n}"
         );
@@ -168,7 +170,7 @@ fn test_real_header_matches_the_format() {
     assert_eq!(952, 6 + 66 * 13 + 88);
     assert_eq!(
         AccumulatorUpdate::parse(&head),
-        Err(KeeperError::Update("truncated accumulator update"))
+        Err(PostError::Update("truncated accumulator update"))
     );
 }
 
@@ -295,17 +297,23 @@ fn test_post_plan_fits_the_packet_limit_and_writes_the_vaa_once() {
             vaa: v.clone(),
             updates: vec![u.clone()],
         };
-        let (program, window, payer, ev, pu) = (
-            Address::new_unique(),
+        let (program, payer, ev, pu) = (
             Address::new_unique(),
             Address::new_unique(),
             Address::new_unique(),
             Address::new_unique(),
         );
+        // The caller's instruction that reads the price update (varswap `sample`).
+        let consume = Instruction {
+            program_id: program,
+            accounts: vec![
+                AccountMeta::new(Address::new_unique(), false),
+                AccountMeta::new_readonly(pu, false),
+            ],
+            data: vec![3],
+        };
         let steps = post_plan(
             &PostAccounts {
-                program_id: &program,
-                window: &window,
                 payer: &payer,
                 encoded_vaa: &ev,
                 price_update: &pu,
@@ -314,6 +322,7 @@ fn test_post_plan_fits_the_packet_limit_and_writes_the_vaa_once() {
             },
             &acc,
             &u,
+            vec![consume],
         )
         .unwrap();
         // Create + init + first write, then writes, the verify, then post + sample + closes.
@@ -355,127 +364,11 @@ fn test_post_plan_fits_the_packet_limit_and_writes_the_vaa_once() {
     }
 }
 
-/// A transport that records every transaction and fails the `fail_at`-th send.
-#[derive(Default)]
-struct Recorder {
-    sent: Rc<RefCell<Vec<(Vec<Instruction>, usize)>>>,
-    fail_at: Option<usize>,
-}
-
-impl Transport for Recorder {
-    fn now(&self) -> Result<i64, KeeperError> {
-        Ok(0)
-    }
-    fn account(&self, _: &Address) -> Result<Option<(Address, Vec<u8>)>, KeeperError> {
-        Ok(None)
-    }
-    fn rent_exempt(&self, len: usize) -> Result<u64, KeeperError> {
-        Ok(u64::try_from(len).unwrap() * 10)
-    }
-    fn send(
-        &mut self,
-        ixs: &[Instruction],
-        payer: &Keypair,
-        extra: Option<&Keypair>,
-    ) -> Result<String, KeeperError> {
-        let mut sent = self.sent.borrow_mut();
-        let n = sent.len();
-        sent.push((ixs.to_vec(), usize::from(extra.is_some())));
-        let tx = Transaction::new_with_payer(ixs, Some(&payer.pubkey()));
-        assert_eq!(
-            usize::from(tx.message.header.num_required_signatures),
-            1 + usize::from(extra.is_some()),
-            "signers of send {n}"
-        );
-        if Some(n) == self.fail_at {
-            return Err(KeeperError::Chain("rejected".into()));
-        }
-        Ok(format!("sig{n}"))
-    }
-}
-
-struct Updates(Vec<u8>);
-
-impl UpdateSource for Updates {
-    fn update(&self, _: &[u8; 32], _: &PrintMsg) -> Result<Vec<u8>, KeeperError> {
-        Ok(self.0.clone())
-    }
-}
-
-#[test]
-fn test_receiver_chain_posts_samples_and_closes() {
-    let p = print(1_793_404_800);
-    let bytes = pnau(&vaa(4, 13), &[(message(&SOL, &p), proof(12))]);
-    let rec = Recorder::default();
-    let sent = Rc::clone(&rec.sent);
-    let program = Address::new_unique();
-    let mut chain = ReceiverChain::new(rec, Updates(bytes), Keypair::new(), program);
-    let window = Address::new_unique();
-    chain.post_sample(&window, &SOL, &p).unwrap();
-    let sent = sent.borrow();
-    assert_eq!(
-        sent.len(),
-        3,
-        "create+init+write, write+verify, post+sample+closes"
-    );
-    assert_eq!(chain.signatures(), ["sig0", "sig1", "sig2"]);
-    // The encoded VAA's rent is the transport's for 46 + 952 bytes.
-    assert_eq!(&sent[0].0[0].data[4..12], &9_980_u64.to_le_bytes());
-    let sample = &sent[2].0[1];
-    assert_eq!(sample.program_id, program);
-    assert_eq!(sample.accounts[0].pubkey, window);
-    assert_eq!(sample.accounts[1].pubkey, sent[2].0[0].accounts[4].pubkey);
-}
-
-#[test]
-fn test_receiver_chain_refuses_a_mismatched_update_before_sending() {
-    let p = print(1_793_404_800);
-    let mut other = p;
-    other.price += 1;
-    for bytes in [
-        pnau(&vaa(4, 13), &[(message(&SOL, &other), proof(1))]),
-        pnau(&vaa(4, 13), &[(message(&[3; 32], &p), proof(1))]),
-        b"PNAU".to_vec(),
-    ] {
-        let rec = Recorder::default();
-        let sent = Rc::clone(&rec.sent);
-        let mut chain =
-            ReceiverChain::new(rec, Updates(bytes), Keypair::new(), Address::new_unique());
-        let err = chain
-            .post_sample(&Address::new_unique(), &SOL, &p)
-            .unwrap_err();
-        assert!(matches!(err, KeeperError::Update(_)), "{err:?}");
-        assert!(sent.borrow().is_empty());
-    }
-}
-
-#[test]
-fn test_failed_post_closes_the_encoded_vaa() {
-    let p = print(1_793_404_800);
-    let bytes = pnau(&vaa(4, 13), &[(message(&SOL, &p), proof(12))]);
-    let rec = Recorder {
-        fail_at: Some(1),
-        ..Recorder::default()
-    };
-    let sent = Rc::clone(&rec.sent);
-    let mut chain = ReceiverChain::new(rec, Updates(bytes), Keypair::new(), Address::new_unique());
-    let err = chain
-        .post_sample(&Address::new_unique(), &SOL, &p)
-        .unwrap_err();
-    assert_eq!(err, KeeperError::Chain("rejected".into()));
-    let sent = sent.borrow();
-    assert_eq!(sent.len(), 3, "create, the failed verify, then the close");
-    let close = &sent[2].0;
-    assert_eq!(close.len(), 1);
-    assert_eq!(close[0].data, [48, 221, 174, 198, 231, 7, 152, 38]);
-    assert_eq!(close[0].accounts[1].pubkey, sent[0].0[0].accounts[1].pubkey);
-}
-
 #[test]
 fn test_rpc_transport_hides_the_url() {
     use solana_rpc_client::rpc_client::RpcClient;
     let url = "https://rpc.example/v1/TOKENPATH123/?api-key=SECRETKEY99";
-    let t = varswap_keeper::RpcTransport::with_client(RpcClient::new_mock(url.to_string()));
+    let t = pyth_post::RpcTransport::with_client(RpcClient::new_mock(url.to_string()));
     let shown = format!("{t:?}");
     assert!(!shown.contains("SECRETKEY99") && !shown.contains("rpc.example"));
 }

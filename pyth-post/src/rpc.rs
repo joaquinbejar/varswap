@@ -1,10 +1,9 @@
-//! [`Transport`] over `solana-rpc-client` (the cross-repo choice, as `varswap-admin`), at
-//! `confirmed` commitment.
+//! [`Transport`] over `solana-rpc-client`, at `confirmed` commitment.
 //!
-//! The URL is hidden from `Debug` and scrubbed from every error, with the preflight logs, by the
-//! same redactor as the Hermes errors: RPC providers put API keys in the URL and the HTTP
-//! client quotes it.
+//! The URL is hidden from `Debug` and scrubbed from every error, with the preflight logs
+//! ([`crate::redact`]): RPC providers put API keys in the URL and the HTTP client quotes it.
 
+use solana_address::Address;
 use solana_commitment_config::CommitmentConfig;
 use solana_instruction::Instruction;
 use solana_keypair::Keypair;
@@ -13,10 +12,8 @@ use solana_rpc_client_api::client_error::{Error as ClientError, ErrorKind};
 use solana_rpc_client_api::request::{RpcError, RpcResponseErrorData};
 use solana_signer::Signer;
 use solana_transaction::Transaction;
-use varswap_sdk::Address;
 
-use crate::receiver_chain::Transport;
-use crate::KeeperError;
+use crate::{PostError, Transport};
 
 /// What replaces a URL in an error.
 const HIDDEN: &str = "<rpc url>";
@@ -52,7 +49,7 @@ impl RpcTransport {
         Self { client, url }
     }
 
-    fn error(&self, e: &ClientError) -> KeeperError {
+    fn error(&self, e: &ClientError) -> PostError {
         client_error(e, &self.url)
     }
 }
@@ -64,29 +61,29 @@ impl core::fmt::Debug for RpcTransport {
 }
 
 impl Transport for RpcTransport {
-    fn now(&self) -> Result<i64, KeeperError> {
+    fn now(&self) -> Result<i64, PostError> {
         let clock = self
             .client
             .get_account_with_commitment(&CLOCK, CommitmentConfig::confirmed())
             .map_err(|e| self.error(&e))?
             .value
-            .ok_or_else(|| KeeperError::Chain("the Clock sysvar is missing".into()))?;
+            .ok_or_else(|| PostError::Chain("the Clock sysvar is missing".into()))?;
         clock
             .data
             .get(CLOCK_UNIX_TIMESTAMP..)
             .and_then(|d| d.first_chunk::<8>())
             .map(|b| i64::from_le_bytes(*b))
-            .ok_or_else(|| KeeperError::Chain("the Clock sysvar is malformed".into()))
+            .ok_or_else(|| PostError::Chain("the Clock sysvar is malformed".into()))
     }
 
-    fn account(&self, account: &Address) -> Result<Option<(Address, Vec<u8>)>, KeeperError> {
+    fn account(&self, account: &Address) -> Result<Option<(Address, Vec<u8>)>, PostError> {
         self.client
             .get_account_with_commitment(account, CommitmentConfig::confirmed())
             .map(|r| r.value.map(|a| (a.owner, a.data)))
             .map_err(|e| self.error(&e))
     }
 
-    fn rent_exempt(&self, len: usize) -> Result<u64, KeeperError> {
+    fn rent_exempt(&self, len: usize) -> Result<u64, PostError> {
         self.client
             .get_minimum_balance_for_rent_exemption(len)
             .map_err(|e| self.error(&e))
@@ -97,7 +94,7 @@ impl Transport for RpcTransport {
         instructions: &[Instruction],
         payer: &Keypair,
         extra: Option<&Keypair>,
-    ) -> Result<String, KeeperError> {
+    ) -> Result<String, PostError> {
         let blockhash = self
             .client
             .get_latest_blockhash()
@@ -107,12 +104,12 @@ impl Transport for RpcTransport {
             Some(k) => tx.try_sign(&[payer, k], blockhash),
             None => tx.try_sign(&[payer], blockhash),
         };
-        signed.map_err(|_| KeeperError::Chain("the transaction needs another signer".into()))?;
+        signed.map_err(|_| PostError::Chain("the transaction needs another signer".into()))?;
         let signature = tx
             .signatures
             .first()
             .map(ToString::to_string)
-            .ok_or_else(|| KeeperError::Chain("no signature".into()))?;
+            .ok_or_else(|| PostError::Chain("no signature".into()))?;
         self.client
             .send_and_confirm_transaction(&tx)
             .map_err(|e| self.error(&e))?;
@@ -120,11 +117,11 @@ impl Transport for RpcTransport {
     }
 }
 
-/// An RPC client error as a [`KeeperError::Chain`]: its message with the program logs of a
+/// An RPC client error as a [`PostError::Chain`]: its message with the program logs of a
 /// failed preflight simulation, the whole text redacted. `solana-rpc-client` 4.3 already
 /// renders the logs in the message; a line is appended only if the message lacks it.
 #[must_use]
-pub fn client_error(e: &ClientError, url: &str) -> KeeperError {
+pub fn client_error(e: &ClientError, url: &str) -> PostError {
     let mut message = e.to_string().trim_end().to_owned();
     if let ErrorKind::RpcError(RpcError::RpcResponseError {
         data: RpcResponseErrorData::SendTransactionPreflightFailure(simulation),
@@ -138,5 +135,5 @@ pub fn client_error(e: &ClientError, url: &str) -> KeeperError {
             }
         }
     }
-    KeeperError::Chain(crate::redact::scrub(&message, url, "", HIDDEN))
+    PostError::Chain(crate::redact::scrub(&message, url, "", HIDDEN))
 }

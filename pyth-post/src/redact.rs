@@ -1,5 +1,5 @@
-//! Redaction of URLs and secrets from error text and `Debug` output: Hermes and RPC providers
-//! put API keys in the URL path or query, and HTTP clients quote the request URL.
+//! Redaction of URLs and secrets from error text: Hermes and RPC providers put API keys in the
+//! URL path or query, and HTTP clients quote the request URL.
 
 /// Shortest URL path segment or query value treated as a possible key.
 const MIN_SECRET_LEN: usize = 8;
@@ -24,8 +24,9 @@ fn secrets_of(url: &str) -> Vec<&str> {
 /// `text` with `url`, the API key, every path segment or query value of `url` of 8 or more
 /// characters, and every other `http://` or `https://` URL replaced by placeholders. The HTTP
 /// client may quote a normalized form of the URL, so exact replacement of it is not enough.
-/// The same redactor as `varswap-admin`'s RPC errors; `hidden` replaces each URL.
-pub(crate) fn scrub(text: &str, url: &str, key: &str, hidden: &str) -> String {
+/// `hidden` replaces each URL; `key` may be empty.
+#[must_use]
+pub fn scrub(text: &str, url: &str, key: &str, hidden: &str) -> String {
     let mut text = if url.is_empty() {
         text.to_owned()
     } else {

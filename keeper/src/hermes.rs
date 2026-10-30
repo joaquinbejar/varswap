@@ -22,7 +22,7 @@ use std::fmt;
 use base64::Engine;
 use serde::Deserialize;
 
-use crate::{KeeperError, PriceSource, PrintMsg, UpdateSource};
+use crate::{KeeperError, PriceSource, PrintMsg};
 
 /// Environment variable that holds the Hermes API key.
 pub const HERMES_API_KEY_VAR: &str = "VARSWAP_HERMES_API_KEY";
@@ -311,7 +311,7 @@ pub fn parse_update(body: &str, feed: &[u8; 32]) -> Result<HermesUpdate, KeeperE
 const HIDDEN_URL: &str = "<hermes url>";
 
 fn scrub(text: &str, url: &str, key: &str) -> String {
-    crate::redact::scrub(text, url, key, HIDDEN_URL)
+    pyth_post::redact::scrub(text, url, key, HIDDEN_URL)
 }
 
 /// Scrubs an error message with [`scrub`], as a last line of defence: no error built in this
@@ -420,18 +420,17 @@ impl<H: HttpGet> HermesSource<H> {
     }
 }
 
-/// The binary update of a canonical print: the first update at or after its own
-/// `publish_time`, which is that print (nothing is published between its boundary and it).
-impl<H: HttpGet> UpdateSource for HermesSource<H> {
-    fn update(&self, feed: &[u8; 32], print: &PrintMsg) -> Result<Vec<u8>, KeeperError> {
+/// The binary update of a print published at `publish_time`: the first update at or after it.
+/// For a canonical print that is the print itself (nothing is published between its boundary
+/// and it); `ReceiverChain` checks the message before posting.
+impl<H: HttpGet> pyth_post::UpdateSource for HermesSource<H> {
+    fn update(&self, feed: &[u8; 32], publish_time: i64) -> Result<Vec<u8>, pyth_post::PostError> {
         let u = self
-            .first_at_or_after(feed, print.publish_time)?
-            .ok_or_else(|| KeeperError::Source("Hermes has no update for the print".into()))?;
-        if u.print != *print {
-            return Err(KeeperError::Source(
-                "Hermes returned another print at that publish time".into(),
-            ));
-        }
+            .first_at_or_after(feed, publish_time)
+            .map_err(|e| pyth_post::PostError::Source(e.to_string()))?
+            .ok_or_else(|| {
+                pyth_post::PostError::Source("Hermes has no update at that time".into())
+            })?;
         Ok(u.update_data)
     }
 }
