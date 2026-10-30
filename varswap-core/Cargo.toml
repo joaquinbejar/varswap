@@ -8,6 +8,9 @@ license.workspace = true
 repository.workspace = true
 keywords = ["variance", "pyth", "solana", "no-std"]
 categories = ["no-std", "finance"]
+readme = "README.md"
+# Decimal fixtures and their generator stay in the repository.
+exclude = ["tests/", "tools/"]
 
 [features]
 # The exact integer stand-in kernel (not a log return). Tests and the LiteSVM bench only:

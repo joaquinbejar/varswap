@@ -8,6 +8,9 @@ license.workspace = true
 repository.workspace = true
 keywords = ["pyth", "oracle", "solana", "no-std"]
 categories = ["no-std", "cryptography::cryptocurrencies"]
+readme = "README.md"
+# Mainnet account dumps and the script that fetched them stay in the repository.
+exclude = ["fixtures/", "tests/"]
 
 [dependencies]
 

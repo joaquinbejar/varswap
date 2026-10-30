@@ -674,8 +674,9 @@ to build test accounts and to cross-check the decoder.
   16-aligned on x86_64 hosts while account data is only guaranteed 8-aligned, so a
   `bytemuck::from_bytes` over a struct holding `Fixed` may fail. Fallback: store `Fixed` as
   `[u8; 16]` in accounts and convert at load.
-- optfix is consumed as a git dependency pinned by `rev` until it is on crates.io (a path
-  dependency would break CI).
+- optfix was consumed as a git dependency pinned by `rev` until it was on crates.io; since
+  2026-10-30 it is `optfix = "0.1"` (0.1.0 gives the same `ln` results as rev `622b343`, every
+  exact-value test passes, and CU fell slightly: `sample` with both neighbours 7,112 to 7,084).
 - Checked 2026-10-29 (milestone 3a): Hermes `GET /v2/updates/price/{t}` and
   `/v2/updates/price/latest`, and Benchmarks `GET /v1/updates/price/{t}`, return HTTP 401
   `unauthorized` without an API key; `GET /v2/price_feeds` still answers without one. Keepers
@@ -706,7 +707,7 @@ whenever it is added or touched.
 | `pinocchio-system` | 0.7.0 (0.6.1 used) | `0.6`, decided exception below |
 | `pinocchio-token` | 0.7.0 | `0.7`, see conflict below |
 | `rust_decimal` (SDK conversions) | 1.43.0 | `1.43` |
-| `optfix` | unpublished | git, pinned `rev = 622b343b7416d5fa1b31ac8d2a55b3528ce39584` (optfix#10: `wide::mul_shr`) |
+| `optfix` | 0.1.0 (2026-10-30) | `0.1` (was git rev `622b343`, optfix#10: `wide::mul_shr`) |
 | `litesvm-token` (dev) | 0.18.1 | `0.18` |
 | `pyth-solana-receiver-sdk` (dev only, fixtures and cross-check) | 2.0.0 | `2.0` |
 | `anchor-lang` (dev only, pyth-lite cross-check; approved 2026-10-29) | 1.2.2 | `1.2` |

@@ -12,15 +12,17 @@
 2. [Status](#status)
 3. [Features](#features)
 4. [Workspace Crates](#workspace-crates)
-5. [Accounts](#accounts)
-6. [Instructions](#instructions)
-7. [Variance Math and Rounding](#variance-math-and-rounding)
-8. [Oracle Checks](#oracle-checks)
-9. [Manipulation and Outage Study](#manipulation-and-outage-study)
-10. [Setup Instructions](#setup-instructions)
-11. [Usage Examples](#usage-examples)
-12. [Testing and Benchmarks](#testing-and-benchmarks)
-13. [Contribution and Contact](#contribution-and-contact)
+5. [Install](#install)
+6. [On Devnet](#on-devnet)
+7. [Accounts](#accounts)
+8. [Instructions](#instructions)
+9. [Variance Math and Rounding](#variance-math-and-rounding)
+10. [Oracle Checks](#oracle-checks)
+11. [Manipulation and Outage Study](#manipulation-and-outage-study)
+12. [Setup Instructions](#setup-instructions)
+13. [Usage Examples](#usage-examples)
+14. [Testing and Benchmarks](#testing-and-benchmarks)
+15. [Contribution and Contact](#contribution-and-contact)
 
 ### Introduction
 
@@ -85,6 +87,64 @@ crates.io.
 | `cli` (`varswap-cli`) | the `varswap-admin` binary: thin admin CLI over the SDK |
 | `study` (`varswap-study`) | off chain simulation study (`make study` writes [`docs/study.md`](docs/study.md)) |
 | `lint-control` | failing controls for the lint set and the SBF stack check |
+
+### Install
+
+`pyth-lite`, `varswap-core` and `varswap-sdk` are on crates.io (0.1.0); the program, the
+keeper and the CLI are built from this repository.
+
+```toml
+[dependencies]
+pyth-lite = "0.1"      # no_std PriceUpdateV2 reader, no Anchor
+varswap-core = "0.1"   # window grid, canonical prints, kernel, swap terms, account layouts
+varswap-sdk = "0.1"    # instruction builders, PDAs and decoders for clients
+```
+
+`pyth-lite` and `varswap-core` are `no_std` and build for SBF. `varswap-sdk` builds
+instructions with the `solana-address` 2.x and `solana-instruction` 3.x generation (the one
+LiteSVM 0.18 uses).
+
+### On Devnet
+
+The program runs on devnet only; nothing is on mainnet. Full record, with every signature:
+[`docs/devnet.md`](docs/devnet.md).
+
+| What | Address |
+| --- | --- |
+| Program | [`BWqsaXvASrbErApP1ovz7vSvBLYqXGaMaZANEYf1xrB9`](https://explorer.solana.com/address/BWqsaXvASrbErApP1ovz7vSvBLYqXGaMaZANEYf1xrB9?cluster=devnet) |
+| `Config` | [`H2H2gn4mwkWoJ8ftQf97hpKJuunRzhuVPn84ZzW58uLB`](https://explorer.solana.com/address/H2H2gn4mwkWoJ8ftQf97hpKJuunRzhuVPn84ZzW58uLB?cluster=devnet) |
+| SOL/USD `FeedConfig` | [`85wokHgbLDTDqNeWhgBgD3hu2ZBM3r8qc1UnCUFixmEF`](https://explorer.solana.com/address/85wokHgbLDTDqNeWhgBgD3hu2ZBM3r8qc1UnCUFixmEF?cluster=devnet) |
+| Window (SOL/USD, 2026-10-31, hourly) | [`7s5KJ79XRwBzeL8t42ut6RkQ1yLhrRMg8z5dHQtNXTeA`](https://explorer.solana.com/address/7s5KJ79XRwBzeL8t42ut6RkQ1yLhrRMg8z5dHQtNXTeA?cluster=devnet) |
+
+Example transactions:
+[`init_config`](https://explorer.solana.com/tx/5HV3i3dFWJMKPZBMJxViWpsjpB6GkdzQUp8Vg1SH4duRyKL1JsjsgHGgCa5hA7dFugvpEuMhRFcrTPvGsXLeQaEf?cluster=devnet),
+[`set_feed_config`](https://explorer.solana.com/tx/5c2ssG2VB53XiugwEKNXbQVWRtTbyNKwZBAb979yrZXE6DMijLtHkSpcJxzLtDdwLUBXnvDi2PiiAG9t95SWaCDm?cluster=devnet),
+[`create_window`](https://explorer.solana.com/tx/4sudzjBz4ZU6Bw5QNq9pVJPhVUoyoaN3mg2gPMW36GKL5PymMeS5MWeSbs6UJiFR8tKBF9Wi44MhEr6UwtRJMdY9?cluster=devnet).
+`sample` and `finalize` follow once the keeper runs on devnet.
+
+To reproduce against `api.devnet.solana.com` (a funded keypair; the program id keypair is
+yours):
+
+```shell
+export SOLANA_URL=https://api.devnet.solana.com
+export VARSWAP_KEYPAIR=~/.config/solana/id.json         # upgrade authority, then admin
+make program
+solana program deploy --url devnet --upgrade-authority "$VARSWAP_KEYPAIR" \
+  --program-id <program-id-keypair> target/deploy/varswap_program.so
+export VARSWAP_PROGRAM_ID=<program id>
+cargo run -p varswap-cli --release -- init-config --collateral-mint 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
+cargo run -p varswap-cli --release -- set-feed-config \
+  --feed ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d \
+  --min-interval 60 --tolerance 21600 --backfill-deadline 86400 --max-buckets 1105 \
+  --max-conf 1000 --exponent -8
+cargo run -p varswap-cli --release -- create-window \
+  --feed ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d \
+  --start <future b_0> --end <b_N> --interval 3600
+cargo run -p varswap-cli --release -- show-window <window address>
+```
+
+The keeper reads the Hermes API key from `VARSWAP_HERMES_API_KEY` only; it is never passed
+on the command line, written to a file or printed.
 
 ### Accounts
 
@@ -222,7 +282,7 @@ make program    # target/deploy/varswap_program.so (the LiteSVM tests load it)
 make test       # every test
 ```
 
-optfix is consumed as a git dependency pinned by `rev` until it is on crates.io.
+optfix comes from crates.io (`optfix = "0.1"`).
 
 ### Usage Examples
 
@@ -317,13 +377,13 @@ Compute units measured in LiteSVM 0.18 (cargo-build-sbf 4.5.0, platform tools v1
 | `create_window (B = 721)` | 6879 | 6879 | 30 days hourly, 6,729 B |
 | `create_window (B = 1,105)` | 7167 | 7167 | MAX_BUCKETS, 10,233 B |
 | `sample (no neighbour)` | 3714 | 3060 | first bucket, no kernel call |
-| `sample (both neighbours)` | 7112 | 6380 | 2 kernel calls |
-| `sample (outage run of 6)` | 7762 | 7030 | one print fills 6 buckets, 2 kernel calls |
-| `finalize (complete)` | 1421 | 1421 | all filled: annualize |
+| `sample (both neighbours)` | 7084 | 6352 | 2 kernel calls |
+| `sample (outage run of 6)` | 7734 | 7002 | one print fills 6 buckets, 2 kernel calls |
+| `finalize (complete)` | 1407 | 1407 | all filled: annualize |
 | `finalize (degraded)` | 1307 | 1307 | empty after the deadline |
-| `open_swap` | 16862 | 16862 | create swap and vault, two transfer_checked |
-| `settle_swap (finalized)` | 3677 | 3677 | V_cons, payouts |
-| `settle_swap (degraded)` | 2510 | 2510 | unwind |
+| `open_swap` | 16836 | 16836 | create swap and vault, two transfer_checked |
+| `settle_swap (finalized)` | 3638 | 3638 | V_cons, payouts |
+| `settle_swap (degraded)` | 2484 | 2484 | unwind |
 | `claim_long` | 3059 | 3059 | transfer_checked signed by the swap PDA |
 | `claim_short` | 3061 | 3061 | transfer_checked signed by the swap PDA |
 | `close_swap` | 3093 | 3093 | close vault and swap |

@@ -6,7 +6,9 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-publish = false
+keywords = ["solana", "variance", "pyth", "sdk"]
+categories = ["cryptography::cryptocurrencies", "finance"]
+readme = "README.md"
 
 [dependencies]
 bytemuck = { workspace = true }
