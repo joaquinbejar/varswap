@@ -129,6 +129,32 @@ impl Svm<'_> {
 }
 
 impl Transport for Svm<'_> {
+    fn block_height(&self) -> Result<u64, PostError> {
+        Ok(self.0.svm.get_sysvar::<solana_clock::Clock>().slot)
+    }
+
+    fn last_send_expiry(&self) -> Option<u64> {
+        None
+    }
+
+    fn program_accounts(
+        &self,
+        program: &Address,
+        offset: usize,
+        bytes: &[u8],
+    ) -> Result<Vec<Address>, PostError> {
+        Ok(self
+            .0
+            .svm
+            .get_program_accounts(program)
+            .into_iter()
+            .filter(|(_, a)| {
+                a.lamports > 0 && a.data.get(offset..).is_some_and(|d| d.starts_with(bytes))
+            })
+            .map(|(k, _)| k)
+            .collect())
+    }
+
     fn now(&self) -> Result<i64, PostError> {
         Ok(self
             .0

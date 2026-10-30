@@ -98,7 +98,9 @@ struct Recorder {
     /// Every send from this index on fails (without landing), while set.
     fail_from: Rc<std::cell::Cell<Option<usize>>>,
     /// Accounts a landed transaction created and none closed (the encoded VAA).
-    open: Vec<Address>,
+    open: Rc<RefCell<Vec<Address>>>,
+    /// The block height; each send's transaction can land for 150 more.
+    height: Rc<std::cell::Cell<u64>>,
 }
 
 impl Transport for Recorder {
@@ -108,8 +110,18 @@ impl Transport for Recorder {
     fn account(&self, a: &Address) -> Result<Option<(Address, Vec<u8>)>, PostError> {
         Ok(self
             .open
+            .borrow()
             .contains(a)
             .then(|| (pyth_post::ix::WORMHOLE_PROGRAM, vec![])))
+    }
+    fn block_height(&self) -> Result<u64, PostError> {
+        Ok(self.height.get())
+    }
+    fn last_send_expiry(&self) -> Option<u64> {
+        Some(self.height.get() + 150)
+    }
+    fn program_accounts(&self, _: &Address, _: usize, _: &[u8]) -> Result<Vec<Address>, PostError> {
+        Ok(self.open.borrow().clone())
     }
     fn rent_exempt(&self, len: usize) -> Result<u64, PostError> {
         Ok(u64::try_from(len).unwrap() * 10)
@@ -134,10 +146,12 @@ impl Transport for Recorder {
         }
         for ix in ixs {
             if ix.program_id == pyth_post::ix::SYSTEM_PROGRAM {
-                self.open.push(ix.accounts[1].pubkey);
+                self.open.borrow_mut().push(ix.accounts[1].pubkey);
             }
             if ix.data == [48, 221, 174, 198, 231, 7, 152, 38] {
-                self.open.retain(|a| *a != ix.accounts[1].pubkey);
+                self.open
+                    .borrow_mut()
+                    .retain(|a| *a != ix.accounts[1].pubkey);
             }
         }
         Ok(format!("sig{n}"))
@@ -256,7 +270,13 @@ fn test_orphaned_encoded_vaas_are_closed_before_the_next_post() {
     let KeeperError::Orphaned { encoded_vaa, .. } = err else {
         panic!("{err:?}")
     };
-    assert_eq!(chain.orphans(), [encoded_vaa]);
+    assert_eq!(
+        chain.orphans(),
+        [varswap_keeper::Orphan {
+            encoded_vaa,
+            valid_until: None
+        }]
+    );
     assert_eq!(sent.borrow()[0].0[0].accounts[1].pubkey, encoded_vaa);
 
     fail_from.set(None);
@@ -269,4 +289,91 @@ fn test_orphaned_encoded_vaas_are_closed_before_the_next_post() {
     assert_eq!(first[0].data, [48, 221, 174, 198, 231, 7, 152, 38]);
     assert_eq!(first[0].accounts[1].pubkey, encoded_vaa);
     assert_eq!(sent.len(), before + 1 + 3);
+}
+
+/// The first transaction fails with its confirmation lost and has not landed: the post is
+/// `Uncertain` and the address is kept until the transaction's last valid height. If it lands
+/// later, the next post closes it first; if the height passes and it never appeared, it is
+/// dropped. A scan finds a leftover the chain never heard of.
+#[test]
+fn test_late_landing_creates_are_kept_until_expiry_and_closed() {
+    use varswap_keeper::Orphan;
+    let p = print(1_793_404_800);
+    let bytes = pnau(&vaa(4, 13), &[(message(&SOL, &p), proof(12))]);
+    let window = Address::new_unique();
+
+    // Lands late.
+    let rec = Recorder {
+        fail_at: Some(0),
+        ..Recorder::default()
+    };
+    let (sent, open, height) = (
+        Rc::clone(&rec.sent),
+        Rc::clone(&rec.open),
+        Rc::clone(&rec.height),
+    );
+    height.set(1_000);
+    let mut chain = ReceiverChain::new(
+        rec,
+        Updates(bytes.clone()),
+        Keypair::new(),
+        Address::new_unique(),
+    );
+    let err = chain.post_sample(&window, &SOL, &p).unwrap_err();
+    let KeeperError::Uncertain {
+        encoded_vaa,
+        valid_until,
+        ..
+    } = err
+    else {
+        panic!("{err:?}")
+    };
+    assert_eq!(valid_until, 1_150);
+    assert_eq!(
+        chain.orphans(),
+        [Orphan {
+            encoded_vaa,
+            valid_until: Some(1_150)
+        }]
+    );
+    open.borrow_mut().push(encoded_vaa); // the in-flight create lands
+    height.set(1_010);
+    let before = sent.borrow().len();
+    chain.post_sample(&window, &SOL, &p).unwrap();
+    assert!(chain.orphans().is_empty());
+    assert_eq!(sent.borrow()[before].0[0].accounts[1].pubkey, encoded_vaa);
+    assert!(open.borrow().is_empty());
+
+    // Never lands: kept while the height is at most 1,150, dropped after.
+    let rec = Recorder {
+        fail_at: Some(0),
+        ..Recorder::default()
+    };
+    let height = Rc::clone(&rec.height);
+    height.set(1_000);
+    let mut chain = ReceiverChain::new(
+        rec,
+        Updates(bytes.clone()),
+        Keypair::new(),
+        Address::new_unique(),
+    );
+    chain.post_sample(&window, &SOL, &p).unwrap_err();
+    height.set(1_150);
+    chain.post_sample(&window, &SOL, &p).unwrap();
+    assert_eq!(chain.orphans().len(), 1, "still within its valid height");
+    height.set(1_151);
+    chain.post_sample(&window, &SOL, &p).unwrap();
+    assert!(chain.orphans().is_empty(), "expired without landing");
+
+    // A leftover nobody reported: found by the scan, closed before the next post.
+    let rec = Recorder::default();
+    let (sent, open) = (Rc::clone(&rec.sent), Rc::clone(&rec.open));
+    let stray = Address::new_unique();
+    open.borrow_mut().push(stray);
+    let mut chain = ReceiverChain::new(rec, Updates(bytes), Keypair::new(), Address::new_unique());
+    assert_eq!(chain.scan_orphans().unwrap(), 1);
+    assert_eq!(chain.scan_orphans().unwrap(), 0, "already queued");
+    chain.post_sample(&window, &SOL, &p).unwrap();
+    assert!(chain.orphans().is_empty());
+    assert_eq!(sent.borrow()[0].0[0].accounts[1].pubkey, stray);
 }

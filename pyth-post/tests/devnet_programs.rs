@@ -48,7 +48,9 @@ fn hermes_update(t: i64) -> Vec<u8> {
 }
 
 /// LiteSVM with the devnet receiver, Wormhole, the receiver config and guardian set 1.
-struct Svm(LiteSVM);
+/// LiteSVM and the expiry of the last send (its slot plus 150, as a blockhash's last valid
+/// height).
+struct Svm(LiteSVM, Option<u64>);
 
 impl Svm {
     fn new() -> (Self, Keypair) {
@@ -92,7 +94,7 @@ impl Svm {
         svm.set_sysvar(&clock);
         let payer = Keypair::new();
         svm.airdrop(&payer.pubkey(), 10_000_000_000).unwrap();
-        (Self(svm), payer)
+        (Self(svm, None), payer)
     }
 
     fn lamports(&self, a: &Address) -> u64 {
@@ -101,6 +103,32 @@ impl Svm {
 }
 
 impl Transport for Svm {
+    fn block_height(&self) -> Result<u64, PostError> {
+        // LiteSVM has no block height: its slot stands in for it.
+        Ok(self.0.get_sysvar::<solana_clock::Clock>().slot)
+    }
+
+    fn last_send_expiry(&self) -> Option<u64> {
+        self.1
+    }
+
+    fn program_accounts(
+        &self,
+        program: &Address,
+        offset: usize,
+        bytes: &[u8],
+    ) -> Result<Vec<Address>, PostError> {
+        Ok(self
+            .0
+            .get_program_accounts(program)
+            .into_iter()
+            .filter(|(_, a)| {
+                a.lamports > 0 && a.data.get(offset..).is_some_and(|d| d.starts_with(bytes))
+            })
+            .map(|(k, _)| k)
+            .collect())
+    }
+
     fn now(&self) -> Result<i64, PostError> {
         Ok(self.0.get_sysvar::<solana_clock::Clock>().unix_timestamp)
     }
@@ -124,6 +152,11 @@ impl Transport for Svm {
         extra: Option<&Keypair>,
     ) -> Result<String, PostError> {
         self.0.expire_blockhash();
+        // Each send is one slot later; its transaction can land for 150 more.
+        let mut clock: solana_clock::Clock = self.0.get_sysvar();
+        clock.slot += 1;
+        self.0.set_sysvar(&clock);
+        self.1 = Some(clock.slot + 150);
         let blockhash = self.0.latest_blockhash();
         let tx = match extra {
             Some(k) => Transaction::new_signed_with_payer(
@@ -258,6 +291,10 @@ struct Faulty {
     lie: Vec<usize>,
     drop_from: Option<usize>,
     closes: usize,
+    /// Send index whose transaction stays in flight: not executed, the call returns `Err`,
+    /// and [`Faulty::land_held`] executes it later.
+    hold: Option<usize>,
+    held: Option<(Vec<Instruction>, Keypair, Option<Keypair>)>,
 }
 
 impl Faulty {
@@ -268,11 +305,33 @@ impl Faulty {
             lie: lie.to_vec(),
             drop_from,
             closes: 0,
+            hold: None,
+            held: None,
         }
+    }
+
+    /// Executes the held in-flight transaction.
+    fn land_held(&mut self) {
+        let (ixs, payer, extra) = self.held.take().unwrap();
+        self.inner.send(&ixs, &payer, extra.as_ref()).unwrap();
     }
 }
 
 impl Transport for Faulty {
+    fn block_height(&self) -> Result<u64, PostError> {
+        self.inner.block_height()
+    }
+    fn last_send_expiry(&self) -> Option<u64> {
+        self.inner.last_send_expiry()
+    }
+    fn program_accounts(
+        &self,
+        program: &Address,
+        offset: usize,
+        bytes: &[u8],
+    ) -> Result<Vec<Address>, PostError> {
+        self.inner.program_accounts(program, offset, bytes)
+    }
     fn now(&self) -> Result<i64, PostError> {
         self.inner.now()
     }
@@ -295,6 +354,19 @@ impl Transport for Faulty {
         }
         if self.drop_from.is_some_and(|d| n >= d) {
             return Err(PostError::Chain("dropped".into()));
+        }
+        if self.hold == Some(n) {
+            // Sent with the current blockhash: it can land until 150 slots from now.
+            let mut clock: solana_clock::Clock = self.inner.0.get_sysvar();
+            clock.slot += 1;
+            self.inner.0.set_sysvar(&clock);
+            self.inner.1 = Some(clock.slot + 150);
+            self.held = Some((
+                ixs.to_vec(),
+                payer.insecure_clone(),
+                extra.map(Keypair::insecure_clone),
+            ));
+            return Err(PostError::Chain("confirmation timed out".into()));
         }
         let landed = self.inner.send(ixs, payer, extra);
         if self.lie.contains(&n) {
@@ -350,6 +422,20 @@ fn test_a_landed_close_is_not_retried() {
     let update = acc.updates[0].clone();
     struct DropOne(Faulty);
     impl Transport for DropOne {
+        fn block_height(&self) -> Result<u64, PostError> {
+            self.0.block_height()
+        }
+        fn last_send_expiry(&self) -> Option<u64> {
+            self.0.last_send_expiry()
+        }
+        fn program_accounts(
+            &self,
+            program: &Address,
+            offset: usize,
+            bytes: &[u8],
+        ) -> Result<Vec<Address>, PostError> {
+            self.0.program_accounts(program, offset, bytes)
+        }
         fn now(&self) -> Result<i64, PostError> {
             self.0.now()
         }
@@ -404,4 +490,44 @@ fn test_an_unclosable_encoded_vaa_is_reported_and_closed_later() {
     let closes = t.closes;
     assert_eq!(pyth_post::close_if_open(&mut t, &payer, &encoded_vaa), None);
     assert_eq!(t.closes, closes);
+}
+
+/// The first transaction is still in flight when its confirmation fails: the re-read finds no
+/// account, so `post` reports `Uncertain` with the transaction's last valid height. When it
+/// lands later, `scan_encoded_vaas` finds the leftover and `close_if_open` closes it.
+#[test]
+fn test_a_late_landing_create_is_uncertain_then_found_and_closed() {
+    let (svm, payer) = Svm::new();
+    let before = svm.lamports(&payer.pubkey());
+    let mut t = Faulty::new(svm, &[], None);
+    t.hold = Some(0);
+    let acc = AccumulatorUpdate::parse(&hermes_update(T0)).unwrap();
+    let update = acc.updates[0].clone();
+    let err = post(&mut t, &payer, &acc, &update, 0, |_| vec![]).unwrap_err();
+    let PostError::Uncertain {
+        encoded_vaa,
+        valid_until,
+        cause,
+    } = err
+    else {
+        panic!("{err:?}")
+    };
+    assert_eq!(cause, "chain operation failed: confirmation timed out");
+    assert!(valid_until > t.block_height().unwrap());
+    assert_eq!(t.closes, 0, "nothing to close yet");
+    assert!(pyth_post::scan_encoded_vaas(&t, &payer.pubkey())
+        .unwrap()
+        .is_empty());
+
+    t.land_held();
+    assert_eq!(
+        pyth_post::scan_encoded_vaas(&t, &payer.pubkey()).unwrap(),
+        [encoded_vaa]
+    );
+    assert_eq!(pyth_post::close_if_open(&mut t, &payer, &encoded_vaa), None);
+    assert!(pyth_post::scan_encoded_vaas(&t, &payer.pubkey())
+        .unwrap()
+        .is_empty());
+    // Fees only: the create (2 signatures) and the close (1).
+    assert_eq!(before - t.inner.lamports(&payer.pubkey()), 3 * 5_000);
 }

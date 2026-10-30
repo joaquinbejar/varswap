@@ -34,7 +34,7 @@ mod rpc;
 pub use accumulator::{price_feed_message, AccumulatorUpdate, MerkleUpdate, PriceFeedMessage};
 pub use error::PostError;
 pub use post::{
-    close_if_open, post, post_plan, Extra, PostAccounts, Step, Transport, UpdateSource,
-    CLOSE_ATTEMPTS, FIRST_CHUNK, NEXT_CHUNK, VERIFY_COMPUTE_UNITS,
+    close_if_open, post, post_plan, scan_encoded_vaas, Extra, PostAccounts, Step, Transport,
+    UpdateSource, CLOSE_ATTEMPTS, FIRST_CHUNK, NEXT_CHUNK, VERIFY_COMPUTE_UNITS,
 };
 pub use rpc::{client_error, RpcTransport};

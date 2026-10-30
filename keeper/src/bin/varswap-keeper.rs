@@ -3,7 +3,8 @@
 //! Each tick posts every published canonical print a window is missing (Hermes, then Wormhole
 //! and the Pyth receiver, then `sample` in the same transaction) and finalizes the window once
 //! it is complete or past its backfill deadline. With `--watch SECONDS` it repeats until every
-//! window is final, and backs off at least 61 s after a Hermes 429 (the key's limit, about 10
+//! window is final, scans the payer's encoded VAAs at start and every 12 rounds (leftovers
+//! are closed before the next post), and backs off at least 61 s after a Hermes 429 (the key's limit, about 10
 //! requests a minute, is shared). Every transaction signature is printed, one per line.
 //!
 //! Configuration comes from the environment: `SOLANA_URL`, `VARSWAP_PROGRAM_ID`,
@@ -68,7 +69,18 @@ fn run(args: &Args) -> Result<(), String> {
     let mut chain = ReceiverChain::new(RpcTransport::new(&args.url), &source, payer, program_id);
     let keeper = Keeper::new(program_id);
     let mut printed = 0;
+    let mut ticks: u64 = 0;
     loop {
+        // A leftover encoded VAA (a transaction that landed after its post gave up on it) is
+        // found by a scan of the payer's encoded VAAs: at start, then every 12 rounds.
+        if ticks.is_multiple_of(12) {
+            match chain.scan_orphans() {
+                Ok(0) => {}
+                Ok(n) => eprintln!("scan: {n} leftover encoded VAA(s) queued for closing"),
+                Err(e) => eprintln!("scan: {e}"),
+            }
+        }
+        ticks = ticks.wrapping_add(1);
         let mut all_done = true;
         let mut rate_limited = false;
         for window in &windows {
@@ -86,7 +98,7 @@ fn run(args: &Args) -> Result<(), String> {
                         r.skipped,
                         r.finalized,
                         r.done,
-                        chain.orphans()
+                        chain.orphans().iter().map(|o| o.encoded_vaa).collect::<Vec<_>>()
                     );
                     all_done &= r.done || r.finalized.is_some();
                 }

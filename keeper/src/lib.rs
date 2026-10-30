@@ -38,5 +38,5 @@ pub use hermes::{
 };
 pub use keeper::{Keeper, TickReport};
 pub use pyth_post::{PostError, RpcTransport, Transport, UpdateSource};
-pub use receiver_chain::ReceiverChain;
+pub use receiver_chain::{Orphan, ReceiverChain};
 pub use source::{PriceSource, PrintMsg, TapeSource};

@@ -9,6 +9,10 @@ use solana_instruction::Instruction;
 use solana_keypair::Keypair;
 use solana_rpc_client::rpc_client::RpcClient;
 use solana_rpc_client_api::client_error::{Error as ClientError, ErrorKind};
+use solana_rpc_client_api::config::{
+    RpcAccountInfoConfig, RpcProgramAccountsConfig, UiAccountEncoding, UiDataSliceConfig,
+};
+use solana_rpc_client_api::filter::{Memcmp, RpcFilterType};
 use solana_rpc_client_api::request::{RpcError, RpcResponseErrorData};
 use solana_signer::Signer;
 use solana_transaction::Transaction;
@@ -29,6 +33,7 @@ const CLOCK_UNIX_TIMESTAMP: usize = 32;
 pub struct RpcTransport {
     client: RpcClient,
     url: String,
+    last_expiry: Option<u64>,
 }
 
 impl RpcTransport {
@@ -46,7 +51,11 @@ impl RpcTransport {
     #[must_use]
     pub fn with_client(client: RpcClient) -> Self {
         let url = client.url();
-        Self { client, url }
+        Self {
+            client,
+            url,
+            last_expiry: None,
+        }
     }
 
     fn error(&self, e: &ClientError) -> PostError {
@@ -83,6 +92,46 @@ impl Transport for RpcTransport {
             .map_err(|e| self.error(&e))
     }
 
+    fn block_height(&self) -> Result<u64, PostError> {
+        self.client
+            .get_block_height_with_commitment(CommitmentConfig::confirmed())
+            .map_err(|e| self.error(&e))
+    }
+
+    fn last_send_expiry(&self) -> Option<u64> {
+        self.last_expiry
+    }
+
+    fn program_accounts(
+        &self,
+        program: &Address,
+        offset: usize,
+        bytes: &[u8],
+    ) -> Result<Vec<Address>, PostError> {
+        let config = RpcProgramAccountsConfig {
+            filters: Some(vec![RpcFilterType::Memcmp(Memcmp::new_raw_bytes(
+                offset,
+                bytes.to_vec(),
+            ))]),
+            account_config: RpcAccountInfoConfig {
+                encoding: Some(UiAccountEncoding::Base64),
+                // Addresses only.
+                data_slice: Some(UiDataSliceConfig {
+                    offset: 0,
+                    length: 0,
+                }),
+                commitment: Some(CommitmentConfig::confirmed()),
+                min_context_slot: None,
+            },
+            with_context: None,
+            sort_results: None,
+        };
+        self.client
+            .get_program_ui_accounts_with_config(program, config)
+            .map(|accounts| accounts.into_iter().map(|(a, _)| a).collect())
+            .map_err(|e| self.error(&e))
+    }
+
     fn rent_exempt(&self, len: usize) -> Result<u64, PostError> {
         self.client
             .get_minimum_balance_for_rent_exemption(len)
@@ -95,10 +144,13 @@ impl Transport for RpcTransport {
         payer: &Keypair,
         extra: Option<&Keypair>,
     ) -> Result<String, PostError> {
-        let blockhash = self
+        let (blockhash, last_valid) = self
             .client
-            .get_latest_blockhash()
+            .get_latest_blockhash_with_commitment(CommitmentConfig::confirmed())
             .map_err(|e| self.error(&e))?;
+        // Recorded before sending: whatever the send returns, the transaction can land until
+        // this height.
+        self.last_expiry = Some(last_valid);
         let mut tx = Transaction::new_with_payer(instructions, Some(&payer.pubkey()));
         let signed = match extra {
             Some(k) => tx.try_sign(&[payer, k], blockhash),

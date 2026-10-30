@@ -2,13 +2,25 @@
 //! a `Full` `PriceUpdateV2` and is sampled in the transaction that posts it
 //! ([`pyth_post::post`]), over any [`Transport`] (an RPC client on a cluster, LiteSVM in tests).
 
-use pyth_post::{close_if_open, post, AccumulatorUpdate, PostError, Transport, UpdateSource};
+use pyth_post::{
+    close_if_open, post, scan_encoded_vaas, AccumulatorUpdate, PostError, Transport, UpdateSource,
+};
 use solana_instruction::Instruction;
 use solana_keypair::Keypair;
 use solana_signer::Signer;
 use varswap_sdk::{ix, Address};
 
 use crate::{Chain, KeeperError, PrintMsg};
+
+/// An encoded VAA a failed post may have left open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Orphan {
+    /// The encoded VAA account.
+    pub encoded_vaa: Address,
+    /// `None`: it exists (or could not be closed). `Some(h)`: it did not exist yet, but the
+    /// transaction that creates it can land until block height `h`; it is kept until then.
+    pub valid_until: Option<u64>,
+}
 
 /// The keeper's chain on a real cluster: prints go through Wormhole and the Pyth receiver.
 pub struct ReceiverChain<T: Transport, U: UpdateSource> {
@@ -18,8 +30,9 @@ pub struct ReceiverChain<T: Transport, U: UpdateSource> {
     program_id: Address,
     treasury_id: u8,
     signatures: Vec<String>,
-    /// Encoded VAAs that failed posts left open, retried before every later send.
-    orphans: Vec<Address>,
+    /// Encoded VAAs that failed posts left open or may still open, retried before every
+    /// later send.
+    orphans: Vec<Orphan>,
 }
 
 impl<T: Transport, U: UpdateSource> ReceiverChain<T, U> {
@@ -37,20 +50,6 @@ impl<T: Transport, U: UpdateSource> ReceiverChain<T, U> {
         }
     }
 
-    /// Encoded VAAs still open after failed posts (each holds its rent). The chain retries
-    /// closing them before every later post or finalize.
-    #[must_use]
-    pub fn orphans(&self) -> &[Address] {
-        &self.orphans
-    }
-
-    /// Retries closing every orphaned encoded VAA; keeps those still open.
-    fn close_orphans(&mut self) {
-        let (transport, payer) = (&mut self.transport, &self.payer);
-        self.orphans
-            .retain(|a| close_if_open(transport, payer, a).is_some());
-    }
-
     /// The signatures of every transaction this chain sent, in order.
     #[must_use]
     pub fn signatures(&self) -> &[String] {
@@ -66,6 +65,69 @@ impl<T: Transport, U: UpdateSource> ReceiverChain<T, U> {
     /// The transport, mutably (tests move the clock).
     pub fn transport_mut(&mut self) -> &mut T {
         &mut self.transport
+    }
+
+    /// Encoded VAAs that failed posts left open, or whose creating transaction can still
+    /// land. The chain retries closing them before every later post or finalize.
+    #[must_use]
+    pub fn orphans(&self) -> &[Orphan] {
+        &self.orphans
+    }
+
+    /// Adds to the orphans every encoded VAA on the cluster written by the payer
+    /// ([`scan_encoded_vaas`]): posts run one at a time, so between posts each one is a
+    /// leftover, for example a first transaction that landed after its post gave up on it.
+    /// Returns how many were new.
+    ///
+    /// # Errors
+    ///
+    /// `KeeperError::Chain` if the cluster cannot answer.
+    pub fn scan_orphans(&mut self) -> Result<usize, KeeperError> {
+        let found = scan_encoded_vaas(&self.transport, &self.payer.pubkey())?;
+        let mut new = Vec::new();
+        for encoded_vaa in found {
+            match self
+                .orphans
+                .iter_mut()
+                .find(|o| o.encoded_vaa == encoded_vaa)
+            {
+                // It exists now: no longer uncertain.
+                Some(o) => o.valid_until = None,
+                None => new.push(Orphan {
+                    encoded_vaa,
+                    valid_until: None,
+                }),
+            }
+        }
+        let added = new.len();
+        self.orphans.extend(new);
+        Ok(added)
+    }
+
+    /// Retries closing every orphan. One that existed and is now closed is dropped; one that is
+    /// absent is dropped too, unless its creating transaction can still land (the block height
+    /// is at most its `valid_until`, or cannot be read).
+    fn close_orphans(&mut self) {
+        let height = self.transport.block_height().ok();
+        let (transport, payer) = (&mut self.transport, &self.payer);
+        self.orphans.retain(|o| {
+            let existed = matches!(
+                transport.account(&o.encoded_vaa),
+                Ok(Some((owner, _))) if owner == pyth_post::ix::WORMHOLE_PROGRAM
+            );
+            if close_if_open(transport, payer, &o.encoded_vaa).is_some() {
+                return true;
+            }
+            if existed {
+                // It was there and is now closed: whatever was in flight has landed.
+                return false;
+            }
+            match (o.valid_until, height) {
+                (Some(until), Some(h)) => h <= until,
+                (Some(_), None) => true,
+                (None, _) => false,
+            }
+        });
     }
 
     fn send(&mut self, instructions: &[Instruction]) -> Result<(), KeeperError> {
@@ -135,8 +197,20 @@ impl<T: Transport, U: UpdateSource> Chain for ReceiverChain<T, U> {
                 Ok(())
             }
             Err(e) => {
-                if let PostError::Orphaned { encoded_vaa, .. } = &e {
-                    self.orphans.push(*encoded_vaa);
+                match &e {
+                    PostError::Orphaned { encoded_vaa, .. } => self.orphans.push(Orphan {
+                        encoded_vaa: *encoded_vaa,
+                        valid_until: None,
+                    }),
+                    PostError::Uncertain {
+                        encoded_vaa,
+                        valid_until,
+                        ..
+                    } => self.orphans.push(Orphan {
+                        encoded_vaa: *encoded_vaa,
+                        valid_until: Some(*valid_until),
+                    }),
+                    _ => {}
                 }
                 Err(e.into())
             }

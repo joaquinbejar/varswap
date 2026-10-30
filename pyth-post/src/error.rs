@@ -18,6 +18,22 @@ pub enum PostError {
     /// The update source answered 429 (rate limited): back off and retry.
     #[error("update source rate limit (HTTP 429): back off and retry")]
     RateLimited,
+    /// The post's first transaction (which creates the encoded VAA) failed (`cause`) without
+    /// a confirmation, and the account does not exist yet: that transaction can still land
+    /// until block height `valid_until` (its blockhash's last valid height) and open the
+    /// account. Keep `encoded_vaa` until then, close it if it appears
+    /// ([`crate::close_if_open`]), and scan for leftovers ([`crate::scan_encoded_vaas`]).
+    #[error(
+        "{cause}; encoded VAA {encoded_vaa} may still be created until block height {valid_until}"
+    )]
+    Uncertain {
+        /// The encoded VAA account the in-flight transaction would create.
+        encoded_vaa: Address,
+        /// The last block height at which that transaction can land.
+        valid_until: u64,
+        /// The failure of the post, as text.
+        cause: String,
+    },
     /// The post failed (`cause`) and its encoded VAA could not be closed: it is still open at
     /// `encoded_vaa`, holding its rent. Close it later with [`crate::close_if_open`].
     #[error("{cause}; encoded VAA {encoded_vaa} is still open")]

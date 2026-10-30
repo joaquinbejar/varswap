@@ -40,6 +40,20 @@ pub enum KeeperError {
         /// The failure of the post, as text.
         cause: String,
     },
+    /// A post's first transaction failed without a confirmation and its encoded VAA does not
+    /// exist yet, but the transaction can still land until block height `valid_until`.
+    /// `ReceiverChain` keeps the address until then and closes it if it appears.
+    #[error(
+        "{cause}; encoded VAA {encoded_vaa} may still be created until block height {valid_until}"
+    )]
+    Uncertain {
+        /// The encoded VAA the in-flight transaction would create.
+        encoded_vaa: varswap_sdk::Address,
+        /// The last block height at which it can land.
+        valid_until: u64,
+        /// The failure of the post, as text.
+        cause: String,
+    },
     /// A chain operation (read, post, finalize) failed.
     #[error("chain operation failed: {0}")]
     Chain(String),
@@ -58,6 +72,15 @@ impl From<pyth_post::PostError> for KeeperError {
             pyth_post::PostError::Orphaned { encoded_vaa, cause } => {
                 Self::Orphaned { encoded_vaa, cause }
             }
+            pyth_post::PostError::Uncertain {
+                encoded_vaa,
+                valid_until,
+                cause,
+            } => Self::Uncertain {
+                encoded_vaa,
+                valid_until,
+                cause,
+            },
         }
     }
 }

@@ -51,6 +51,31 @@ pub trait Transport {
     /// `PostError::Chain` if the account cannot be read.
     fn account(&self, account: &Address) -> Result<Option<(Address, Vec<u8>)>, PostError>;
 
+    /// The current block height (`confirmed`).
+    ///
+    /// # Errors
+    ///
+    /// `PostError::Chain` if the cluster cannot answer.
+    fn block_height(&self) -> Result<u64, PostError>;
+
+    /// The last block height at which the transaction of the most recent [`Transport::send`]
+    /// can land, whatever that call returned: its blockhash's `last_valid_block_height`. `None`
+    /// before any send, or when the transport cannot tell.
+    fn last_send_expiry(&self) -> Option<u64>;
+
+    /// The accounts owned by `program` whose data holds `bytes` at `offset`
+    /// (`getProgramAccounts` with one `memcmp` filter).
+    ///
+    /// # Errors
+    ///
+    /// `PostError::Chain` if the cluster cannot answer.
+    fn program_accounts(
+        &self,
+        program: &Address,
+        offset: usize,
+        bytes: &[u8],
+    ) -> Result<Vec<Address>, PostError>;
+
     /// Lamports that make an account of `len` bytes rent exempt.
     ///
     /// # Errors
@@ -223,7 +248,9 @@ pub fn post_plan(
 /// `PostError::Update` for a VAA that cannot be planned, `PostError::Chain` from the
 /// transport. After any failed send the encoded VAA is re-read and closed if it exists (a
 /// transaction whose confirmation was lost may have landed); if it is still open after two
-/// closes, the error is [`PostError::Orphaned`] with its address.
+/// closes, the error is [`PostError::Orphaned`] with its address; if the first transaction
+/// failed and the account does not exist, it is [`PostError::Uncertain`] with the last block
+/// height at which that transaction can still land.
 pub fn post<T: Transport>(
     transport: &mut T,
     payer: &Keypair,
@@ -253,7 +280,7 @@ pub fn post<T: Transport>(
         consume(&pu.pubkey()),
     )?;
     let mut signatures = Vec::with_capacity(steps.len());
-    for step in &steps {
+    for (i, step) in steps.iter().enumerate() {
         let extra = match step.extra {
             Extra::None => None,
             Extra::EncodedVaa => Some(&vaa),
@@ -264,17 +291,54 @@ pub fn post<T: Transport>(
             Err(e) => {
                 // The failed transaction may still have landed (a lost confirmation), so the
                 // chain, not this loop, says whether the encoded VAA exists.
+                let expiry = transport.last_send_expiry();
+                let existed = matches!(
+                    transport.account(&vaa.pubkey()),
+                    Ok(Some((owner, _))) if owner == WORMHOLE_PROGRAM
+                );
                 return Err(match close_if_open(transport, payer, &vaa.pubkey()) {
-                    None => e,
                     Some(encoded_vaa) => PostError::Orphaned {
                         encoded_vaa,
                         cause: e.to_string(),
+                    },
+                    // Only the first transaction creates the account: if that one failed and
+                    // the account was not there, it may still be in flight.
+                    None => match (i, expiry) {
+                        (0, Some(valid_until)) if !existed => PostError::Uncertain {
+                            encoded_vaa: vaa.pubkey(),
+                            valid_until,
+                            cause: e.to_string(),
+                        },
+                        _ => e,
                     },
                 });
             }
         }
     }
     Ok(signatures)
+}
+
+/// Offset of the write authority in an encoded VAA account (after the 8-byte discriminator and
+/// the 1-byte status).
+const ENCODED_VAA_WRITE_AUTHORITY: usize = 9;
+
+/// Every encoded VAA account on the cluster written by `write_authority`. A poster runs posts
+/// one at a time, so between posts any of them is a leftover to close with
+/// [`close_if_open`]: run it periodically to catch a transaction that landed after its post
+/// gave up on it.
+///
+/// # Errors
+///
+/// `PostError::Chain` if the cluster cannot answer.
+pub fn scan_encoded_vaas<T: Transport>(
+    transport: &T,
+    write_authority: &Address,
+) -> Result<Vec<Address>, PostError> {
+    transport.program_accounts(
+        &WORMHOLE_PROGRAM,
+        ENCODED_VAA_WRITE_AUTHORITY,
+        write_authority.as_ref(),
+    )
 }
 
 /// How many times [`close_if_open`] sends `close_encoded_vaa` before giving up.
