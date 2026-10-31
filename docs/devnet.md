@@ -130,10 +130,12 @@ and finalizes it after 2026-11-01T00:00:00Z. Its backfill deadline is 2026-11-02
 
 | What | Value |
 | --- | --- |
-| Process | PID `96116` on the Studio, `varswap-keeper --watch 300` (built from PR #22 at `ed92a42`) |
-| Log | `/Users/joaquin/tmp/worktrees/varswap/keeper-run/7s5K.log` (one report line per tick) |
-| Signatures | `/Users/joaquin/tmp/worktrees/varswap/keeper-run/7s5K.sigs` |
-| Stop | `kill 96116` (that exact PID only) |
+| Process | LaunchAgent `com.varswap.keeper.sol-2026-10-31` on the Studio (`scripts/keeper-agent.sh`), `varswap-keeper --watch 300`, built from PR #24 (`f96af44`, the 300-block leftover scan); restarted after a crash and loaded again at every login |
+| History | PID `96116` (from 2026-10-30) posted buckets 0 to 8 until the Studio rebooted at 2026-10-31T08:24Z; PID `1845` (09:03Z) posted bucket 9; the agent took over at 09:16Z |
+| Log | `~/.local/share/varswap-keeper/sol-2026-10-31/keeper.log` (earlier runs: `/Users/joaquin/tmp/worktrees/varswap/keeper-run/7s5K.log`) |
+| Signatures | `~/.local/share/varswap-keeper/sol-2026-10-31/keeper.sigs` (earlier runs: `keeper-run/7s5K.sigs`) |
+| Status | `scripts/keeper-agent.sh status sol-2026-10-31` |
+| Stop | `scripts/keeper-agent.sh uninstall sol-2026-10-31` (never `pkill`: other repos' keepers run on the Studio) |
 
 It reads `SOLANA_URL`, `VARSWAP_PROGRAM_ID`, `VARSWAP_KEYPAIR` and `VARSWAP_HERMES_API_KEY`
 from the environment; the key is never printed. It scans the payer's encoded VAAs at start
@@ -142,6 +144,25 @@ keeper waits at least 61 s, because the key's limit (about 10 requests a minute 
 timestamp endpoint) is shared with metalbook.
 
 ## Run a keeper
+
+To keep one running across crashes and reboots (macOS), install it as a LaunchAgent:
+
+```sh
+export SOLANA_URL=https://api.devnet.solana.com
+export VARSWAP_PROGRAM_ID=BWqsaXvASrbErApP1ovz7vSvBLYqXGaMaZANEYf1xrB9
+export VARSWAP_KEYPAIR=~/.config/solana/id.json
+cargo build --release -p varswap-keeper
+scripts/keeper-agent.sh install <name> <window> [<window> ...]
+```
+
+The agent runs `zsh -c 'source ~/.zshrc; exec varswap-keeper --watch 300 ...'`, so the Hermes
+key comes from `~/.zshrc` and is never written into the plist. It is restarted after an error
+exit, a crash or a kill, it is not restarted after the clean exit that comes once every window
+is final, and it is loaded again at every login. Tested on the Studio: the agent ran on a
+finalized window, exited 0 and was not restarted; after `kill -9` it was restarted. Run one
+agent per payer keypair.
+
+By hand, in the foreground:
 
 ```sh
 export SOLANA_URL=https://api.devnet.solana.com
