@@ -120,7 +120,7 @@ install)
 	<dict>
 		<key>SuccessfulExit</key><false/>
 	</dict>
-	<!-- At most one start every 5 minutes, the --watch cadence: a crash loop costs at most one
+	<!-- At most one start every 5 minutes, the watch cadence: a crash loop costs at most one
 	     round of Hermes requests per 5 minutes (one per missing bucket; the cache dies with
 	     the process), within the shared key's ~10 requests a minute for up to 49 missing
 	     hourly buckets. -->
