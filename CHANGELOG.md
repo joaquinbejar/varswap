@@ -4,6 +4,37 @@ All notable changes to the published crates are recorded here. The format follow
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crates follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.2] - 2026-10-31
+
+`pyth-post` 0.1.1. The other crates are unchanged.
+
+### pyth-post 0.1.1
+
+- **Contract: one poster per payer.** Closing a leftover encoded VAA cannot be atomic against
+  another poster's verify, so there is no guarantee between posters that share a payer. Scans,
+  cleanup and posts for a payer must not overlap, even within one process: use a single poster
+  (one `ReceiverChain`) per payer and do not share it across threads. `PayerLock` only prevents
+  a second process.
+- `PayerLock` enforces the contract. It takes an exclusive lock on `payer-<address>.lock` in
+  `$PYTH_POST_LOCK_DIR` (default `~/.local/state/pyth-post`, a fixed path because a shell and a
+  launchd agent can see different temporary directories). `default_lock_dir` and
+  `LOCK_DIR_VAR` come with it.
+- `LeftoverScanner` and `LEFTOVER_MIN_AGE` (300 blocks) are kept as defense in depth.
+  - An encoded VAA is reported only once consecutive scans have seen its content (status and
+    written bytes) unchanged for at least that many blocks. Every write, and the verify,
+    restart the count.
+  - The block height is read after the listing, so an account seen for the first time is
+    never reported.
+  - This keeps an unconditional periodic scan from closing a live post (the receiver's
+    `WrongVaaOwner`, 6013, which metalbook hit).
+- `scan_encoded_vaas` is unchanged. Its documentation now says it includes posts in flight.
+
+### varswap-keeper (not published)
+
+- The binary takes the `PayerLock` at start and refuses to run while another process holds
+  it.
+- `ReceiverChain::scan_orphans` adopts only what `LeftoverScanner` reports.
+
 ## [0.1.1] - 2026-10-30
 
 Adds `pyth-post` 0.1.0 to crates.io. `pyth-lite`, `varswap-core` and `varswap-sdk` are unchanged

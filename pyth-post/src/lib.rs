@@ -9,6 +9,21 @@
 //! [`RpcTransport`] is a [`Transport`] over `solana-rpc-client` that never shows its URL in
 //! `Debug` or errors ([`redact`]).
 //!
+//! A failed post can leave its encoded VAA open: [`post`] reports it ([`PostError::Orphaned`],
+//! [`PostError::Uncertain`]) and [`close_if_open`] closes it later. [`LeftoverScanner`] finds
+//! any that were missed.
+//!
+//! **Contract: a payer belongs to one poster instance, which runs its posts and scans one at
+//! a time.** [`LeftoverScanner`] and any sweep built on it close the payer's encoded VAAs, and
+//! a close cannot be atomic against another poster's verify, so pyth-post gives no guarantee
+//! between posters sharing a payer: another process, another thread, or another poster
+//! instance (for example a second `ReceiverChain`) in the same process. Scans and cleanup and
+//! posts for a payer must not overlap, even within one process: use a single poster per payer
+//! and do not share it across threads. [`PayerLock`] only prevents a second process; it does
+//! not serialize threads or instances inside one process, which is the caller's job (`varswap-keeper`'s `ReceiverChain` takes `&mut self` for every post and
+//! scan, and the binary runs exactly one). The scanner's [`LEFTOVER_MIN_AGE`] guard is only
+//! defense in depth.
+//!
 //! ```no_run
 //! # fn main() -> Result<(), pyth_post::PostError> {
 //! # let (bytes, feed, payer): (Vec<u8>, [u8; 32], solana_keypair::Keypair) = unimplemented!();
@@ -27,14 +42,17 @@
 pub mod accumulator;
 mod error;
 pub mod ix;
+mod lock;
 mod post;
 pub mod redact;
 mod rpc;
 
 pub use accumulator::{price_feed_message, AccumulatorUpdate, MerkleUpdate, PriceFeedMessage};
 pub use error::PostError;
+pub use lock::{default_lock_dir, PayerLock, LOCK_DIR_VAR};
 pub use post::{
-    close_if_open, post, post_plan, scan_encoded_vaas, Extra, PostAccounts, Step, Transport,
-    UpdateSource, CLOSE_ATTEMPTS, FIRST_CHUNK, NEXT_CHUNK, VERIFY_COMPUTE_UNITS,
+    close_if_open, post, post_plan, scan_encoded_vaas, Extra, LeftoverScanner, PostAccounts, Step,
+    Transport, UpdateSource, CLOSE_ATTEMPTS, FIRST_CHUNK, LEFTOVER_MIN_AGE, NEXT_CHUNK,
+    VERIFY_COMPUTE_UNITS,
 };
 pub use rpc::{client_error, RpcTransport};

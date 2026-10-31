@@ -1,7 +1,8 @@
 [package]
 name = "pyth-post"
 description = "Posts Pyth prices on Solana from Hermes updates: PNAU parser, Wormhole encoded VAA and Pyth receiver builders, and an RPC poster"
-version.workspace = true
+# Its own version: 0.1.1 adds LeftoverScanner (the other crates stay at 0.1.0).
+version = "0.1.1"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true

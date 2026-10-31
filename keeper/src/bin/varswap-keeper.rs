@@ -3,19 +3,23 @@
 //! Each tick posts every published canonical print a window is missing (Hermes, then Wormhole
 //! and the Pyth receiver, then `sample` in the same transaction) and finalizes the window once
 //! it is complete or past its backfill deadline. With `--watch SECONDS` it repeats until every
-//! window is final, scans the payer's encoded VAAs at start and every 12 rounds (leftovers
-//! are closed before the next post), and backs off at least 61 s after a Hermes 429 (the key's limit, about 10
+//! window is final, scans the payer's encoded VAAs at start and every 12 rounds (one seen for
+//! 300 blocks or more is a leftover, closed before the next post), and backs off at least 61 s after a Hermes 429 (the key's limit, about 10
 //! requests a minute, is shared). Every transaction signature is printed, one per line.
 //!
 //! Configuration comes from the environment: `SOLANA_URL`, `VARSWAP_PROGRAM_ID`,
 //! `VARSWAP_KEYPAIR` (a keypair file path), and `VARSWAP_HERMES_API_KEY` (never printed),
-//! with the optional `VARSWAP_HERMES_URL` and `VARSWAP_HERMES_AUTH`.
+//! with the optional `VARSWAP_HERMES_URL` and `VARSWAP_HERMES_AUTH`. The payer must be
+//! exclusive to this process: it takes `pyth_post::PayerLock` at start (a lock file in
+//! `$PYTH_POST_LOCK_DIR`, default `~/.local/state/pyth-post`) and refuses to run if another
+//! process holds it.
 
 use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::Parser;
 use solana_keypair::Keypair;
+use solana_signer::Signer;
 use varswap_keeper::{
     HermesConfig, HermesSource, Keeper, KeeperError, ReceiverChain, RpcTransport, UreqHttp,
 };
@@ -62,6 +66,8 @@ fn run(args: &Args) -> Result<(), String> {
         .map(|w| address(w))
         .collect::<Result<Vec<_>, _>>()?;
     let payer = read_keypair(&args.keypair)?;
+    // One poster process per payer (pyth-post's contract): held until the process exits.
+    let _lock = pyth_post::PayerLock::acquire(&payer.pubkey()).map_err(|e| e.to_string())?;
     // One source for the price queries and the posts: one cache, one rate limit.
     let source = HermesConfig::from_env()
         .map(|c| HermesSource::new(c, UreqHttp::new()))

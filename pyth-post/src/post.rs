@@ -240,6 +240,8 @@ pub fn post_plan(
 }
 
 /// Posts `update` (one message of `accumulator`) through Wormhole and the Pyth receiver,
+/// as the only poster of `payer` (the crate's contract: one poster instance per payer, posts
+/// and scans one at a time),
 /// runs the instructions `consume` builds for the fresh `PriceUpdateV2` address, and closes
 /// both accounts. Returns the signatures, in order.
 ///
@@ -322,10 +324,9 @@ pub fn post<T: Transport>(
 /// the 1-byte status).
 const ENCODED_VAA_WRITE_AUTHORITY: usize = 9;
 
-/// Every encoded VAA account on the cluster written by `write_authority`. A poster runs posts
-/// one at a time, so between posts any of them is a leftover to close with
-/// [`close_if_open`]: run it periodically to catch a transaction that landed after its post
-/// gave up on it.
+/// Every encoded VAA account on the cluster written by `write_authority`, including any a post
+/// has in flight right now (in this process or in another one using the same payer). Use
+/// [`LeftoverScanner`] to tell leftovers from posts in progress.
 ///
 /// # Errors
 ///
@@ -339,6 +340,92 @@ pub fn scan_encoded_vaas<T: Transport>(
         ENCODED_VAA_WRITE_AUTHORITY,
         write_authority.as_ref(),
     )
+}
+
+/// Blocks an encoded VAA must stay unchanged on the cluster, as seen by consecutive scans,
+/// before [`LeftoverScanner`] reports it: two blockhash lifetimes (150 blocks each). A post
+/// creates, writes, verifies and closes its encoded VAA within seconds, changing it at every
+/// step, so one that has not changed for 300 blocks is a leftover, not a post in flight.
+pub const LEFTOVER_MIN_AGE: u64 = 300;
+
+/// Finds leftover encoded VAAs (a post gave up on them and they stayed open) without touching
+/// a post in flight. Each [`LeftoverScanner::scan`] lists the payer's encoded VAAs
+/// ([`scan_encoded_vaas`]), reads each one, then reads the block height, and reports only
+/// those whose content (status and written bytes) every scan has seen unchanged since a height
+/// at least [`LEFTOVER_MIN_AGE`] blocks ago. Any change (a write, `Writing` to `Verified`)
+/// starts the count over, and so does a scan that misses the account; a first sighting is
+/// never old, because the height is read after the listing. A post in flight, here or in
+/// another process with the same payer, keeps changing its encoded VAA until it closes it, so
+/// it is never reported unless it stalls for 300 blocks; closing what is reported cannot break
+/// a live post (the receiver's `WrongVaaOwner`, 6013, on a VAA closed mid-post).
+///
+/// **Contract: the payer belongs to one poster instance, whose posts and scans run one at a
+/// time** (the crate documentation explains it). Between a scan and the close of what it
+/// reported, another poster with the same payer (another process, thread or instance) could
+/// still verify that encoded VAA, and no client-side check can make the close atomic against
+/// it; the 300-block guard narrows that window but does not close it. Scans and cleanup and
+/// posts for a payer must not overlap, even within one process: use a single poster per
+/// payer and do not share it across threads. [`crate::PayerLock`] only prevents a second
+/// process.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LeftoverScanner {
+    /// Each encoded VAA seen by the last scan: its content then, and the block height since
+    /// which every scan has seen exactly that content.
+    seen: Vec<(Address, Vec<u8>, u64)>,
+}
+
+impl LeftoverScanner {
+    /// A scanner that has seen nothing yet.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The encoded VAAs written by `write_authority` whose content has been unchanged for at
+    /// least [`LEFTOVER_MIN_AGE`] blocks across consecutive scans.
+    ///
+    /// # Errors
+    ///
+    /// `PostError::Chain` if the cluster cannot answer (the scanner's state is unchanged).
+    pub fn scan<T: Transport>(
+        &mut self,
+        transport: &T,
+        write_authority: &Address,
+    ) -> Result<Vec<Address>, PostError> {
+        let mut current = Vec::new();
+        for address in scan_encoded_vaas(transport, write_authority)? {
+            if let Some((owner, data)) = transport.account(&address)? {
+                if owner == WORMHOLE_PROGRAM {
+                    current.push((address, data));
+                }
+            }
+        }
+        // After the listing and the reads, however long they took: a first sighting gets age
+        // zero, never a height from before it existed.
+        let height = transport.block_height()?;
+        let seen: Vec<(Address, Vec<u8>, u64)> = current
+            .into_iter()
+            .map(|(address, data)| {
+                let since = self
+                    .seen
+                    .iter()
+                    .find(|(a, d, _)| *a == address && *d == data)
+                    .map_or(height, |(_, _, since)| *since);
+                (address, data, since)
+            })
+            .collect();
+        let old = seen
+            .iter()
+            .filter(|(_, _, since)| {
+                since
+                    .checked_add(LEFTOVER_MIN_AGE)
+                    .is_some_and(|due| height >= due)
+            })
+            .map(|(address, _, _)| *address)
+            .collect();
+        self.seen = seen;
+        Ok(old)
+    }
 }
 
 /// How many times [`close_if_open`] sends `close_encoded_vaa` before giving up.
