@@ -77,8 +77,11 @@ impl<T: Transport, U: UpdateSource> ReceiverChain<T, U> {
         &self.orphans
     }
 
-    /// Assumes the payer is exclusive to this process (pyth-post's contract; the
-    /// `varswap-keeper` binary holds a `pyth_post::PayerLock`).
+    /// Assumes this chain is the payer's only poster (pyth-post's contract): one
+    /// `ReceiverChain` per payer, never shared across threads (every post and scan takes
+    /// `&mut self`, so they run one at a time), and no other process using the payer (the
+    /// `varswap-keeper` binary holds a `pyth_post::PayerLock`, which does not stop a second
+    /// instance inside the same process).
     ///
     /// Adds to the orphans every leftover encoded VAA written by the payer: one that
     /// consecutive scans have seen for at least `pyth_post::LEFTOVER_MIN_AGE` blocks

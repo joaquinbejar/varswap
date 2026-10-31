@@ -240,6 +240,8 @@ pub fn post_plan(
 }
 
 /// Posts `update` (one message of `accumulator`) through Wormhole and the Pyth receiver,
+/// as the only poster of `payer` (the crate's contract: one poster instance per payer, posts
+/// and scans one at a time),
 /// runs the instructions `consume` builds for the fresh `PriceUpdateV2` address, and closes
 /// both accounts. Returns the signatures, in order.
 ///
@@ -357,10 +359,12 @@ pub const LEFTOVER_MIN_AGE: u64 = 300;
 /// it is never reported unless it stalls for 300 blocks; closing what is reported cannot break
 /// a live post (the receiver's `WrongVaaOwner`, 6013, on a VAA closed mid-post).
 ///
-/// **Contract: the payer is exclusive to one poster process** (enforce it with
-/// [`crate::PayerLock`]). Between a scan and the close of what it reported, another process
-/// could still verify that encoded VAA, and no client-side check can make the close atomic
-/// against it; the 300-block guard narrows that window but does not close it.
+/// **Contract: the payer belongs to one poster instance, whose posts and scans run one at a
+/// time** (the crate documentation explains it). Between a scan and the close of what it
+/// reported, another poster with the same payer (another process, thread or instance) could
+/// still verify that encoded VAA, and no client-side check can make the close atomic against
+/// it; the 300-block guard narrows that window but does not close it. [`crate::PayerLock`]
+/// keeps other processes out, not other threads or instances in the same process.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LeftoverScanner {
     /// Each encoded VAA seen by the last scan: its content then, and the block height since

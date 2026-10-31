@@ -373,6 +373,10 @@ cargo run -p varswap-keeper --release --bin varswap-keeper -- --watch 30 <window
 It prints each transaction signature on stdout and one report line per window and tick on
 stderr. With `--watch` it repeats until every window is final.
 
+The keeper must be its payer's only poster: one `ReceiverChain` per payer, and one process.
+The binary takes a lock on the payer (`pyth_post::PayerLock`) and refuses to start if another
+process holds it. On devnet the varswap keeper has its own payer, separate from metalbook's.
+
 ### Testing and Benchmarks
 
 ```shell

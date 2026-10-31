@@ -30,4 +30,12 @@ receiver and Wormhole programs dumped from devnet, with real Hermes updates. In 
 VAA verifies, the update is posted as `Full`, the message comes back intact, and a tampered VAA
 or message is rejected.
 
+**Contract:** a payer belongs to one poster instance, which runs its posts and scans one at
+a time. Closing a leftover encoded VAA cannot be atomic against another poster's verify, so
+there is no guarantee between posters sharing a payer: other processes, threads, or other
+instances in the same process. `PayerLock`, a file lock per payer in
+`~/.local/state/pyth-post` (`PYTH_POST_LOCK_DIR`), keeps a second process out. Serializing
+threads and instances inside one process is the caller's job. `LeftoverScanner`'s 300-block
+guard is defense in depth only.
+
 Part of [varswap](https://github.com/joaquinbejar/varswap), MIT licensed.

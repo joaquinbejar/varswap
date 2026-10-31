@@ -13,11 +13,15 @@
 //! [`PostError::Uncertain`]) and [`close_if_open`] closes it later. [`LeftoverScanner`] finds
 //! any that were missed.
 //!
-//! **Contract: the payer is exclusive to one poster process.** [`LeftoverScanner`] and any
-//! sweep built on it close the payer's encoded VAAs, and a close cannot be atomic against
-//! another process's verify, so pyth-post gives no guarantee across processes sharing a payer.
-//! Hold a [`PayerLock`] for the life of the process to enforce it; the scanner's
-//! [`LEFTOVER_MIN_AGE`] guard is only defense in depth.
+//! **Contract: a payer belongs to one poster instance, which runs its posts and scans one at
+//! a time.** [`LeftoverScanner`] and any sweep built on it close the payer's encoded VAAs, and
+//! a close cannot be atomic against another poster's verify, so pyth-post gives no guarantee
+//! between posters sharing a payer: another process, another thread, or another poster
+//! instance (for example a second `ReceiverChain`) in the same process. [`PayerLock`] keeps a
+//! second process out; it does not serialize threads or instances inside one process, which
+//! is the caller's job (`varswap-keeper`'s `ReceiverChain` takes `&mut self` for every post and
+//! scan, and the binary runs exactly one). The scanner's [`LEFTOVER_MIN_AGE`] guard is only
+//! defense in depth.
 //!
 //! ```no_run
 //! # fn main() -> Result<(), pyth_post::PostError> {
