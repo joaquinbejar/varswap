@@ -3,7 +3,7 @@
 //! ([`pyth_post::post`]), over any [`Transport`] (an RPC client on a cluster, LiteSVM in tests).
 
 use pyth_post::{
-    close_if_open, post, scan_encoded_vaas, AccumulatorUpdate, PostError, Transport, UpdateSource,
+    close_if_open, post, AccumulatorUpdate, LeftoverScanner, PostError, Transport, UpdateSource,
 };
 use solana_instruction::Instruction;
 use solana_keypair::Keypair;
@@ -33,6 +33,8 @@ pub struct ReceiverChain<T: Transport, U: UpdateSource> {
     /// Encoded VAAs that failed posts left open or may still open, retried before every
     /// later send.
     orphans: Vec<Orphan>,
+    /// Ages the payer's encoded VAAs, so a scan adopts only leftovers.
+    scanner: LeftoverScanner,
 }
 
 impl<T: Transport, U: UpdateSource> ReceiverChain<T, U> {
@@ -47,6 +49,7 @@ impl<T: Transport, U: UpdateSource> ReceiverChain<T, U> {
             treasury_id: 0,
             signatures: Vec::new(),
             orphans: Vec::new(),
+            scanner: LeftoverScanner::new(),
         }
     }
 
@@ -74,16 +77,17 @@ impl<T: Transport, U: UpdateSource> ReceiverChain<T, U> {
         &self.orphans
     }
 
-    /// Adds to the orphans every encoded VAA on the cluster written by the payer
-    /// ([`scan_encoded_vaas`]): posts run one at a time, so between posts each one is a
-    /// leftover, for example a first transaction that landed after its post gave up on it.
-    /// Returns how many were new.
+    /// Adds to the orphans every leftover encoded VAA written by the payer: one that
+    /// consecutive scans have seen for at least `pyth_post::LEFTOVER_MIN_AGE` blocks
+    /// ([`LeftoverScanner`]), for example a first transaction that landed after its post gave
+    /// up on it. A younger one may be a post in flight, here or in another process with the
+    /// same payer, and is left alone. Returns how many were new.
     ///
     /// # Errors
     ///
     /// `KeeperError::Chain` if the cluster cannot answer.
     pub fn scan_orphans(&mut self) -> Result<usize, KeeperError> {
-        let found = scan_encoded_vaas(&self.transport, &self.payer.pubkey())?;
+        let found = self.scanner.scan(&self.transport, &self.payer.pubkey())?;
         let mut new = Vec::new();
         for encoded_vaa in found {
             match self

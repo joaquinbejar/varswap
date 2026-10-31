@@ -531,3 +531,72 @@ fn test_a_late_landing_create_is_uncertain_then_found_and_closed() {
     // Fees only: the create (2 signatures) and the close (1).
     assert_eq!(before - t.inner.lamports(&payer.pubkey()), 3 * 5_000);
 }
+
+/// Moves LiteSVM's slot (the test transports' block height) forward by `n`.
+fn advance(svm: &mut Svm, n: u64) {
+    let mut clock: solana_clock::Clock = svm.0.get_sysvar();
+    clock.slot += n;
+    svm.0.set_sysvar(&clock);
+}
+
+/// Another keeper with the same payer has a post in flight (its encoded VAA created and
+/// written, not yet verified): the scanner does not report it while it is younger than
+/// LEFTOVER_MIN_AGE blocks, the other post then completes normally (no `WrongVaaOwner`), and the
+/// scanner forgets it. A VAA that stays open for LEFTOVER_MIN_AGE blocks is reported and closed.
+#[test]
+fn test_the_scan_never_adopts_a_post_in_flight() {
+    use pyth_post::{LeftoverScanner, LEFTOVER_MIN_AGE};
+    let (mut svm, payer) = Svm::new();
+    let acc = AccumulatorUpdate::parse(&hermes_update(T0)).unwrap();
+    let update = &acc.updates[0];
+    let plan = |vaa: &Keypair, pu: &Keypair, svm: &Svm| {
+        post_plan(
+            &PostAccounts {
+                payer: &payer.pubkey(),
+                encoded_vaa: &vaa.pubkey(),
+                price_update: &pu.pubkey(),
+                encoded_vaa_rent: svm.rent_exempt(46 + acc.vaa.len()).unwrap(),
+                treasury_id: 0,
+            },
+            &acc,
+            update,
+            vec![],
+        )
+        .unwrap()
+    };
+    let mut scanner = LeftoverScanner::new();
+
+    // The other keeper's first transaction lands.
+    let (vaa, pu) = (Keypair::new(), Keypair::new());
+    let steps = plan(&vaa, &pu, &svm);
+    svm.send(&steps[0].instructions, &payer, Some(&vaa))
+        .unwrap();
+    assert!(scanner.scan(&svm, &payer.pubkey()).unwrap().is_empty());
+    advance(&mut svm, LEFTOVER_MIN_AGE - 10);
+    assert!(scanner.scan(&svm, &payer.pubkey()).unwrap().is_empty());
+    // It finishes: verify, then post and close.
+    svm.send(&steps[1].instructions, &payer, None).unwrap();
+    svm.send(&steps[2].instructions, &payer, Some(&pu)).unwrap();
+    advance(&mut svm, 20);
+    assert!(scanner.scan(&svm, &payer.pubkey()).unwrap().is_empty());
+    assert!(scan_vaas(&svm, &payer).is_empty());
+
+    // A leftover: created and abandoned.
+    let (stale, pu) = (Keypair::new(), Keypair::new());
+    let steps = plan(&stale, &pu, &svm);
+    svm.send(&steps[0].instructions, &payer, Some(&stale))
+        .unwrap();
+    assert!(scanner.scan(&svm, &payer.pubkey()).unwrap().is_empty());
+    advance(&mut svm, LEFTOVER_MIN_AGE);
+    let found = scanner.scan(&svm, &payer.pubkey()).unwrap();
+    assert_eq!(found, [stale.pubkey()]);
+    assert_eq!(
+        pyth_post::close_if_open(&mut svm, &payer, &stale.pubkey()),
+        None
+    );
+    assert!(scanner.scan(&svm, &payer.pubkey()).unwrap().is_empty());
+}
+
+fn scan_vaas(svm: &Svm, payer: &Keypair) -> Vec<Address> {
+    pyth_post::scan_encoded_vaas(svm, &payer.pubkey()).unwrap()
+}

@@ -365,12 +365,23 @@ fn test_late_landing_creates_are_kept_until_expiry_and_closed() {
     chain.post_sample(&window, &SOL, &p).unwrap();
     assert!(chain.orphans().is_empty(), "expired without landing");
 
-    // A leftover nobody reported: found by the scan, closed before the next post.
+    // A leftover nobody reported: adopted by the scan only once it has been there for
+    // LEFTOVER_MIN_AGE blocks (younger, it may be another process's post in flight), then
+    // closed before the next post.
     let rec = Recorder::default();
-    let (sent, open) = (Rc::clone(&rec.sent), Rc::clone(&rec.open));
+    let (sent, open, height) = (
+        Rc::clone(&rec.sent),
+        Rc::clone(&rec.open),
+        Rc::clone(&rec.height),
+    );
     let stray = Address::new_unique();
     open.borrow_mut().push(stray);
+    height.set(5_000);
     let mut chain = ReceiverChain::new(rec, Updates(bytes), Keypair::new(), Address::new_unique());
+    assert_eq!(chain.scan_orphans().unwrap(), 0, "first seen");
+    height.set(5_000 + pyth_post::LEFTOVER_MIN_AGE - 1);
+    assert_eq!(chain.scan_orphans().unwrap(), 0, "still young");
+    height.set(5_000 + pyth_post::LEFTOVER_MIN_AGE);
     assert_eq!(chain.scan_orphans().unwrap(), 1);
     assert_eq!(chain.scan_orphans().unwrap(), 0, "already queued");
     chain.post_sample(&window, &SOL, &p).unwrap();

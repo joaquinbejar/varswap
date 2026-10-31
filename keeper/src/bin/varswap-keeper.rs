@@ -3,13 +3,14 @@
 //! Each tick posts every published canonical print a window is missing (Hermes, then Wormhole
 //! and the Pyth receiver, then `sample` in the same transaction) and finalizes the window once
 //! it is complete or past its backfill deadline. With `--watch SECONDS` it repeats until every
-//! window is final, scans the payer's encoded VAAs at start and every 12 rounds (leftovers
-//! are closed before the next post), and backs off at least 61 s after a Hermes 429 (the key's limit, about 10
+//! window is final, scans the payer's encoded VAAs at start and every 12 rounds (one seen for
+//! 300 blocks or more is a leftover, closed before the next post), and backs off at least 61 s after a Hermes 429 (the key's limit, about 10
 //! requests a minute, is shared). Every transaction signature is printed, one per line.
 //!
 //! Configuration comes from the environment: `SOLANA_URL`, `VARSWAP_PROGRAM_ID`,
 //! `VARSWAP_KEYPAIR` (a keypair file path), and `VARSWAP_HERMES_API_KEY` (never printed),
-//! with the optional `VARSWAP_HERMES_URL` and `VARSWAP_HERMES_AUTH`.
+//! with the optional `VARSWAP_HERMES_URL` and `VARSWAP_HERMES_AUTH`. Run one keeper process
+//! per payer keypair.
 
 use std::process::ExitCode;
 use std::time::Duration;

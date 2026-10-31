@@ -4,6 +4,24 @@ All notable changes to the published crates are recorded here. The format follow
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crates follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.2] - 2026-10-31
+
+`pyth-post` 0.1.1. The other crates are unchanged.
+
+### pyth-post 0.1.1
+
+- Added `LeftoverScanner` and `LEFTOVER_MIN_AGE` (300 blocks). The scanner reports an encoded
+  VAA as a leftover only once consecutive scans have seen it for at least that many blocks.
+  A post in flight in another process with the same payer is never reported, so it can no
+  longer be closed mid-post (the receiver's `WrongVaaOwner`, 6013, which metalbook hit with an
+  unconditional scan).
+- `scan_encoded_vaas` is unchanged. Its documentation now says it includes posts in flight.
+  The documentation recommends one poster process per payer.
+
+### varswap-keeper (not published)
+
+- `ReceiverChain::scan_orphans` adopts only what `LeftoverScanner` reports.
+
 ## [0.1.1] - 2026-10-30
 
 Adds `pyth-post` 0.1.0 to crates.io. `pyth-lite`, `varswap-core` and `varswap-sdk` are unchanged

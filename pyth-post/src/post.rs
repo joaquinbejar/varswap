@@ -322,10 +322,9 @@ pub fn post<T: Transport>(
 /// the 1-byte status).
 const ENCODED_VAA_WRITE_AUTHORITY: usize = 9;
 
-/// Every encoded VAA account on the cluster written by `write_authority`. A poster runs posts
-/// one at a time, so between posts any of them is a leftover to close with
-/// [`close_if_open`]: run it periodically to catch a transaction that landed after its post
-/// gave up on it.
+/// Every encoded VAA account on the cluster written by `write_authority`, including any a post
+/// has in flight right now (in this process or in another one using the same payer). Use
+/// [`LeftoverScanner`] to tell leftovers from posts in progress.
 ///
 /// # Errors
 ///
@@ -339,6 +338,74 @@ pub fn scan_encoded_vaas<T: Transport>(
         ENCODED_VAA_WRITE_AUTHORITY,
         write_authority.as_ref(),
     )
+}
+
+/// Blocks an encoded VAA must stay on the cluster, seen by consecutive scans, before
+/// [`LeftoverScanner`] reports it: two blockhash lifetimes (150 blocks each). A post creates,
+/// verifies and closes its encoded VAA within seconds, so one that is still there after 300
+/// blocks is a leftover, not a post in flight.
+pub const LEFTOVER_MIN_AGE: u64 = 300;
+
+/// Finds leftover encoded VAAs (a post gave up on them and they stayed open) without touching
+/// a post in flight. Each [`LeftoverScanner::scan`] lists the payer's encoded VAAs
+/// ([`scan_encoded_vaas`]) and reports only those every scan has seen since a block height at
+/// least [`LEFTOVER_MIN_AGE`] blocks ago. A post in flight, here or in another process with
+/// the same payer, is closed or finished long before that, so it is never reported, and
+/// closing what is reported cannot break anyone's post (the receiver's `WrongVaaOwner`, 6013,
+/// on a VAA closed mid-post).
+///
+/// Run one keeper process per payer anyway: two processes sharing a payer also share its fees
+/// and every other account it writes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LeftoverScanner {
+    /// Each encoded VAA seen by the last scan, with the block height of the first scan of the
+    /// run that has seen it since.
+    seen: Vec<(Address, u64)>,
+}
+
+impl LeftoverScanner {
+    /// A scanner that has seen nothing yet.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The encoded VAAs written by `write_authority` that every scan has seen for at least
+    /// [`LEFTOVER_MIN_AGE`] blocks. An address missing from a scan starts over.
+    ///
+    /// # Errors
+    ///
+    /// `PostError::Chain` if the cluster cannot answer (the scanner's state is unchanged).
+    pub fn scan<T: Transport>(
+        &mut self,
+        transport: &T,
+        write_authority: &Address,
+    ) -> Result<Vec<Address>, PostError> {
+        let height = transport.block_height()?;
+        let found = scan_encoded_vaas(transport, write_authority)?;
+        let seen: Vec<(Address, u64)> = found
+            .into_iter()
+            .map(|a| {
+                let since = self
+                    .seen
+                    .iter()
+                    .find(|(s, _)| *s == a)
+                    .map_or(height, |(_, since)| *since);
+                (a, since)
+            })
+            .collect();
+        let old = seen
+            .iter()
+            .filter(|(_, since)| {
+                since
+                    .checked_add(LEFTOVER_MIN_AGE)
+                    .is_some_and(|due| height >= due)
+            })
+            .map(|(a, _)| *a)
+            .collect();
+        self.seen = seen;
+        Ok(old)
+    }
 }
 
 /// How many times [`close_if_open`] sends `close_encoded_vaa` before giving up.
