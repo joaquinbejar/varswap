@@ -10,6 +10,8 @@
 # LaunchAgent ~/Library/LaunchAgents/com.varswap.keeper.<name>.plist and loads it. The agent
 # starts now and at every login (RunAtLoad), and is restarted if it exits with an error or is killed; it is
 # not restarted after a clean exit, which `--watch` makes only once every window is final.
+# Restarts are at least 5 minutes apart (ThrottleInterval), so a crash loop cannot burn the
+# shared Hermes key's rate limit.
 #
 # Configuration: SOLANA_URL, VARSWAP_PROGRAM_ID and VARSWAP_KEYPAIR are taken from the current
 # environment and written into the plist, so none of them may hold a secret (use a public RPC
@@ -95,7 +97,11 @@ install)
 	<dict>
 		<key>SuccessfulExit</key><false/>
 	</dict>
-	<key>ThrottleInterval</key><integer>60</integer>
+	<!-- At most one start every 5 minutes, the --watch cadence: a crash loop costs at most one
+	     round of Hermes requests per 5 minutes (one per missing bucket; the cache dies with
+	     the process), within the shared key's ~10 requests a minute for up to 49 missing
+	     hourly buckets. -->
+	<key>ThrottleInterval</key><integer>300</integer>
 	<key>StandardOutPath</key><string>$(xml "$dir/keeper.sigs")</string>
 	<key>StandardErrorPath</key><string>$(xml "$dir/keeper.log")</string>
 	<key>WorkingDirectory</key><string>$(xml "$dir")</string>
