@@ -10,16 +10,27 @@ All notable changes to the published crates are recorded here. The format follow
 
 ### pyth-post 0.1.1
 
-- Added `LeftoverScanner` and `LEFTOVER_MIN_AGE` (300 blocks). The scanner reports an encoded
-  VAA as a leftover only once consecutive scans have seen it for at least that many blocks.
-  A post in flight in another process with the same payer is never reported, so it can no
-  longer be closed mid-post (the receiver's `WrongVaaOwner`, 6013, which metalbook hit with an
-  unconditional scan).
+- **Contract: the payer is exclusive to one poster process.** Closing a leftover encoded VAA
+  cannot be atomic against another process's verify, so there is no guarantee across processes
+  that share a payer.
+- `PayerLock` enforces the contract. It takes an exclusive lock on `payer-<address>.lock` in
+  `$PYTH_POST_LOCK_DIR` (default `~/.local/state/pyth-post`, a fixed path because a shell and a
+  launchd agent can see different temporary directories). `default_lock_dir` and
+  `LOCK_DIR_VAR` come with it.
+- `LeftoverScanner` and `LEFTOVER_MIN_AGE` (300 blocks) are kept as defense in depth.
+  - An encoded VAA is reported only once consecutive scans have seen its content (status and
+    written bytes) unchanged for at least that many blocks. Every write, and the verify,
+    restart the count.
+  - The block height is read after the listing, so an account seen for the first time is
+    never reported.
+  - This keeps an unconditional periodic scan from closing a live post (the receiver's
+    `WrongVaaOwner`, 6013, which metalbook hit).
 - `scan_encoded_vaas` is unchanged. Its documentation now says it includes posts in flight.
-  The documentation recommends one poster process per payer.
 
 ### varswap-keeper (not published)
 
+- The binary takes the `PayerLock` at start and refuses to run while another process holds
+  it.
 - `ReceiverChain::scan_orphans` adopts only what `LeftoverScanner` reports.
 
 ## [0.1.1] - 2026-10-30

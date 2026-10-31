@@ -11,7 +11,13 @@
 //!
 //! A failed post can leave its encoded VAA open: [`post`] reports it ([`PostError::Orphaned`],
 //! [`PostError::Uncertain`]) and [`close_if_open`] closes it later. [`LeftoverScanner`] finds
-//! any that were missed, without touching a post in flight. Run one poster process per payer.
+//! any that were missed.
+//!
+//! **Contract: the payer is exclusive to one poster process.** [`LeftoverScanner`] and any
+//! sweep built on it close the payer's encoded VAAs, and a close cannot be atomic against
+//! another process's verify, so pyth-post gives no guarantee across processes sharing a payer.
+//! Hold a [`PayerLock`] for the life of the process to enforce it; the scanner's
+//! [`LEFTOVER_MIN_AGE`] guard is only defense in depth.
 //!
 //! ```no_run
 //! # fn main() -> Result<(), pyth_post::PostError> {
@@ -31,12 +37,14 @@
 pub mod accumulator;
 mod error;
 pub mod ix;
+mod lock;
 mod post;
 pub mod redact;
 mod rpc;
 
 pub use accumulator::{price_feed_message, AccumulatorUpdate, MerkleUpdate, PriceFeedMessage};
 pub use error::PostError;
+pub use lock::{default_lock_dir, PayerLock, LOCK_DIR_VAR};
 pub use post::{
     close_if_open, post, post_plan, scan_encoded_vaas, Extra, LeftoverScanner, PostAccounts, Step,
     Transport, UpdateSource, CLOSE_ATTEMPTS, FIRST_CHUNK, LEFTOVER_MIN_AGE, NEXT_CHUNK,

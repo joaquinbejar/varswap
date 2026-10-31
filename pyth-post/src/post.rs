@@ -357,8 +357,10 @@ pub const LEFTOVER_MIN_AGE: u64 = 300;
 /// it is never reported unless it stalls for 300 blocks; closing what is reported cannot break
 /// a live post (the receiver's `WrongVaaOwner`, 6013, on a VAA closed mid-post).
 ///
-/// Run one poster process per payer anyway: two processes sharing a payer also share its fees
-/// and every other account it writes.
+/// **Contract: the payer is exclusive to one poster process** (enforce it with
+/// [`crate::PayerLock`]). Between a scan and the close of what it reported, another process
+/// could still verify that encoded VAA, and no client-side check can make the close atomic
+/// against it; the 300-block guard narrows that window but does not close it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LeftoverScanner {
     /// Each encoded VAA seen by the last scan: its content then, and the block height since
