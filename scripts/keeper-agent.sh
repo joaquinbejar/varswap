@@ -41,14 +41,37 @@ home=${VARSWAP_KEEPER_HOME:-$HOME/.local/share/varswap-keeper}
 dir=$home/$name
 label=com.varswap.keeper.$name
 plist=$HOME/Library/LaunchAgents/$label.plist
-# The login session's domain when this runs inside it, otherwise (an SSH or background shell)
-# the per-user domain. Either way the plist in ~/Library/LaunchAgents is loaded again into the
-# login session at every login, so the agent comes back after a reboot.
-if launchctl print "gui/$(id -u)" >/dev/null 2>&1; then
-	domain=gui/$(id -u)
+uid=$(id -u)
+# The agent may be loaded in either domain: the login session's (gui/), or the per-user one
+# (user/) when it was installed from an SSH or background shell. Every command looks at both,
+# by exact label. A new install goes to the login session when this runs inside it.
+if launchctl print "gui/$uid" >/dev/null 2>&1; then
+	domain=gui/$uid
 else
-	domain=user/$(id -u)
+	domain=user/$uid
 fi
+
+# The domains the agent is loaded in, one per line.
+loaded() {
+	for d in "gui/$uid" "user/$uid"; do
+		if launchctl print "$d/$label" >/dev/null 2>&1; then
+			echo "$d"
+		fi
+	done
+}
+
+# Unloads the agent from every domain it is loaded in. Not loaded anywhere is fine; a bootout
+# that fails while the service is still loaded is an error.
+unload() {
+	for d in $(loaded); do
+		if ! launchctl bootout "$d/$label" 2>/dev/null; then
+			if launchctl print "$d/$label" >/dev/null 2>&1; then
+				echo "could not unload $label from $d" >&2
+				exit 1
+			fi
+		fi
+	done
+}
 
 xml() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
 
@@ -109,18 +132,25 @@ install)
 </plist>
 EOF
 	plutil -lint "$plist" >/dev/null
-	launchctl bootout "$domain/$label" 2>/dev/null || true
+	unload
 	launchctl bootstrap "$domain" "$plist"
 	echo "installed $label: $plist"
 	echo "log: $dir/keeper.log, signatures: $dir/keeper.sigs"
 	;;
 uninstall)
-	launchctl bootout "$domain/$label" 2>/dev/null || true
+	unload
 	rm -f "$plist"
 	echo "uninstalled $label (its files, if any, stay in $dir)"
 	;;
 status)
-	launchctl print "$domain/$label" 2>/dev/null | grep -E '^\s*(state|pid|last exit code) =' || echo "$label not loaded"
+	domains=$(loaded)
+	if [ -z "$domains" ]; then
+		echo "$label not loaded"
+	fi
+	for d in $domains; do
+		echo "$d/$label:"
+		launchctl print "$d/$label" | grep -E '^	(state|pid|runs|last exit code) =' || true
+	done
 	;;
 *) usage ;;
 esac
