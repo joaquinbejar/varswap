@@ -130,8 +130,9 @@ and finalizes it after 2026-11-01T00:00:00Z. Its backfill deadline is 2026-11-02
 
 | What | Value |
 | --- | --- |
-| Process | LaunchAgent `com.varswap.keeper.sol-2026-10-31` on the Studio (`scripts/keeper-agent.sh`), `varswap-keeper --watch 300`, built from PR #24 (`f96af44`, the 300-block leftover scan); restarted after a crash and loaded again at every login |
-| History | PID `96116` (from 2026-10-30) posted buckets 0 to 8 until the Studio rebooted at 2026-10-31T08:24Z; PID `1845` (09:03Z) posted bucket 9; the agent took over at 09:16Z |
+| Process | LaunchAgent `com.varswap.keeper.sol-2026-10-31` on the Studio (`scripts/keeper-agent.sh`), `varswap-keeper --watch 300`, built from `main` at `68afc8d` (pyth-post 0.1.1); restarted after a crash (at most every 5 minutes) and loaded again at every login |
+| Payer | `5MTVStedYVor97UjAYU4shkp6RaTiKXEFupfHJN79D1` (`~/.config/solana/varswap-devnet-keeper.json`), the keeper's own: funded with 1 SOL from the deployer `77ie…CPPV` ([transfer](https://explorer.solana.com/tx/3SeTS3YEuqWZrbABTyEQvQ6Q5estvHfvRDVZLUmTUkG94yHfdkzLZmupMprm68qRreJtjDFxozrT2moktyz9LjCC?cluster=devnet)), shared with no other poster, and locked to this process (`~/.local/state/pyth-post/payer-5MTV….lock`) |
+| History | PID `96116` (from 2026-10-30, payer `77ie…`) posted buckets 0 to 8 until the Studio rebooted at 2026-10-31T08:24Z; PID `1845` (09:03Z) posted bucket 9; the agent took over at 09:16Z and was reinstalled with the `68afc8d` build and the keeper's own payer at 09:31Z |
 | Log | `~/.local/share/varswap-keeper/sol-2026-10-31/keeper.log` (earlier runs: `/Users/joaquin/tmp/worktrees/varswap/keeper-run/7s5K.log`) |
 | Signatures | `~/.local/share/varswap-keeper/sol-2026-10-31/keeper.sigs` (earlier runs: `keeper-run/7s5K.sigs`) |
 | Status | `scripts/keeper-agent.sh status sol-2026-10-31` |
