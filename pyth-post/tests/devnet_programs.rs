@@ -600,3 +600,161 @@ fn test_the_scan_never_adopts_a_post_in_flight() {
 fn scan_vaas(svm: &Svm, payer: &Keypair) -> Vec<Address> {
     pyth_post::scan_encoded_vaas(svm, &payer.pubkey()).unwrap()
 }
+
+/// codex's boundary: another poster creates its encoded VAA at height h and verifies it at
+/// h + 300 (a fresh blockhash). The verify changes the account (Writing to Verified), which
+/// restarts its age, so the scan right after does not report it and the post completes. A
+/// verified VAA left unchanged for 300 blocks is reported and closed.
+#[test]
+fn test_a_change_restarts_the_age_and_an_unchanged_verified_vaa_is_closed() {
+    use pyth_post::{LeftoverScanner, LEFTOVER_MIN_AGE};
+    let (mut svm, payer) = Svm::new();
+    let acc = AccumulatorUpdate::parse(&hermes_update(T0)).unwrap();
+    let rent = svm.rent_exempt(46 + acc.vaa.len()).unwrap();
+    let plan = |vaa: &Keypair, pu: &Keypair| {
+        post_plan(
+            &PostAccounts {
+                payer: &payer.pubkey(),
+                encoded_vaa: &vaa.pubkey(),
+                price_update: &pu.pubkey(),
+                encoded_vaa_rent: rent,
+                treasury_id: 0,
+            },
+            &acc,
+            &acc.updates[0],
+            vec![],
+        )
+        .unwrap()
+    };
+    let mut scanner = LeftoverScanner::new();
+
+    let (vaa, pu) = (Keypair::new(), Keypair::new());
+    let steps = plan(&vaa, &pu);
+    svm.send(&steps[0].instructions, &payer, Some(&vaa))
+        .unwrap(); // h
+    assert!(scanner.scan(&svm, &payer.pubkey()).unwrap().is_empty());
+    advance(&mut svm, LEFTOVER_MIN_AGE);
+    svm.send(&steps[1].instructions, &payer, None).unwrap(); // verified at h + 300
+    assert!(
+        scanner.scan(&svm, &payer.pubkey()).unwrap().is_empty(),
+        "the verify changed it: age restarts"
+    );
+    svm.send(&steps[2].instructions, &payer, Some(&pu)).unwrap();
+    assert!(scan_vaas(&svm, &payer).is_empty(), "the post completed");
+
+    // Verified, then abandoned.
+    let (vaa, pu) = (Keypair::new(), Keypair::new());
+    let steps = plan(&vaa, &pu);
+    svm.send(&steps[0].instructions, &payer, Some(&vaa))
+        .unwrap();
+    svm.send(&steps[1].instructions, &payer, None).unwrap();
+    assert!(scanner.scan(&svm, &payer.pubkey()).unwrap().is_empty());
+    advance(&mut svm, LEFTOVER_MIN_AGE - 1);
+    assert!(scanner.scan(&svm, &payer.pubkey()).unwrap().is_empty());
+    advance(&mut svm, 1);
+    assert_eq!(scanner.scan(&svm, &payer.pubkey()).unwrap(), [vaa.pubkey()]);
+    assert_eq!(
+        pyth_post::close_if_open(&mut svm, &payer, &vaa.pubkey()),
+        None
+    );
+}
+
+/// A first program-account listing that takes 400 blocks, with another poster's encoded VAA
+/// appearing 200 blocks into it. The height is read after the listing, so that first sighting
+/// counts from the end of the listing: a fast scan one block later does not report it (read
+/// before the listing, it would count from 401 blocks ago and be reported), and it is reported
+/// only 300 blocks after the first sighting.
+#[test]
+fn test_a_slow_listing_does_not_backdate_a_new_account() {
+    use pyth_post::LeftoverScanner;
+    use std::cell::RefCell;
+
+    struct Slow {
+        inner: RefCell<Svm>,
+        /// The other poster's first transaction, landed in the middle of the next listing.
+        pending: RefCell<Option<(Vec<Instruction>, Keypair, Keypair)>>,
+    }
+    impl Transport for Slow {
+        fn now(&self) -> Result<i64, PostError> {
+            self.inner.borrow().now()
+        }
+        fn account(&self, a: &Address) -> Result<Option<(Address, Vec<u8>)>, PostError> {
+            self.inner.borrow().account(a)
+        }
+        fn block_height(&self) -> Result<u64, PostError> {
+            self.inner.borrow().block_height()
+        }
+        fn last_send_expiry(&self) -> Option<u64> {
+            None
+        }
+        fn program_accounts(
+            &self,
+            program: &Address,
+            offset: usize,
+            bytes: &[u8],
+        ) -> Result<Vec<Address>, PostError> {
+            let mut inner = self.inner.borrow_mut();
+            // Only the first listing is slow.
+            if let Some((ixs, payer, vaa)) = self.pending.borrow_mut().take() {
+                advance(&mut inner, 200);
+                inner.send(&ixs, &payer, Some(&vaa)).unwrap();
+                advance(&mut inner, 200);
+            }
+            inner.program_accounts(program, offset, bytes)
+        }
+        fn rent_exempt(&self, len: usize) -> Result<u64, PostError> {
+            self.inner.borrow().rent_exempt(len)
+        }
+        fn send(
+            &mut self,
+            _: &[Instruction],
+            _: &Keypair,
+            _: Option<&Keypair>,
+        ) -> Result<String, PostError> {
+            Err(PostError::Chain("this transport only scans".into()))
+        }
+    }
+
+    let (svm, payer) = Svm::new();
+    let acc = AccumulatorUpdate::parse(&hermes_update(T0)).unwrap();
+    let (vaa, pu) = (Keypair::new(), Keypair::new());
+    let steps = post_plan(
+        &PostAccounts {
+            payer: &payer.pubkey(),
+            encoded_vaa: &vaa.pubkey(),
+            price_update: &pu.pubkey(),
+            encoded_vaa_rent: svm.rent_exempt(46 + acc.vaa.len()).unwrap(),
+            treasury_id: 0,
+        },
+        &acc,
+        &acc.updates[0],
+        vec![],
+    )
+    .unwrap();
+    let slow = Slow {
+        inner: RefCell::new(svm),
+        pending: RefCell::new(Some((
+            steps[0].instructions.clone(),
+            payer.insecure_clone(),
+            vaa.insecure_clone(),
+        ))),
+    };
+    let mut scanner = LeftoverScanner::new();
+    // The account appears 200 blocks into the 400-block first listing.
+    assert_eq!(scanner.scan(&slow, &payer.pubkey()).unwrap(), []);
+    advance(&mut slow.inner.borrow_mut(), 1);
+    assert_eq!(
+        scanner.scan(&slow, &payer.pubkey()).unwrap(),
+        [],
+        "201 blocks old, counted from the first sighting at the end of the listing"
+    );
+    advance(
+        &mut slow.inner.borrow_mut(),
+        pyth_post::LEFTOVER_MIN_AGE - 1,
+    );
+    assert_eq!(
+        scanner.scan(&slow, &payer.pubkey()).unwrap(),
+        [vaa.pubkey()],
+        "300 blocks after the first sighting"
+    );
+}

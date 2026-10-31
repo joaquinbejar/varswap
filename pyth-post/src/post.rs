@@ -340,27 +340,30 @@ pub fn scan_encoded_vaas<T: Transport>(
     )
 }
 
-/// Blocks an encoded VAA must stay on the cluster, seen by consecutive scans, before
-/// [`LeftoverScanner`] reports it: two blockhash lifetimes (150 blocks each). A post creates,
-/// verifies and closes its encoded VAA within seconds, so one that is still there after 300
-/// blocks is a leftover, not a post in flight.
+/// Blocks an encoded VAA must stay unchanged on the cluster, as seen by consecutive scans,
+/// before [`LeftoverScanner`] reports it: two blockhash lifetimes (150 blocks each). A post
+/// creates, writes, verifies and closes its encoded VAA within seconds, changing it at every
+/// step, so one that has not changed for 300 blocks is a leftover, not a post in flight.
 pub const LEFTOVER_MIN_AGE: u64 = 300;
 
 /// Finds leftover encoded VAAs (a post gave up on them and they stayed open) without touching
 /// a post in flight. Each [`LeftoverScanner::scan`] lists the payer's encoded VAAs
-/// ([`scan_encoded_vaas`]) and reports only those every scan has seen since a block height at
-/// least [`LEFTOVER_MIN_AGE`] blocks ago. A post in flight, here or in another process with
-/// the same payer, is closed or finished long before that, so it is never reported, and
-/// closing what is reported cannot break anyone's post (the receiver's `WrongVaaOwner`, 6013,
-/// on a VAA closed mid-post).
+/// ([`scan_encoded_vaas`]), reads each one, then reads the block height, and reports only
+/// those whose content (status and written bytes) every scan has seen unchanged since a height
+/// at least [`LEFTOVER_MIN_AGE`] blocks ago. Any change (a write, `Writing` to `Verified`)
+/// starts the count over, and so does a scan that misses the account; a first sighting is
+/// never old, because the height is read after the listing. A post in flight, here or in
+/// another process with the same payer, keeps changing its encoded VAA until it closes it, so
+/// it is never reported unless it stalls for 300 blocks; closing what is reported cannot break
+/// a live post (the receiver's `WrongVaaOwner`, 6013, on a VAA closed mid-post).
 ///
-/// Run one keeper process per payer anyway: two processes sharing a payer also share its fees
+/// Run one poster process per payer anyway: two processes sharing a payer also share its fees
 /// and every other account it writes.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LeftoverScanner {
-    /// Each encoded VAA seen by the last scan, with the block height of the first scan of the
-    /// run that has seen it since.
-    seen: Vec<(Address, u64)>,
+    /// Each encoded VAA seen by the last scan: its content then, and the block height since
+    /// which every scan has seen exactly that content.
+    seen: Vec<(Address, Vec<u8>, u64)>,
 }
 
 impl LeftoverScanner {
@@ -370,8 +373,8 @@ impl LeftoverScanner {
         Self::default()
     }
 
-    /// The encoded VAAs written by `write_authority` that every scan has seen for at least
-    /// [`LEFTOVER_MIN_AGE`] blocks. An address missing from a scan starts over.
+    /// The encoded VAAs written by `write_authority` whose content has been unchanged for at
+    /// least [`LEFTOVER_MIN_AGE`] blocks across consecutive scans.
     ///
     /// # Errors
     ///
@@ -381,27 +384,36 @@ impl LeftoverScanner {
         transport: &T,
         write_authority: &Address,
     ) -> Result<Vec<Address>, PostError> {
+        let mut current = Vec::new();
+        for address in scan_encoded_vaas(transport, write_authority)? {
+            if let Some((owner, data)) = transport.account(&address)? {
+                if owner == WORMHOLE_PROGRAM {
+                    current.push((address, data));
+                }
+            }
+        }
+        // After the listing and the reads, however long they took: a first sighting gets age
+        // zero, never a height from before it existed.
         let height = transport.block_height()?;
-        let found = scan_encoded_vaas(transport, write_authority)?;
-        let seen: Vec<(Address, u64)> = found
+        let seen: Vec<(Address, Vec<u8>, u64)> = current
             .into_iter()
-            .map(|a| {
+            .map(|(address, data)| {
                 let since = self
                     .seen
                     .iter()
-                    .find(|(s, _)| *s == a)
-                    .map_or(height, |(_, since)| *since);
-                (a, since)
+                    .find(|(a, d, _)| *a == address && *d == data)
+                    .map_or(height, |(_, _, since)| *since);
+                (address, data, since)
             })
             .collect();
         let old = seen
             .iter()
-            .filter(|(_, since)| {
+            .filter(|(_, _, since)| {
                 since
                     .checked_add(LEFTOVER_MIN_AGE)
                     .is_some_and(|due| height >= due)
             })
-            .map(|(a, _)| *a)
+            .map(|(address, _, _)| *address)
             .collect();
         self.seen = seen;
         Ok(old)
