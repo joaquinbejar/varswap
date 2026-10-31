@@ -77,6 +77,7 @@ impl<T: Transport, U: UpdateSource> ReceiverChain<T, U> {
         &self.orphans
     }
 
+    /// Scans and cleanup and posts for a payer must not overlap, even within one process.
     /// Assumes this chain is the payer's only poster (pyth-post's contract): one
     /// `ReceiverChain` per payer, never shared across threads (every post and scan takes
     /// `&mut self`, so they run one at a time), and no other process using the payer (the

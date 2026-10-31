@@ -17,9 +17,10 @@
 //! a time.** [`LeftoverScanner`] and any sweep built on it close the payer's encoded VAAs, and
 //! a close cannot be atomic against another poster's verify, so pyth-post gives no guarantee
 //! between posters sharing a payer: another process, another thread, or another poster
-//! instance (for example a second `ReceiverChain`) in the same process. [`PayerLock`] keeps a
-//! second process out; it does not serialize threads or instances inside one process, which
-//! is the caller's job (`varswap-keeper`'s `ReceiverChain` takes `&mut self` for every post and
+//! instance (for example a second `ReceiverChain`) in the same process. Scans and cleanup and
+//! posts for a payer must not overlap, even within one process: use a single poster per payer
+//! and do not share it across threads. [`PayerLock`] only prevents a second process; it does
+//! not serialize threads or instances inside one process, which is the caller's job (`varswap-keeper`'s `ReceiverChain` takes `&mut self` for every post and
 //! scan, and the binary runs exactly one). The scanner's [`LEFTOVER_MIN_AGE`] guard is only
 //! defense in depth.
 //!

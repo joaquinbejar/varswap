@@ -363,8 +363,10 @@ pub const LEFTOVER_MIN_AGE: u64 = 300;
 /// time** (the crate documentation explains it). Between a scan and the close of what it
 /// reported, another poster with the same payer (another process, thread or instance) could
 /// still verify that encoded VAA, and no client-side check can make the close atomic against
-/// it; the 300-block guard narrows that window but does not close it. [`crate::PayerLock`]
-/// keeps other processes out, not other threads or instances in the same process.
+/// it; the 300-block guard narrows that window but does not close it. Scans and cleanup and
+/// posts for a payer must not overlap, even within one process: use a single poster per
+/// payer and do not share it across threads. [`crate::PayerLock`] only prevents a second
+/// process.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LeftoverScanner {
     /// Each encoded VAA seen by the last scan: its content then, and the block height since

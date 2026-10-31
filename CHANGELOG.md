@@ -10,9 +10,11 @@ All notable changes to the published crates are recorded here. The format follow
 
 ### pyth-post 0.1.1
 
-- **Contract: the payer is exclusive to one poster process.** Closing a leftover encoded VAA
-  cannot be atomic against another process's verify, so there is no guarantee across processes
-  that share a payer.
+- **Contract: one poster per payer.** Closing a leftover encoded VAA cannot be atomic against
+  another poster's verify, so there is no guarantee between posters that share a payer. Scans,
+  cleanup and posts for a payer must not overlap, even within one process: use a single poster
+  (one `ReceiverChain`) per payer and do not share it across threads. `PayerLock` only prevents
+  a second process.
 - `PayerLock` enforces the contract. It takes an exclusive lock on `payer-<address>.lock` in
   `$PYTH_POST_LOCK_DIR` (default `~/.local/state/pyth-post`, a fixed path because a shell and a
   launchd agent can see different temporary directories). `default_lock_dir` and

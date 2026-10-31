@@ -1,10 +1,12 @@
 //! One poster process per payer, enforced with an exclusive lock on a file named after the
 //! payer.
 //!
-//! [`crate::LeftoverScanner`] and every orphan sweep built on it assume the payer is exclusive
-//! to one poster process: closing a leftover cannot be atomic against another process's
-//! verify, so two processes posting with the same payer can break each other's posts. Take a
-//! [`PayerLock`] at start and keep it for the life of the process.
+//! [`crate::LeftoverScanner`] and every orphan sweep built on it assume one poster per payer:
+//! closing a leftover cannot be atomic against another poster's verify. Scans and cleanup and
+//! posts for a payer must not overlap, even within one process: use a single poster (one
+//! `ReceiverChain` in `varswap-keeper`) per payer and do not share it across threads.
+//! [`PayerLock`] only prevents a second process; take it at start and keep it for the life of
+//! the process.
 
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io;
@@ -36,7 +38,9 @@ pub fn default_lock_dir() -> io::Result<PathBuf> {
 }
 
 /// An exclusive lock on `payer-<address>.lock`, held until it is dropped (or the process
-/// exits).
+/// exits). It only prevents a second process from posting with the payer: it does not stop
+/// two threads or two posters inside one process from overlapping, which the caller must
+/// prevent (one poster per payer, not shared across threads).
 #[derive(Debug)]
 pub struct PayerLock {
     _file: File,
