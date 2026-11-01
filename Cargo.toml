@@ -41,7 +41,7 @@ proptest = "1.12"
 # optfix 0.2.0 (crates.io; the only breaking change from 0.1 is `PricingError` becoming
 # `#[non_exhaustive]`, which `kernel_err`'s `as u8` conversion does not match on; same `ln`
 # and `wide::mul_shr` results as 0.1.0).
-optfix = "0.2.1"
+optfix = "0.2"
 # Pinocchio 0.11 generation: decided exception to the latest-stable rule (docs/PLAN.md).
 pinocchio = { version = "0.11", default-features = false, features = ["cpi"] }
 pinocchio-system = "0.6"
