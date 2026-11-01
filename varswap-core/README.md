@@ -19,7 +19,7 @@ built with it must never be deployed.
 
 ```toml
 [dependencies]
-varswap-core = "0.1"
+varswap-core = "0.2"
 ```
 
 The design and the numbers behind each decision are in
