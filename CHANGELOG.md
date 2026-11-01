@@ -4,6 +4,20 @@ All notable changes to the published crates are recorded here. The format follow
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crates follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### varswap-core (next release: 0.2.0)
+
+- optfix 0.1 to 0.2. The only breaking change in optfix is `PricingError` becoming
+  `#[non_exhaustive]`; `kernel_err` converts it with `as u8`, so no code changed. `ln` and
+  `wide::mul_shr` results are identical: the replay of 24 real returns and the exact-value
+  tests pass unchanged.
+- Semver: optfix types are part of the public API (`LnKernel::log_return` returns
+  `optfix::Fixed`, `LnKernel::term_error_bound` takes one), so a dependency major bump is a
+  breaking change for varswap-core: the next release is 0.2.0, not 0.1.1.
+- CU: optfix 0.2 restructured its 256-bit arithmetic (`u256` module), costing 22 to 69 CU more
+  on paths that call `ln` or `mul_shr` (`docs/benchmarks.md`).
+
 ## [0.1.2] - 2026-10-31
 
 `pyth-post` 0.1.1. The other crates are unchanged.
