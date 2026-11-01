@@ -13,7 +13,7 @@ LiteSVM 0.18 uses.
 
 ```toml
 [dependencies]
-varswap-sdk = "0.1"
+varswap-sdk = "0.2"
 ```
 
 The program is on devnet only. Its addresses are in

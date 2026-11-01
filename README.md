@@ -91,14 +91,14 @@ crates.io.
 
 ### Install
 
-`pyth-lite`, `varswap-core`, `varswap-sdk` and `pyth-post` are on crates.io (0.1.0). The
-program, the keeper and the CLI are built from this repository.
+`pyth-lite` (0.1.0), `varswap-core` (0.2.0), `varswap-sdk` (0.2.0) and `pyth-post` (0.1.1) are
+on crates.io. The program, the keeper and the CLI are built from this repository.
 
 ```toml
 [dependencies]
 pyth-lite = "0.1"      # no_std PriceUpdateV2 reader, no Anchor
-varswap-core = "0.1"   # window grid, canonical prints, kernel, swap terms, account layouts
-varswap-sdk = "0.1"    # instruction builders, PDAs and decoders for clients
+varswap-core = "0.2"   # window grid, canonical prints, kernel, swap terms, account layouts
+varswap-sdk = "0.2"    # instruction builders, PDAs and decoders for clients
 pyth-post = "0.1"      # post Hermes prices through Wormhole and the Pyth receiver (off chain)
 ```
 
@@ -289,7 +289,7 @@ make program    # target/deploy/varswap_program.so (the LiteSVM tests load it)
 make test       # every test
 ```
 
-optfix comes from crates.io (`optfix = "0.1"`).
+optfix comes from crates.io (`optfix = "0.2"`).
 
 ### Usage Examples
 

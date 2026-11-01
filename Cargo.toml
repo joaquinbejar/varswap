@@ -12,8 +12,8 @@ repository = "https://github.com/joaquinbejar/varswap"
 [workspace.dependencies]
 # Versions checked on crates.io (max_stable_version) on 2026-10-29.
 pyth-lite = { path = "pyth-lite", version = "0.1" }
-varswap-core = { path = "varswap-core", version = "0.1" }
-varswap-sdk = { path = "sdk", version = "0.1" }
+varswap-core = { path = "varswap-core", version = "0.2" }
+varswap-sdk = { path = "sdk", version = "0.2" }
 pyth-post = { path = "pyth-post", version = "0.1" }
 varswap-keeper = { path = "keeper" }
 # Off-chain only (varswap-keeper): the same set as metalbook-keeper. Checked on crates.io on
