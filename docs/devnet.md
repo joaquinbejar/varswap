@@ -144,6 +144,22 @@ and every 12 rounds, and closes any it finds before the next post. Every Hermes 
 keeper waits at least 61 s, because the key's limit (about 10 requests a minute on the
 timestamp endpoint) is shared with metalbook.
 
+### Result
+
+The window finalized on 2026-11-01T00:03:39Z, 3 minutes 39 s after its end, with every bucket
+filled on time: no gap, no backfill.
+
+| What | Value |
+| --- | --- |
+| Window | `7s5KJ79XRwBzeL8t42ut6RkQ1yLhrRMg8z5dHQtNXTeA` (`start = 1793404800`, `end = 1793491200`, `interval = 3600`, 25 buckets) |
+| Final state | `finalized`, 25 of 25 buckets, `missing = []` (`varswap-admin show-window`) |
+| Annualized realized variance | `0.068149838107` (realized volatility about 26.1%) |
+| `finalize` | [`3QfLstG15JfgiJaiE7RB9LHuZCcbegEgLsKkQ24k4MdM4Q1L3NxAftaLuNrCfgQHEQnwHMP7i71DBbynLTfHcb1B`](https://explorer.solana.com/tx/3QfLstG15JfgiJaiE7RB9LHuZCcbegEgLsKkQ24k4MdM4Q1L3NxAftaLuNrCfgQHEQnwHMP7i71DBbynLTfHcb1B?cluster=devnet), paid by `5MTV…N79D1` |
+| Keeper runs | PID `96116` (build `ed92a42`, payer `77ie…CPPV`) posted buckets 0 to 8; the Studio rebooted at 2026-10-31T08:24Z; PID `1845` (09:03Z) posted bucket 9; the agent (09:16Z), reinstalled at 09:31Z with build `68afc8d` and the keeper's own payer `5MTV…N79D1`, posted buckets 10 to 24 and sent `finalize` |
+| Transactions | 76 (30 paid by `77ie…CPPV`, 46 by `5MTV…N79D1`), all listed in the two `.sigs` files above |
+| Fees | 0.00063 SOL in total |
+| Agent | uninstalled on 2026-11-01 (`scripts/keeper-agent.sh uninstall sol-2026-10-31`); `status` reports it not loaded, and it is absent from both the `gui` and `user` launchd domains |
+
 ## Run a keeper
 
 To keep one running across crashes and reboots (macOS), install it as a LaunchAgent:

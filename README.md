@@ -128,6 +128,9 @@ ten 60 s intervals) was sampled live by `varswap-keeper` and finalized: one
 [post with `sample`](https://explorer.solana.com/tx/3QaW1FW6EkTR3AZmeqwnFmbXLH8eBTNuRrBmh3oEKBSaXjFPqcDjv6BwE8QutoL4rzaJQM1fNNzSUvnyX2g6pcNF?cluster=devnet)
 (`post_update`, `sample`, `reclaim_rent`, `close_encoded_vaa`) and the
 [`finalize`](https://explorer.solana.com/tx/4HoUsuSYMEvY4ydVsapcciXT2M9rXEk8e4mHRu45WnYg3EdiNUotMHnGhs3zCUodGmUiq4dNFjsM2F1idcrhXU3t?cluster=devnet).
+The hourly 2026-10-31 window filled 25 of 25 buckets and was
+[finalized](https://explorer.solana.com/tx/3QfLstG15JfgiJaiE7RB9LHuZCcbegEgLsKkQ24k4MdM4Q1L3NxAftaLuNrCfgQHEQnwHMP7i71DBbynLTfHcb1B?cluster=devnet)
+with an annualized realized variance of `0.068149838107`.
 
 To reproduce against `api.devnet.solana.com` (a funded keypair; the program id keypair is
 yours):
