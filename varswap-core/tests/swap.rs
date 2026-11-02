@@ -97,7 +97,7 @@ fn test_collateral_rounds_up_exactly() {
 }
 
 #[test]
-fn test_unwind_returns_each_collateral() {
+fn test_unwind_returns_each_collateral()   {
     let t = SwapTerms::try_new(1_000_000, ONE / 25, ONE, H).unwrap();
     assert_eq!(
         t.payouts(Settlement::Unwind).unwrap(),
