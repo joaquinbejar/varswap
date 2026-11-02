@@ -62,7 +62,9 @@ Port optfix milestone 9 (`optfix/.github/workflows/ci.yml`, `.github/actions/too
   signature. The keeper and the 24 print replay are rerun against it (the build is
   equivalent, but the deployed bytes change).
 - Upgrade authority: a dedicated devnet key (`~/.config/solana/varswap-devnet-upgrade.json`,
-  never committed) takes it over with `solana program set-upgrade-authority`. `77ie…` stays
+  mode 0600, never committed, with a backup copy outside the repo) takes it over with
+  `solana program set-upgrade-authority` (decision 4: its pubkey and path go to the
+  coordinator, and `77ie…` is kept until the transfer is confirmed on chain). `77ie…` stays
   the config admin, which is fixed at `init_config` (there is no admin rotation
   instruction, by design).
 - `docs/governance.md`: roles (upgrade authority, config admin, keeper payers, Hermes key),
@@ -97,10 +99,9 @@ Targets (each must not panic, and each checks its invariants):
 
 Harness: cargo-fuzz in a `fuzz/` crate outside the workspace (nightly pinned in CI only),
 with seed corpora from the real fixtures (Hermes updates, the 24 replay prints, mainnet
-`PriceUpdateV2` dumps). It needs `libfuzzer-sys` and `arbitrary`, which are new
-dependencies: **asking the coordinator**. If refused, the same targets run as proptest
-(already a workspace dev-dependency) with raised case counts, and `sample_ix` reuses the
-program test harness. Either way the harness asserts by panicking, which is test code.
+`PriceUpdateV2` dumps). It uses `libfuzzer-sys` and `arbitrary` (approved, decision 1);
+`sample_ix` reuses the program test harness. The harness asserts by panicking, which is
+test code.
 
 CI: a `fuzz` job runs each target 120 s on pull requests and 30 minutes on a weekly
 schedule; a crash fails the job and uploads the input. Found crashes become regression
@@ -167,9 +168,10 @@ its target within the PR budget, and the planted bug is reverted.
   older than `S` (default 900 s), with its own payer (the contract: one poster per payer)
   and its own lock. It queries Hermes only when the primary lags, so it costs no Hermes
   budget while the primary is healthy.
-- Hermes key: a standby on the same shared key still competes with metalbook during an
-  incident. **Asking the coordinator** whether a second key exists; if not, the standby
-  backs off under the same 429 rules and the runbook says so.
+- Hermes key: there is no second key (decision 2). The standby shares it, so during an
+  incident primary and standby together stay within the budget: the standby paces itself at
+  most one request per `S / 2` and backs off under the same 429 rules (at least 61 s), and
+  the runbook says so.
 - Drill on devnet: a new 24 bucket hourly window with primary, standby and watcher; stop the
   primary by PID for 3 hours. The watcher alerts within one interval plus grace, the standby
   fills every bucket, the window finalizes, and no encoded VAA is left open.
@@ -196,9 +198,16 @@ Not a continuous index: one record per finalized or degraded window.
 - *Done when* both devnet windows are published, `verify-window` passes on each against
   devnet and offline, and a record with one edited price fails.
 
-## Questions for the coordinator
+## Coordinator decisions (2026-11-02, bus #43363)
 
-1. `libfuzzer-sys` and `arbitrary` for `fuzz/` (I3), or proptest only.
-2. A second Hermes key for the standby keeper (I6).
-3. Multisig threshold and members for the mainnet plan (I2), or leave them open in the
-   document.
+1. `libfuzzer-sys` and `arbitrary` approved for `fuzz/`, outside the workspace, nightly in
+   CI only (I3).
+2. No second Hermes key. The standby shares the key and queries only when the primary lags;
+   the pacing of both keepers together stays within the per key budget (about 10 requests
+   per minute on the timestamp endpoint, shared with metalbook) (I6).
+3. The Squads threshold and members stay open in `docs/governance.md`: the user decides
+   before mainnet (I2).
+4. The devnet upgrade authority change and the verifiable upgrade are approved, on
+   conditions: the new authority's pubkey and keypair path go to the coordinator (for
+   IA-VAULT), the keypair is backed up, and the old authority is kept until the transfer is
+   confirmed on chain (I2).
