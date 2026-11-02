@@ -10,7 +10,11 @@ authority ([`docs/governance.md`](../governance.md)); on devnet that is
    ```sh
    make verifiable-check        # writes target/deploy/varswap_program.so, checks the hash
    ```
-3. Deploy (the CLI extends the program data if the new build is larger):
+3. Deploy (the CLI extends the program data if the new build is larger). If the deploy fails
+   after writing the buffer, the CLI prints a seed phrase that recovers the temporary buffer
+   keypair (and the buffer's lamports): treat it as a secret. Capture the deploy's output
+   through an allowlist (keep only the `Program Id:` and `Signature:` lines) before it goes
+   into a log, a document or the bus; never paste the raw output.
    ```sh
    solana program deploy target/deploy/varswap_program.so \
      --program-id BWqsaXvASrbErApP1ovz7vSvBLYqXGaMaZANEYf1xrB9 \

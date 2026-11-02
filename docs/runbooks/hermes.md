@@ -2,8 +2,9 @@
 
 The API key is shared with metalbook: about 10 requests per minute on the timestamp endpoint,
 of which varswap uses at most 3 per minute across all its processes (`docs/governance.md`).
-The key lives only in `VARSWAP_HERMES_API_KEY` (exported in `~/.zshrc`); it is never passed on
-a command line, written to a file or a plist, or printed, and the keeper scrubs it from errors.
+The key's only storage is `~/.zshrc`, which exports `VARSWAP_HERMES_API_KEY`. It is never in the
+repository, a plist, a log or a command line, and never printed; the keeper scrubs it from
+errors.
 
 ## 429
 

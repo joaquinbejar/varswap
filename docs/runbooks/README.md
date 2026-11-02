@@ -24,6 +24,6 @@ Common environment:
 export SOLANA_URL=https://api.devnet.solana.com
 export VARSWAP_PROGRAM_ID=BWqsaXvASrbErApP1ovz7vSvBLYqXGaMaZANEYf1xrB9
 export VARSWAP_KEYPAIR=~/.config/solana/varswap-devnet-keeper.json   # the keeper payer
-# VARSWAP_HERMES_API_KEY comes from ~/.zshrc: never on a command line, in a file or a log
+# VARSWAP_HERMES_API_KEY comes from ~/.zshrc (its only storage): never in the repo, a plist, a log or a command line
 cargo build --release -p varswap-keeper -p varswap-cli
 ```
