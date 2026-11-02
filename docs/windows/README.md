@@ -31,6 +31,13 @@ realized variance is still reported, the quality is not asserted). Reconciliatio
 successful `sample` events partition the filled buckets exactly, and each run's price and
 exponent equal the stored ones.
 
+Supported history: `sample` as a top-level instruction. Events are matched to instructions by
+counting only this program's depth-1 invocations in the logs (other programs, precompiles
+included, may log none), and an event counts only when this program is the only frame, so a
+nested program's matching text is never attributed. Truncated logs, or a `sample` instruction
+without its event, make the record `unknown` (`events_complete: false`). A window sampled
+through a CPI is outside this boundary: its buckets stay uncovered and the record is `unknown`.
+
 ## Build and verify
 
 ```sh
@@ -54,9 +61,13 @@ varswap-admin verify-window --rpc docs/windows/<file>.json    # against the clus
 
 Offline, in CI (`cli/tests/record.rs`), each failing for its stated reason: a price byte edited
 in the account (`sum_sq` no longer matches), a deleted event (a filled bucket no event covers),
-an event whose run bounds or price were edited, a forged label or realized variance, a history
-that claims to reach `create_window` without listing it, and an honest history without
-`create_window` (its label must be `unknown`).
+an event whose run bounds or price were edited, a forged label or realized variance, a
+`derived` that is missing or not an object, a history that claims to reach `create_window`
+without listing it, and an honest history without `create_window` (its label must be
+`unknown`). Against a fake cluster: `--rpc` fails on a listed signature the record lacks
+(before fetching anything, even if that transaction cannot be fetched) and on a listed
+transaction the cluster cannot return. Parser unit tests: a precompile before `sample`, a
+nested program logging the event text, truncated logs.
 
 With `--rpc`, run against devnet on 2026-11-02 on edited copies of the demo window's record:
 
