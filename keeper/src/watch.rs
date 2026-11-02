@@ -187,12 +187,15 @@ pub fn assess_window(
 /// ticks: up to an hour under the agent).
 #[derive(Debug, Default)]
 pub struct VaaTracker {
-    first_seen: HashMap<String, u64>,
+    /// By payer, then by encoded VAA: the block height it was first seen open at. Each payer's
+    /// accounts are tracked apart, so observing one payer never forgets another's.
+    first_seen: HashMap<String, HashMap<String, u64>>,
 }
 
 impl VaaTracker {
-    /// Records the open accounts seen at `height` and returns an alert for each one open for
-    /// more than `max_blocks`. Accounts no longer open are forgotten.
+    /// Records `payer`'s open accounts seen at `height` (its complete scan) and returns an
+    /// alert for each one open for more than `max_blocks`. That payer's accounts no longer open
+    /// are forgotten; other payers' are untouched.
     pub fn observe(
         &mut self,
         payer: &str,
@@ -200,10 +203,11 @@ impl VaaTracker {
         height: u64,
         max_blocks: u64,
     ) -> Vec<Alert> {
-        self.first_seen.retain(|a, _| open.contains(a));
+        let seen = self.first_seen.entry(payer.to_owned()).or_default();
+        seen.retain(|a, _| open.contains(a));
         let mut alerts = Vec::new();
         for a in open {
-            let first = *self.first_seen.entry(a.clone()).or_insert(height);
+            let first = *seen.entry(a.clone()).or_insert(height);
             let age = height.saturating_sub(first);
             if age > max_blocks {
                 alerts.push(Alert {

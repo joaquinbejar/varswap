@@ -191,6 +191,24 @@ fn test_vaa_tracker_ages_by_first_sight_and_forgets_closed() {
 }
 
 #[test]
+fn test_vaa_tracker_keeps_each_payers_ages_apart() {
+    // Primary and standby payers observed in turn every pass: a leftover of each must age.
+    let mut t = VaaTracker::default();
+    let (a, b) = (vec!["va".to_string()], vec!["vb".to_string()]);
+    for h in [100, 120, 140] {
+        assert!(t.observe("pa", &a, h, 50).is_empty());
+        assert!(t.observe("pb", &b, h, 50).is_empty());
+    }
+    let fired: Vec<String> = t
+        .observe("pa", &a, 151, 50)
+        .into_iter()
+        .chain(t.observe("pb", &b, 151, 50))
+        .map(|x| x.subject)
+        .collect();
+    assert_eq!(fired, ["va", "vb"]);
+}
+
+#[test]
 fn test_standby_lag_bounds() {
     assert!(Keeper::check_standby_lag(600, 3_600).is_ok());
     assert!(Keeper::check_standby_lag(3_300, 3_600).is_ok());
