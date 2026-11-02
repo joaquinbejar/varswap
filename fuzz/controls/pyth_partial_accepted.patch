@@ -1,0 +1,13 @@
+diff --git a/pyth-lite/src/update.rs b/pyth-lite/src/update.rs
+index 0b1f95a..f64f26f 100644
+--- a/pyth-lite/src/update.rs
++++ b/pyth-lite/src/update.rs
+@@ -274,7 +274,7 @@ impl PriceUpdate {
+         req: &PriceRequirements,
+         now: UnixTimestamp,
+     ) -> Result<OraclePrice, PythError> {
+-        if self.verification_level != VerificationLevel::Full {
++        if false && self.verification_level != VerificationLevel::Full {
+             return Err(PythError::NotFullyVerified);
+         }
+         let m = &self.message;

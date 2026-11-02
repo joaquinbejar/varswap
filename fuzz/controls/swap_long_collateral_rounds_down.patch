@@ -1,0 +1,13 @@
+diff --git a/varswap-core/src/swap.rs b/varswap-core/src/swap.rs
+index 937e492..57d8019 100644
+--- a/varswap-core/src/swap.rs
++++ b/varswap-core/src/swap.rs
+@@ -84,7 +84,7 @@ impl SwapTerms {
+         if err >= 1 << 64 {
+             return Err(CoreError::NotionalAboveErrorBound);
+         }
+-        let long_collateral = to_atoms(mul_shr64(notional, strike_var, true)?)?;
++        let long_collateral = to_atoms(mul_shr64(notional, strike_var, false)?)?;
+         let span = cap_var.checked_sub(strike_var).ok_or(CoreError::Overflow)?;
+         let short_collateral = to_atoms(mul_shr64(notional, span, true)?)?;
+         long_collateral

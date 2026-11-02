@@ -2,3 +2,5 @@ target/
 .DS_Store
 .idea/
 lint-control/stack-probe/target/
+fuzz/artifacts/
+fuzz/coverage/

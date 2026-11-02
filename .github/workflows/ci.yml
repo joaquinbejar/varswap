@@ -18,6 +18,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  # The weekly long fuzz run (job `fuzz`, 30 minutes per target).
+  schedule:
+    - cron: "17 3 * * 1"
 
 permissions:
   contents: read
@@ -34,6 +37,9 @@ env:
   PLATFORM_TOOLS_SHA256: "b0f7af104adf726fff2a6a09ea2eb2f2d2965c92295f4d7388c08d140e0c2b00"
   CARGO_TERM_COLOR: never
   MAKE_PINS: RUST_TOOLCHAIN=1.99.1 CARGO_FLAGS=--locked
+  # Fuzzing only (fuzz/, outside the workspace): pinned nightly and cargo-fuzz.
+  FUZZ_TOOLCHAIN: "nightly-2026-10-29"
+  CARGO_FUZZ_VERSION: "0.13.2"
 
 jobs:
   checks:
@@ -82,3 +88,32 @@ jobs:
           solana-verify --version
       - name: Build hash is the recorded one
         run: make verifiable-check
+
+  # Fuzz targets (docs/PLAN-improvements.md, I3): each target 120 s on pull requests and pushes,
+  # 30 minutes on the weekly schedule, then the deterministic fault controls. A crash uploads
+  # its input.
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/toolchains
+      - name: Nightly and cargo-fuzz
+        run: |
+          rustup toolchain install "$FUZZ_TOOLCHAIN" --profile minimal
+          cargo +"$FUZZ_TOOLCHAIN" install --locked cargo-fuzz --version "$CARGO_FUZZ_VERSION"
+          cargo +"$FUZZ_TOOLCHAIN" fuzz --version
+      - name: Fuzz every target
+        run: |
+          secs=120
+          [ "${{ github.event_name }}" = schedule ] && secs=1800
+          make $MAKE_PINS FUZZ_TOOLCHAIN="$FUZZ_TOOLCHAIN" FUZZ_SECONDS=$secs fuzz
+      - name: Fault controls
+        run: make FUZZ_TOOLCHAIN="$FUZZ_TOOLCHAIN" fuzz-control
+      - name: Crash inputs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts
+          if-no-files-found: ignore

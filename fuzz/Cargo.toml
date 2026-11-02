@@ -1,0 +1,69 @@
+# Fuzz targets (docs/PLAN-improvements.md, milestone I3). Outside the workspace: cargo-fuzz
+# needs nightly and libFuzzer, which the workspace does not. Run with `make fuzz` (every
+# target for FUZZ_SECONDS each) or `cargo +nightly fuzz run <target>` from the repo root.
+# libfuzzer-sys and arbitrary approved by the SOLANA-PROJECTS coordinator (2026-11-02, #43363);
+# versions checked on crates.io on 2026-11-02: libfuzzer-sys 0.4.13, arbitrary 1.5.0.
+[package]
+name = "varswap-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1.5", features = ["derive"] }
+pyth-lite = { path = "../pyth-lite" }
+varswap-core = { path = "../varswap-core" }
+# sample_ix: the program's LiteSVM harness (program/tests/common), same versions as the
+# workspace.
+varswap-program = { path = "../program" }
+litesvm = "0.18"
+litesvm-token = "0.18"
+solana-account = "4.7"
+solana-address = { version = "2.7", default-features = false }
+solana-clock = "3.2"
+solana-instruction = "3.5"
+solana-keypair = "3.1"
+solana-signer = "3.0"
+solana-transaction = "4.3"
+bytemuck = "1.25"
+
+# Its own workspace, so the repository workspace never builds it on stable.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+overflow-checks = true
+
+[[bin]]
+name = "pyth_update"
+path = "fuzz_targets/pyth_update.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "window_sample"
+path = "fuzz_targets/window_sample.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "swap_conservation"
+path = "fuzz_targets/swap_conservation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sample_ix"
+path = "fuzz_targets/sample_ix.rs"
+test = false
+doc = false
+bench = false

@@ -1,0 +1,12 @@
+diff --git a/varswap-core/src/window.rs b/varswap-core/src/window.rs
+index ec91bb5..83aeacd 100644
+--- a/varswap-core/src/window.rs
++++ b/varswap-core/src/window.rs
+@@ -383,6 +383,7 @@ impl<'a> Window<'a> {
+         run: BucketRun,
+         kernel: &K,
+     ) -> Result<BucketRun, CoreError> {
++        self.write_bucket(run.first(), print.stored())?;
+         for k in run.first()..=run.last() {
+             if self.is_filled(k)? {
+                 return Err(CoreError::BucketAlreadySampled);

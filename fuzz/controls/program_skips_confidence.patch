@@ -1,0 +1,22 @@
+diff --git a/program/src/processor.rs b/program/src/processor.rs
+index 5833db9..2a02ebf 100644
+--- a/program/src/processor.rs
++++ b/program/src/processor.rs
+@@ -269,7 +269,7 @@ pub fn sample(program_id: &Address, accounts: &mut [AccountView], payload: &[u8]
+         &spec.receiver_program(),
+     )
+     .map_err(pyth)?;
+-    let req = PriceRequirements::new(spec.feed(), None, spec.max_conf().get());
++    let req = PriceRequirements::new(spec.feed(), None, 10_000);
+     let price = update.verify(&req, now).map_err(pyth)?;
+     // The same acceptance rule off-chain keepers apply (varswap_core::accept_print).
+     let accepted = accept_print(
+@@ -278,7 +278,7 @@ pub fn sample(program_id: &Address, accounts: &mut [AccountView], payload: &[u8]
+             feed: price.feed_id(),
+             price: i64::try_from(price.price().get())
+                 .map_err(|_| core(CoreError::PriceOutOfRange))?,
+-            conf: price.conf(),
++            conf: 0,
+             exponent: price.exponent(),
+             publish_time: price.publish_time(),
+             prev_publish_time: price.prev_publish_time(),
