@@ -24,7 +24,7 @@ use std::fmt;
 use base64::Engine;
 use serde::Deserialize;
 
-use crate::{KeeperError, PriceSource, PrintMsg};
+use crate::{HermesLimiter, KeeperError, PriceSource, PrintMsg};
 
 /// Environment variable that holds the Hermes API key.
 pub const HERMES_API_KEY_VAR: &str = "VARSWAP_HERMES_API_KEY";
@@ -349,6 +349,9 @@ pub struct HermesSource<H: HttpGet> {
     /// Every 200 answer of `first_at_or_after`, by `(feed, t)`: history is immutable, and the
     /// key's timestamp endpoint allows about 10 requests a minute (shared between keepers).
     cache: RefCell<HashMap<([u8; 32], i64), HermesUpdate>>,
+    /// The host-wide request budget for the key (`crate::HermesLimiter`), taken before every
+    /// HTTP request; `None` only in tests that count requests themselves.
+    limiter: Option<HermesLimiter>,
 }
 
 impl<H: HttpGet> HermesSource<H> {
@@ -362,7 +365,25 @@ impl<H: HttpGet> HermesSource<H> {
         url: &str,
         feed: &[u8; 32],
     ) -> Result<Option<HermesUpdate>, KeeperError> {
+        if let Some(l) = &self.limiter {
+            l.acquire()
+                .map_err(|e| KeeperError::Source(format!("Hermes limiter: {e}")))?;
+        }
         let response = self.http.get(url, &[self.config.auth_header()])?;
+        // One line per request that reached Hermes (time and status only: never the URL or
+        // the key), so the per-minute budget can be audited from the keeper's log.
+        if self.limiter.is_some() {
+            let ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis());
+            eprintln!("hermes: request at {ms} ms, HTTP {}", response.status);
+        }
+        if response.status == 429 {
+            if let Some(l) = &self.limiter {
+                l.block()
+                    .map_err(|e| KeeperError::Source(format!("Hermes limiter: {e}")))?;
+            }
+        }
         match response.status {
             200 => parse_update(&response.body, feed).map(Some),
             404 => Ok(None),
@@ -382,7 +403,17 @@ impl<H: HttpGet> HermesSource<H> {
             config,
             http,
             cache: RefCell::new(HashMap::new()),
+            limiter: None,
         }
+    }
+
+    /// The same source, taking a slot of `limiter` before every HTTP request it sends
+    /// (retries and requests answered 404 or 429 included; cache answers take none) and
+    /// blocking every process on the limiter after a 429.
+    #[must_use]
+    pub fn with_limiter(mut self, limiter: HermesLimiter) -> Self {
+        self.limiter = Some(limiter);
+        self
     }
 
     /// The first update of `feed` with `publish_time >= t`, or `None` if Hermes has none yet

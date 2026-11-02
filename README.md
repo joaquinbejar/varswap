@@ -399,6 +399,35 @@ The keeper must be its payer's only poster: one `ReceiverChain` per payer, and o
 The binary takes a lock on the payer (`pyth_post::PayerLock`) and refuses to start if another
 process holds it. On devnet the varswap keeper has its own payer, separate from metalbook's.
 
+**Hermes budget.** The API key is shared with metalbook; varswap gets 3 requests per minute
+across all its processes on a host. Every Hermes request first takes a slot from a host-wide
+sliding-window limiter (a file in the `PayerLock` directory, named after a hash of the key):
+at most `--hermes-rate` (default 3) in any 60 s, retries and 404s included, and a 429 pauses
+every varswap process for 61 s. Each request is logged as `hermes: request at <ms> ms, HTTP
+<status>`, so the budget can be audited.
+
+**Standby.** `--standby-lag S` runs a standby keeper with its own payer: it samples only buckets
+whose boundary is at least `S` seconds old (600 s up to the interval minus 300 s), so while the
+primary keeps up it finds nothing to do and sends no Hermes request, and when the primary stops
+it fills the gap.
+
+**Watcher.** `varswap-watch` is a read-only monitor with no key and no Hermes access:
+
+```shell
+export SOLANA_URL=https://api.devnet.solana.com VARSWAP_PROGRAM_ID=<program id>
+cargo run -p varswap-keeper --release --bin varswap-watch -- --interval 60 \
+  --payer <primary payer> --payer <standby payer> --grace 600 \
+  --alert-cmd 'notify "$VARSWAP_ALERT_KIND: $VARSWAP_ALERT_MESSAGE"' <window> [<window> ...]
+```
+
+It prints one JSON line per window and payer, and alerts on a due bucket empty for longer than
+`--grace` (`lag`), empty buckets near the backfill deadline (`deadline`), a window that can be
+finalized and is not (`unfinalized`), a degraded window, a payer under `--min-balance`
+lamports, an encoded VAA left open for too long, and an unreadable cluster. An alert fires once,
+again every `--realert` seconds while active, and prints `resolved` when it clears.
+`scripts/keeper-agent.sh` (with `VARSWAP_KEEPER_ARGS="--standby-lag 600"` for a standby) and
+`scripts/watch-agent.sh` run them as macOS LaunchAgents.
+
 ### Testing and Benchmarks
 
 ```shell

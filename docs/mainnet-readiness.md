@@ -42,7 +42,8 @@ Status: `open`, `in progress`, `done` (with evidence), `n/a` (with the reason).
 
 | Item | Owner | Status | Evidence |
 | --- | --- | --- | --- |
-| Primary and standby keepers with their own payers, a shared Hermes limiter, and `varswap-watch` alerts | varswap | open | I6 |
+| Primary and standby keepers with their own payers, a shared Hermes limiter, and `varswap-watch` alerts | varswap | in progress | I6: scaled devnet drill (`docs/devnet.md`) |
+| Optional: the full drill at production cadence (a 24 bucket hourly window, the primary stopped for 3 h), as in the unamended I6 plan | varswap | open | |
 | Window records published with provenance and quality labels | varswap | open | I7 |
 | Monitoring: who receives alerts and how fast they act | user | open | |
 

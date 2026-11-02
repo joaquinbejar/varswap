@@ -224,6 +224,12 @@ fault control crashes on its patch and passes without it, in CI.
 - *Done when* the mock control passes, the drill window finalizes complete with the alert
   times and the per minute request counts recorded in `docs/devnet.md`, and no minute
   exceeds `R`.
+- **Amendment (2026-11-02, coordinator bus #44829):** the drill runs scaled: a window of 12
+  intervals of 900 s (3 h), the primary stopped by PID for 1 h, standby lag `S = 600` (the
+  validated minimum; `S <= interval − 300` needs intervals of at least 900 s). The assertions
+  are the same (alert time, the standby filling the gap, the window finalizing, no open
+  encoded VAA, requests per minute within `R`), in about 3.5 h instead of about 25 h. The full
+  24 hour hourly drill stays as an optional pre-mainnet item in `docs/mainnet-readiness.md`.
 
 ### I7. Reproducible publication of realized variance windows
 

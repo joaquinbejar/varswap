@@ -405,3 +405,77 @@ fn test_keeper_eligibility_equals_the_program() {
     }
     assert_eq!(accepted, 4);
 }
+
+/// Counts the price source's queries (a standby must send none while the primary keeps up).
+struct Counting<'a> {
+    inner: &'a TapeSource,
+    queries: std::cell::Cell<u32>,
+}
+
+impl PriceSource for Counting<'_> {
+    fn canonical_at(
+        &self,
+        feed: &[u8; 32],
+        t: i64,
+        tolerance: i64,
+        now: i64,
+    ) -> Result<Option<PrintMsg>, KeeperError> {
+        self.queries.set(self.queries.get() + 1);
+        self.inner.canonical_at(feed, t, tolerance, now)
+    }
+}
+
+#[test]
+fn test_standby_leaves_young_buckets_and_queries_nothing_while_the_primary_keeps_up() {
+    let n = 6;
+    let (mut env, w) = Env::with_window(n);
+    let tape = TapeSource::new(SOL, tape(b(n) + 3_600, None));
+    let primary = Keeper::new(PROGRAM_ID);
+    let standby = Keeper::standby(PROGRAM_ID, 1_200);
+    let counting = Counting {
+        inner: &tape,
+        queries: std::cell::Cell::new(0),
+    };
+    // The primary ticks 5 minutes after each boundary; the standby ticks right after it.
+    for k in 0..=n {
+        env.set_time(b(k) + 300);
+        let r = primary.tick(&mut Svm(&mut env), &tape, &w).unwrap();
+        assert_eq!(r.posted, 1, "primary at b_{k}");
+        let r = standby.tick(&mut Svm(&mut env), &counting, &w).unwrap();
+        assert_eq!(r.posted, 0, "standby at b_{k}");
+    }
+    assert_eq!(
+        counting.queries.get(),
+        0,
+        "the standby queried the price source"
+    );
+    let (state, filled, _) = window_state(&env, &w);
+    assert_eq!(state, WindowState::Finalized);
+    assert!(filled.iter().all(|f| *f));
+}
+
+#[test]
+fn test_standby_fills_what_the_primary_missed_once_it_is_old_enough() {
+    let n = 6;
+    let (mut env, w) = Env::with_window(n);
+    let tape = TapeSource::new(SOL, tape(b(n) + 3_600, None));
+    let standby = Keeper::standby(PROGRAM_ID, 1_200);
+    // No primary at all. 1,199 s after b_2: b_0 and b_1 are old enough, b_2 is not.
+    env.set_time(b(2) + 1_199);
+    let r = standby.tick(&mut Svm(&mut env), &tape, &w).unwrap();
+    assert_eq!(r.posted, 2);
+    let (_, filled, _) = window_state(&env, &w);
+    assert_eq!(&filled[..3], &[true, true, false]);
+    // At 1,200 s b_2 is due for the standby.
+    env.set_time(b(2) + 1_200);
+    let r = standby.tick(&mut Svm(&mut env), &tape, &w).unwrap();
+    assert_eq!(r.posted, 1);
+    // It completes and finalizes the window on its own.
+    env.set_time(b(n) + 1_200);
+    let r = standby.tick(&mut Svm(&mut env), &tape, &w).unwrap();
+    assert_eq!(r.finalized, Some(WindowState::Finalized));
+    let (state, filled, sum) = window_state(&env, &w);
+    assert_eq!(state, WindowState::Finalized);
+    assert!(filled.iter().all(|f| *f));
+    assert_eq!(sum, expected(n, &tape).0);
+}
