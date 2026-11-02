@@ -13,10 +13,16 @@ every swap on it settles as an unwind: each side gets exactly its collateral bac
 `finalize`, `settle_swap`, `claim_long`, `claim_short` and `close_swap` are permissionless.
 
 1. `finalize` (the keeper sends it once the deadline passes; anyone can).
-2. For each swap on the window: `settle_swap`, then `claim_long` and `claim_short` (either
-   order; a frozen token account on one side does not block the other), then `close_swap`.
-   `varswap-admin` has no command for these yet: build them with `varswap_sdk::ix`
-   (`settle_swap`, `claim_long`, `claim_short`, `close_swap`) as `program/tests/sdk.rs` does.
+2. For each swap on the window (any funded keypair pays the fees):
+   ```sh
+   varswap-admin settle-swap <swap>
+   varswap-admin claim-long <swap>     # into the long's associated token account (--dest to override)
+   varswap-admin claim-short <swap>    # either order; a frozen account on one side does not block the other
+   varswap-admin close-swap <swap>     # after both claims; rents go to the payer recorded in the swap
+   ```
+   Each command reads the swap first and checks the destination token account (the side's, or
+   the payer's for `close-swap`, of the swap's mint) before signing; `--dry-run` prints the
+   instruction instead.
 
 ## Verify
 

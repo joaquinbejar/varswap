@@ -310,6 +310,11 @@ optfix comes from crates.io (`optfix = "0.2"`).
 `--keypair` (`VARSWAP_KEYPAIR`); `--dry-run` prints the instruction instead of sending it. The
 URL is never printed.
 
+Swaps: `settle-swap <swap>`, `claim-long <swap>`, `claim-short <swap>` and `close-swap <swap>`
+send the permissionless settlement instructions; each reads the swap, defaults the
+destination to the side's (or, for `close-swap`, the payer's) associated token account of the
+swap's mint, and checks it before signing.
+
 Window records ([`docs/windows/`](docs/windows/README.md)): `export-window <window>` writes a
 record (the account bytes, every transaction back to `create_window` with its `sample`
 events, the realized variance and a quality label), `verify-window <file>` checks it offline

@@ -275,6 +275,18 @@ rests on the sample events, and the events need provenance (R1 P2).
   offline and with `--rpc` against devnet, and every negative control fails for its stated
   reason.
 
+### I8. Settlement commands in `varswap-admin` (added by the coordinator, bus #45339)
+
+The I4 drills found that `docs/runbooks/degraded-window.md` needed hand-built SDK calls.
+`varswap-admin settle-swap`, `claim-long`, `claim-short` and `close-swap` read the swap, default
+each token account to the associated token account of the right owner, and check it (token
+program, mint, owner) before signing. Tests in LiteSVM: a degraded swap settled, claimed and
+closed through the commands, and a forged-account negative per command (a non-swap or
+foreign-owned swap for `settle-swap`; a destination of the other side, of another mint or not a
+token account for the claims; another owner's account for `close-swap`), each also rejected by
+the program when the CLI check is bypassed. A devnet run with a real swap (2 devnet USDC from
+metalbook). *Done when* the tests pass and the devnet run settles, claims and closes a swap.
+
 ## Coordinator decisions (2026-11-02, bus #43363)
 
 1. `libfuzzer-sys` and `arbitrary` approved for `fuzz/`, outside the workspace, nightly in
