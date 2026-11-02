@@ -8,10 +8,12 @@ Impact: the payer holds only fees; it has no privilege. An attacker can spend it
 with it (which only helps liveness), or race the keeper's posts.
 
 1. Stop the keeper ([keeper.md](keeper.md)).
-2. Move the remaining SOL to a safe key: `solana transfer <safe> ALL --from <payer keypair>`.
-3. Generate a new payer, fund it ([payer-topup.md](payer-topup.md)), reinstall the agent with
-   `VARSWAP_KEYPAIR` pointing to it. Open encoded VAAs of the old payer can be closed only by
-   it: close them first if the key is still usable, otherwise their rent is lost.
+2. Optional, only if there is time: close the old payer's open encoded VAAs first (only that
+   key can close them; run its keeper on a live window until `open encoded VAAs []`). In an
+   emergency skip this: draining first abandons their rent, a few thousandths of a SOL each.
+3. Move the remaining SOL to a safe key: `solana transfer <safe> ALL --from <payer keypair>`.
+4. Generate a new payer, fund it ([payer-topup.md](payer-topup.md)), reinstall the agent with
+   `VARSWAP_KEYPAIR` pointing to it.
 
 ## Upgrade authority
 

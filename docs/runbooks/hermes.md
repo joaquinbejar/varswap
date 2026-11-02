@@ -1,7 +1,10 @@
 # Hermes: 429 and key rotation
 
 The API key is shared with metalbook: about 10 requests per minute on the timestamp endpoint,
-of which varswap uses at most 3 per minute across all its processes (`docs/governance.md`).
+of which varswap's allocation is 3 per minute across all its processes (`docs/governance.md`).
+Until the shared limiter of I6 is merged, that allocation is a budget the keepers respect by
+their pacing (one request per missing bucket per tick, 61 s back-off after a 429), not one the
+code enforces.
 The key's only storage is `~/.zshrc`, which exports `VARSWAP_HERMES_API_KEY`. It is never in the
 repository, a plist, a log or a command line, and never printed; the keeper scrubs it from
 errors.
