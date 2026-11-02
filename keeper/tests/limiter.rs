@@ -218,17 +218,22 @@ fn test_cut_or_empty_state_is_read_conservatively() {
     }
 }
 
+/// A missing state is a fresh budget: the first R requests never wait for the window. The
+/// window is long (2 s) so that "did not wait" is an elapsed time under one window rather than
+/// a guess at how fast the host's fsyncs are: each acquire and confirm syncs the state, and a
+/// loaded CI runner once took 846 ms for these six writes.
 #[test]
 fn test_missing_state_is_a_fresh_budget_and_a_dead_temp_file_changes_nothing() {
+    const W: u64 = 2_000;
     let dir = scratch("tmp");
-    let l = HermesLimiter::with_window(&dir, "k", 3, 600, 700).unwrap();
+    let l = HermesLimiter::with_window(&dir, "k", 3, W, W + 100).unwrap();
     let t = Instant::now();
     for _ in 0..3 {
         l.confirm(l.acquire().unwrap()).unwrap();
     }
     assert!(
-        t.elapsed() < Duration::from_millis(200),
-        "fresh budget: {:?}",
+        t.elapsed() < Duration::from_millis(W - SLACK_MS),
+        "fresh budget: the first three requests waited {:?}, a window",
         t.elapsed()
     );
     // A writer killed before its rename leaves a temporary file; the state is the old one.
@@ -237,7 +242,7 @@ fn test_missing_state_is_a_fresh_budget_and_a_dead_temp_file_changes_nothing() {
     std::fs::write(&tmp, "0\nend\n").unwrap();
     let _slot = l.acquire().unwrap();
     assert!(
-        t.elapsed() >= Duration::from_millis(590),
+        t.elapsed() >= Duration::from_millis(W - SLACK_MS),
         "the fourth request left after {:?}, inside the window",
         t.elapsed()
     );
