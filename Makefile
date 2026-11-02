@@ -4,13 +4,22 @@
 # sBPF target version (cargo-build-sbf's default is v3).
 SBF_ARCH ?= v3
 
+# Host toolchain for rustfmt (`+$(RUST_TOOLCHAIN)`): `stable` locally, the exact pin in CI,
+# since RUSTUP_TOOLCHAIN does not override an explicit `+stable`.
+RUST_TOOLCHAIN ?= stable
+
+# Extra cargo flags for every cargo command: empty locally, `--locked` in CI. Exported so
+# scripts/sbf-build.sh and lint-control/check.sh pass them too.
+CARGO_FLAGS ?=
+export CARGO_FLAGS
+
 .PHONY: all
 all: fmt-check lint test
 
 # Build the workspace
 .PHONY: build
 build:
-	cargo build --workspace
+	cargo build $(CARGO_FLAGS) --workspace
 
 # Build the on-chain crates for SBF (proves they stay no_std with no host-only dependency);
 # fails on any stack frame over 4 KiB (scripts/sbf-build.sh).
@@ -34,7 +43,7 @@ bench:
 	VARSWAP_NO_EVENTS_SO=$(CURDIR)/target/deploy/varswap_program_no_events.so \
 	VARSWAP_SBF_TOOLCHAIN="$$(cargo build-sbf --version 2>/dev/null | grep -v 'installed with' | paste -sd ',' - | sed 's/,/, /g'), sBPF $(SBF_ARCH)" \
 	VARSWAP_BENCH_OUT=$(CURDIR)/docs/benchmarks.md \
-	cargo test -p varswap-program --release --test cu -- --nocapture
+	cargo test $(CARGO_FLAGS) -p varswap-program --release --test cu -- --nocapture
 
 # Failing controls for scripts/sbf-build.sh: it must reject lint-control/stack-probe (a 6 KB
 # frame, which cargo build-sbf only warns about) and a failing cargo (a missing manifest).
@@ -50,22 +59,22 @@ sbf-control:
 # Run every test (the program tests need `make program` first; `pre-push` runs `sbf` before)
 .PHONY: test
 test:
-	cargo test --workspace --all-features
+	cargo test $(CARGO_FLAGS) --workspace --all-features
 
 # Format the code
 .PHONY: fmt
 fmt:
-	cargo +stable fmt --all
+	cargo +$(RUST_TOOLCHAIN) fmt --all
 
 # Check formatting
 .PHONY: fmt-check
 fmt-check:
-	cargo +stable fmt --all --check
+	cargo +$(RUST_TOOLCHAIN) fmt --all --check
 
 # Clippy with every warning denied
 .PHONY: lint
 lint:
-	cargo clippy --workspace --all-targets --all-features -- -D warnings
+	cargo clippy $(CARGO_FLAGS) --workspace --all-targets --all-features -- -D warnings
 
 # Failing control: clippy must reject every banned macro in lint-control's library code, on
 # each probe line with the exact definition path (see lint-control/check.sh).
@@ -76,12 +85,12 @@ lint-control:
 # Rustdoc with every warning denied
 .PHONY: doc
 doc:
-	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
+	RUSTDOCFLAGS="-D warnings" cargo doc $(CARGO_FLAGS) --workspace --no-deps --all-features
 
 # Run the milestone 5 outage and pusher study and regenerate docs/study.md (fixed seeds)
 .PHONY: study
 study:
-	cargo run --release -p varswap-study > docs/study.md
+	cargo run $(CARGO_FLAGS) --release -p varswap-study > docs/study.md
 
 # Re-fetch the PriceUpdateV2 fixtures from mainnet (overwrites pyth-lite/fixtures)
 .PHONY: fixtures

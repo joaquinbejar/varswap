@@ -14,7 +14,8 @@ if [ -z "$want" ]; then
     exit 1
 fi
 
-out=$(RUSTFLAGS='--cfg lint_control' cargo clippy -p lint-control --lib \
+# shellcheck disable=SC2086 # CARGO_FLAGS (`--locked` in CI) is a list of flags
+out=$(RUSTFLAGS='--cfg lint_control' cargo clippy ${CARGO_FLAGS:-} -p lint-control --lib \
     --target-dir target/lint-control 2>&1)
 if [ $? -eq 0 ]; then
     echo "lint-control: clippy accepted banned macros in library code"
