@@ -44,8 +44,9 @@ Port optfix milestone 9 (`optfix/.github/workflows/ci.yml`, `.github/actions/too
 - Failing controls on scratch PRs closed unmerged: an unformatted line fails `checks` only;
   a planted failing test fails `test` only; one edited number in `docs/benchmarks.md` fails
   `bench` only.
-- Then `main` branch protection requires `checks`, `test` and `bench` (coordinator's GO
-  covers it). Badge in the README.
+- `main` branch protection requires `checks`, `test` and `bench`, administrators included
+  (set on 2026-11-02 under the coordinator's GO; not strict about up to date branches).
+  Badge in the README.
 - *Done when* every job passes on the milestone PR, a CI-built benchmark table equals the
   committed one byte for byte, each failing control fails exactly its job, and the checks
   are required on `main`.
@@ -55,12 +56,20 @@ Port optfix milestone 9 (`optfix/.github/workflows/ci.yml`, `.github/actions/too
 - `make verifiable`: `solana-verify build` (the CLI installed with `cargo install --locked`,
   a tool, not a crate dependency) in the `solanafoundation/solana-verifiable-build` image
   pinned by digest, for `program/` with default features. It prints the executable hash.
-- A CI job `verifiable` runs it and fails unless the hash equals the one recorded in
-  `docs/devnet.md`, so a change to the program without a recorded hash fails CI.
-- Devnet: upgrade `BWqs…` with the verifiable artifact; `solana-verify get-program-hash`
-  on devnet equals the local and CI hash. Recorded in `docs/devnet.md` with the upgrade
-  signature. The keeper and the 24 print replay are rerun against it (the build is
-  equivalent, but the deployed bytes change).
+- Two hashes, kept apart:
+  - the **build hash** of the current source, in `docs/verifiable.md` with the commit,
+    the image digest and the toolchain. A CI job `verifiable` rebuilds it and fails unless it
+    equals the recorded one, so a program change must update it in the same PR. It says
+    what main would deploy, not what is deployed;
+  - the **deployed hash**, in `docs/devnet.md`: the hash `solana-verify get-program-hash`
+    reads on devnet, the commit it was built from, the upgrade signature and slot. It
+    changes only with an upgrade and may lag main; the doc says so.
+- Devnet: upgrade `BWqs…` with the verifiable artifact; the deployed hash then equals the
+  build hash of that commit. The keeper and the 24 print replay are rerun against it (the
+  build is equivalent, but the deployed bytes change). Pre-work: the image
+  `solana-verifiable-build:4.3.0` bundles platform-tools v1.57 and Rust 1.95.0, the SBF
+  compiler CI pins; its `.so` gives the same CU on every `docs/benchmarks.md` row and passes
+  the 81 program tests.
 - Upgrade authority: a dedicated devnet key (`~/.config/solana/varswap-devnet-upgrade.json`,
   mode 0600, never committed, with a backup copy outside the repo) takes it over with
   `solana program set-upgrade-authority` (decision 4: its pubkey and path go to the
@@ -74,8 +83,9 @@ Port optfix milestone 9 (`optfix/.github/workflows/ci.yml`, `.github/actions/too
   rotation instruction is needed; upgrades only from a verifiable build whose hash the
   signers check; freezing (`--final`) after the audit is an explicit decision, not a default.
   No mainnet action.
-- *Done when* the devnet program hash equals the CI hash, the upgrade authority is the new
-  key, and a keeper plus the replay pass against the upgraded program.
+- *Done when* CI's `verifiable` job reproduces the recorded build hash, the deployed hash on
+  devnet equals the build hash of its recorded commit, the upgrade authority is the new key,
+  and a keeper plus the replay pass against the upgraded program.
 
 ### I3. Fuzzing and conservation
 
@@ -107,9 +117,18 @@ CI: a `fuzz` job runs each target 120 s on pull requests and 30 minutes on a wee
 schedule; a crash fails the job and uploads the input. Found crashes become regression
 tests in the normal suite.
 
-*Done when* each target runs clean for 30 minutes locally, a planted bug (dropping the
-`checked` on one payout addition; accepting a `Partial` verification level) is found by
-its target within the PR budget, and the planted bug is reverted.
+Fault controls are deterministic, not a timed hope:
+
+- each control is a committed patch under `fuzz/controls/` that plants one bug in the code
+  under test (pyth-lite accepting a `Partial` level; a swap payout dropping its rounding up;
+  `fill` skipping the "nothing written on error" rule; the program skipping the confidence
+  check), plus the committed input that exposes it;
+- `make fuzz-control` applies each patch in a scratch worktree and runs its target on that
+  input with a fixed seed (`-seed=1`, `-runs=` the input count). The target must crash, and
+  the same input must pass on the unpatched tree. CI runs it in the `fuzz` job.
+
+*Done when* each target runs clean for 30 minutes locally and in the weekly job, and every
+fault control crashes on its patch and passes without it, in CI.
 
 ### I4. Runbooks and audit scope
 
@@ -143,9 +162,10 @@ its target within the PR budget, and the planted bug is reverted.
   against the facts, and link CI, the verifiable hash and the plans.
 - `docs/adr/0001-degraded-unwind.md`: context (`varswap-core/src/window.rs:436-443`:
   `Degraded` when a bucket is empty after the deadline; `program/src/swap.rs:242-249`:
-  `Degraded` settles as `Unwind`); the evidence (`docs/study.md`: 30 day hourly windows at
-  σ = 80%, 64.4% unwind with a 1 h guard, 12.4% with 3 h, 0.62% with 6 h, under the assumed
-  outage regime); alternatives (coverage thresholds, interpolation, scaling by coverage,
+  `Degraded` settles as `Unwind`); the evidence (`docs/study.md`, model GBM μ = 0: 30 day
+  hourly windows at σ = 80%, 64.40% unwind with a 1 h guard, 12.40% with 3 h, 0.62% with
+  6 h, under the assumed outage regime; the halt and AR(1) rows reported beside them);
+  alternatives (coverage thresholds, interpolation, scaling by coverage,
   longer deadlines, per feed guards, partial settlement), each with why it does or does not
   bound the pathwise error; the decision for v1; consequences; what would reopen it.
 - `docs/mainnet-readiness.md`: a checklist with an owner and evidence per line: mainnet
@@ -165,38 +185,87 @@ its target within the PR budget, and the planted bug is reverted.
   `--alert-cmd` with the alert in environment variables (no secret in the command line).
   It runs as its own LaunchAgent, so it notices a dead keeper.
 - A standby keeper: `varswap-keeper --standby-lag S` only samples buckets whose boundary is
-  older than `S` (default 900 s), with its own payer (the contract: one poster per payer)
-  and its own lock. It queries Hermes only when the primary lags, so it costs no Hermes
-  budget while the primary is healthy.
-- Hermes key: there is no second key (decision 2). The standby shares it, so during an
-  incident primary and standby together stay within the budget: the standby paces itself at
-  most one request per `S / 2` and backs off under the same 429 rules (at least 61 s), and
-  the runbook says so.
+  older than `S`, with its own payer (the contract: one poster per payer) and its own lock.
+  `S` is validated: at least 600 s and at most the window interval minus 300 s (an hourly
+  window: 600 to 3,300 s, default 900 s); anything else is a startup error, so `S` can
+  never make pacing degenerate. While the primary is healthy the standby finds nothing due
+  and sends no Hermes request.
+- Hermes budget (decision 2: one key, shared with metalbook; R1 P2). Pacing is not inferred
+  from `S`; it is an explicit allocation enforced where requests leave the process:
+  - **Allocation per key**, agreed with the coordinator and metalbook before I6 is merged
+    and written in `docs/governance.md`: of the key's quota on the timestamp endpoint
+    (about 10 requests per minute), varswap gets a fixed share `R` per minute for all its
+    processes together (proposed: 3), metalbook keeps the rest. Hourly windows need one
+    request per window per hour in steady state; a 24 bucket backfill at 3 per minute takes
+    8 minutes.
+  - **One limiter for every varswap process on the host**: a token bucket of `R` per minute
+    in a file under the lock directory (`$PYTH_POST_LOCK_DIR`, flock on every take), keyed by
+    a hash of the API key (never the key itself). `HermesSource` takes one token before
+    every HTTP request it sends, including retries and requests answered 404 or 429; the
+    cache answers without a token. A token not available is a wait, not an error.
+  - **429**: any process that receives one stops all varswap requests on that key for
+    61 s, through the same file (a shared "blocked until" time), not only its own.
+  - **Concurrent control with real HTTP**: an integration test runs a local mock Hermes
+    (`std::net::TcpListener`, no new dependency) that counts requests per sliding minute
+    and answers 429 above a threshold; a primary and a standby `HermesSource` in two
+    processes backfill concurrently against it with a scaled clock. It asserts the total
+    never exceeds `R` per window of time, every 404 and retry counted, and that both
+    recover after a forced 429 without a second 429 inside the block.
+  - The devnet drill counts the real requests from both keepers' logs per minute and
+    checks the same bound.
 - Drill on devnet: a new 24 bucket hourly window with primary, standby and watcher; stop the
   primary by PID for 3 hours. The watcher alerts within one interval plus grace, the standby
   fills every bucket, the window finalizes, and no encoded VAA is left open.
-- *Done when* the drill window finalizes complete with the alert times recorded in
-  `docs/devnet.md`.
+- *Done when* the mock control passes, the drill window finalizes complete with the alert
+  times and the per minute request counts recorded in `docs/devnet.md`, and no minute
+  exceeds `R`.
 
 ### I7. Reproducible publication of realized variance windows
 
 Not a continuous index: one record per finalized or degraded window.
 
-- `varswap-admin export-window <window>`: a JSON record with the spec, feed, state,
-  coverage (filled over buckets), the per bucket prices and exponents read from the account,
-  the per sample events (`varswap:sample first last publish_time price expo`, from the
-  window's transaction logs), `sum_sq` and the realized variance.
-- `varswap-admin verify-window <record>`: recomputes `sum_sq` and the realized variance from
-  the record's prices with `varswap-core` and checks them, and the prices, against the
-  account; exit code nonzero on any difference.
-- Quality label from the events: `complete` (every bucket from its own print), `compressed`
-  (complete, with outage runs: count and longest run in buckets, at most the guard), or
-  `degraded` (no realized variance; coverage shown).
-- `docs/windows/`: one JSON per window plus a README table generated by the CLI, starting
-  with the demo window and `7s5K`. A CI step reruns `verify-window` on the committed records
-  offline (the account bytes are committed alongside).
-- *Done when* both devnet windows are published, `verify-window` passes on each against
-  devnet and offline, and a record with one edited price fails.
+The account stores bucket prices, not which print filled which run, so the quality label
+rests on the sample events, and the events need provenance (R1 P2).
+
+- `varswap-admin export-window <window>` writes a bundle:
+  - the account bytes at a stated slot (finalized commitment), the program id and the
+    window address;
+  - every transaction that touched the window, from `getSignaturesForAddress` paged back to
+    its `create_window` transaction, at finalized commitment: signature, slot, block time,
+    success, and for each successful one the `sample` instruction's event
+    (`varswap:sample first last publish_time price expo`) with its instruction position;
+  - derived fields: coverage (filled over buckets), the runs, `sum_sq`, the realized
+    variance and the label.
+- Reconciliation, done by export and again by verify: the successful `sample` events of
+  the window must partition its filled buckets exactly (each filled bucket in exactly one
+  event run, no run over an empty bucket, no overlap; the program rejects a refill, so this
+  holds for a complete history), and each run's price and exponent must equal the stored
+  bucket prices. History that does not reach `create_window`, a failed lookup, a gap or an
+  inconsistency gives the label `unknown`: the realized variance is still reported (it
+  depends only on the account), the quality is not asserted.
+- Labels: `complete` (every run is one bucket), `compressed` (some run spans several buckets:
+  an outage compressed into one return; count and longest run reported), `degraded` (no
+  realized variance; coverage shown), `unknown` (history unproven).
+- `varswap-admin verify-window <bundle>` has two modes, and says which one ran:
+  - offline: checks the bundle against itself (account bytes decode to the stated prices,
+    `sum_sq` and variance recomputed with `varswap-core`, events reconcile, the label is the
+    one the events give). It proves consistency of the supplied snapshot, not that the chain
+    agrees;
+  - `--rpc`: also refetches every listed signature and the account at finalized commitment
+    and checks they exist, succeeded, invoked this program on this window and carry the
+    same events, and that no successful sample transaction of the window is missing from
+    the list.
+- `docs/windows/`: one bundle per window plus a README table generated by the CLI, starting
+  with the demo window and `7s5K`. A CI step runs the offline verify on the committed
+  bundles.
+- Negative controls, each must fail verify (offline unless stated): an edited bucket price
+  in the account bytes; a deleted event (a filled bucket left uncovered); an edited event
+  (run bounds, price or publish time); an event copied from another window (`--rpc`); a
+  forged label (`complete` on a compressed window); a signature removed from the list
+  (`--rpc`).
+- *Done when* both devnet windows are published with a proven label, verify passes on each
+  offline and with `--rpc` against devnet, and every negative control fails for its stated
+  reason.
 
 ## Coordinator decisions (2026-11-02, bus #43363)
 
@@ -204,7 +273,10 @@ Not a continuous index: one record per finalized or degraded window.
    CI only (I3).
 2. No second Hermes key. The standby shares the key and queries only when the primary lags;
    the pacing of both keepers together stays within the per key budget (about 10 requests
-   per minute on the timestamp endpoint, shared with metalbook) (I6).
+   per minute on the timestamp endpoint, shared with metalbook) (I6). The exact varswap
+   share `R` is still to agree with the coordinator and metalbook (proposed 3 per minute).
+5. Standing rule (bus #43629): merge when codex has no remaining findings and the required
+   checks are green; report at milestone completion and releases.
 3. The Squads threshold and members stay open in `docs/governance.md`: the user decides
    before mainnet (I2).
 4. The devnet upgrade authority change and the verifiable upgrade are approved, on
