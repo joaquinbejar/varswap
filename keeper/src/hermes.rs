@@ -352,6 +352,10 @@ pub struct HermesSource<H: HttpGet> {
     /// The host-wide request budget for the key (`crate::HermesLimiter`), taken before every
     /// HTTP request; `None` only in tests that count requests themselves.
     limiter: Option<HermesLimiter>,
+    /// Called once per HTTP request that reached Hermes, with the Unix time in milliseconds
+    /// and the HTTP status (never the URL or the key), so a binary can log the per-minute
+    /// budget for audit. The library itself never prints.
+    request_log: Option<fn(u128, u16)>,
 }
 
 impl<H: HttpGet> HermesSource<H> {
@@ -370,13 +374,11 @@ impl<H: HttpGet> HermesSource<H> {
                 .map_err(|e| KeeperError::Source(format!("Hermes limiter: {e}")))?;
         }
         let response = self.http.get(url, &[self.config.auth_header()])?;
-        // One line per request that reached Hermes (time and status only: never the URL or
-        // the key), so the per-minute budget can be audited from the keeper's log.
-        if self.limiter.is_some() {
+        if let Some(log) = self.request_log {
             let ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_millis());
-            eprintln!("hermes: request at {ms} ms, HTTP {}", response.status);
+            log(ms, response.status);
         }
         if response.status == 429 {
             if let Some(l) = &self.limiter {
@@ -404,6 +406,7 @@ impl<H: HttpGet> HermesSource<H> {
             http,
             cache: RefCell::new(HashMap::new()),
             limiter: None,
+            request_log: None,
         }
     }
 
@@ -413,6 +416,14 @@ impl<H: HttpGet> HermesSource<H> {
     #[must_use]
     pub fn with_limiter(mut self, limiter: HermesLimiter) -> Self {
         self.limiter = Some(limiter);
+        self
+    }
+
+    /// The same source, calling `log` with the Unix time in milliseconds and the HTTP status
+    /// of every request that reached Hermes (cache answers make none).
+    #[must_use]
+    pub fn with_request_log(mut self, log: fn(u128, u16)) -> Self {
+        self.request_log = Some(log);
         self
     }
 

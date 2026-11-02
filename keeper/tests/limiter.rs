@@ -38,6 +38,11 @@ const BLOCK_MS: u64 = 1_100;
 const PER_CHILD: i64 = 9;
 /// The mock answers 429 to this request (1-based, across both children).
 const RATE_LIMITED_AT: usize = 7;
+/// Slack for the time between a slot being taken and the request reaching the mock: process
+/// scheduling and loopback latency on a loaded CI runner (a 50 ms margin flaked on GitHub's).
+/// Without the limiter the 19 requests arrive within a few milliseconds, and `R + 1` slots per
+/// window would still put 4 arrivals in 750 ms, so the checks keep their power.
+const JITTER_MS: u64 = 250;
 
 const CHILD_VAR: &str = "VARSWAP_LIMITER_CHILD";
 const URL_VAR: &str = "VARSWAP_LIMITER_URL";
@@ -135,9 +140,9 @@ fn test_two_processes_share_the_budget() {
     assert_eq!(arrivals.len(), total, "requests that reached the mock");
     assert_eq!(arrivals.iter().filter(|(_, s)| *s == 429).count(), 1);
 
-    // At most R in any sliding window. Arrival times include the loopback latency, so the
-    // window checked is 50 ms shorter than the limiter's.
-    let window = Duration::from_millis(WINDOW_MS - 50);
+    // At most R in any sliding window. Arrival times include scheduling and loopback latency,
+    // so the window checked is `JITTER_MS` shorter than the limiter's.
+    let window = Duration::from_millis(WINDOW_MS - JITTER_MS);
     for (i, (t0, _)) in arrivals.iter().enumerate() {
         let n = arrivals[i..]
             .iter()
@@ -150,10 +155,10 @@ fn test_two_processes_share_the_budget() {
     }
 
     // After the 429: requests that already held a slot (at most R - 1, sent in the same
-    // window, in flight within a few milliseconds) may still arrive; nothing else arrives
+    // window, in flight within `JITTER_MS`) may still arrive; nothing else arrives
     // until the block has passed.
     let (t429, _) = arrivals[RATE_LIMITED_AT - 1];
-    let in_flight = Duration::from_millis(100);
+    let in_flight = Duration::from_millis(JITTER_MS);
     let after: Vec<Duration> = arrivals[RATE_LIMITED_AT..]
         .iter()
         .map(|(t, _)| t.duration_since(t429))
@@ -165,7 +170,7 @@ fn test_two_processes_share_the_budget() {
     );
     let next = after.iter().find(|d| **d > in_flight).unwrap();
     assert!(
-        *next >= Duration::from_millis(BLOCK_MS - 50),
+        *next >= Duration::from_millis(BLOCK_MS - JITTER_MS),
         "a request took a slot {next:?} after the 429, inside the block"
     );
 

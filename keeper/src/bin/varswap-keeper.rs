@@ -87,7 +87,11 @@ fn run(args: &Args) -> Result<(), String> {
     let lock_dir = pyth_post::default_lock_dir().map_err(|e| e.to_string())?;
     let limiter = HermesLimiter::for_key(&lock_dir, config.api_key(), args.hermes_rate)
         .map_err(|e| format!("Hermes limiter: {e}"))?;
-    let source = HermesSource::new(config, UreqHttp::new()).with_limiter(limiter);
+    // One line per request that reached Hermes (time and status only: never the URL or the
+    // key), so the per-minute budget can be audited from the keeper's log.
+    let source = HermesSource::new(config, UreqHttp::new())
+        .with_limiter(limiter)
+        .with_request_log(|ms, status| eprintln!("hermes: request at {ms} ms, HTTP {status}"));
     let mut chain = ReceiverChain::new(RpcTransport::new(&args.url), &source, payer, program_id);
     let keeper = match args.standby_lag {
         Some(lag) => {
