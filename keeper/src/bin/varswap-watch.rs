@@ -1,0 +1,335 @@
+//! `varswap-watch`: a read-only monitor for varswap windows and keeper payers
+//! (`docs/PLAN-improvements.md`, I6). It holds no key and queries no price source: it reads
+//! the cluster only, so it keeps working, and alerting, when a keeper is dead.
+//!
+//! Each pass prints one JSON line per window and per payer, then runs `--alert-cmd` for every
+//! alert that is new or has stayed active for `--realert` seconds, with the alert in the
+//! environment (`VARSWAP_ALERT_KIND`, `VARSWAP_ALERT_SUBJECT`, `VARSWAP_ALERT_MESSAGE`; nothing
+//! secret is ever on the command line). An alert that clears prints a `resolved` line.
+//!
+//! Checks: a due bucket empty for more than `--grace` seconds (`lag`), empty buckets within
+//! `--deadline-warning` seconds of the backfill deadline (`deadline`), a window that can be
+//! finalized and is not (`unfinalized`), a degraded window (`degraded`), a payer under
+//! `--min-balance` lamports (`balance`), and an encoded VAA of a payer open for more than
+//! `--vaa-alert-blocks` blocks (`encoded-vaa`), and every slot of a host Hermes limiter held by
+//! requests in progress for `--hermes-hung-after` seconds or more (`hermes-hung`: alive but
+//! stopped or hung keepers; the limiter files in the lock directory are read, never written,
+//! and the API key is not needed).
+//!
+//! Configuration: `SOLANA_URL` (never printed), `VARSWAP_PROGRAM_ID`, and
+//! `PYTH_POST_LOCK_DIR` (the keepers' lock directory; default `~/.local/state/pyth-post`).
+
+use std::process::{Command, ExitCode};
+use std::time::Duration;
+
+use clap::Parser;
+use serde_json::json;
+use varswap_keeper::watch::{
+    assess_hermes, assess_window, balance_scope, hermes_scope, vaa_scope, window_scope, Alert,
+    AlertBook, Thresholds, VaaTracker,
+};
+use varswap_keeper::{held_requests, state_files, RpcTransport, Transport};
+use varswap_sdk::{decode, Address};
+
+#[derive(Parser)]
+#[command(version)]
+struct Args {
+    #[arg(long, env = "SOLANA_URL", hide_env_values = true)]
+    url: String,
+    #[arg(long, env = "VARSWAP_PROGRAM_ID")]
+    program_id: String,
+    /// A keeper payer to check (balance, open encoded VAAs); repeatable
+    #[arg(long = "payer", value_name = "ADDRESS")]
+    payers: Vec<String>,
+    /// Seconds a due bucket may stay empty before `lag` fires
+    #[arg(long, value_name = "SECONDS", default_value_t = 600)]
+    grace: i64,
+    /// Seconds before the backfill deadline at which empty buckets fire `deadline`
+    #[arg(long, value_name = "SECONDS", default_value_t = 21_600)]
+    deadline_warning: i64,
+    /// Lamports under which a payer fires `balance`
+    #[arg(long, value_name = "LAMPORTS", default_value_t = 50_000_000)]
+    min_balance: u64,
+    /// Blocks an encoded VAA may stay open before `encoded-vaa` fires (the keeper's scan runs
+    /// every 12 ticks: an hour under the agent, about 9,000 blocks)
+    #[arg(long, value_name = "BLOCKS", default_value_t = 12_000)]
+    vaa_alert_blocks: u64,
+    /// Shell command run for each alert, with the alert in VARSWAP_ALERT_* variables
+    #[arg(long, value_name = "COMMAND", env = "VARSWAP_WATCH_ALERT_CMD")]
+    alert_cmd: Option<String>,
+    /// Repeat every SECONDS (default: one pass)
+    #[arg(long, value_name = "SECONDS")]
+    interval: Option<u64>,
+    /// Requests per minute of the host Hermes budget (the keepers' `--hermes-rate`)
+    #[arg(long, value_name = "N", default_value_t = 3)]
+    hermes_rate: usize,
+    /// Seconds a Hermes request may stay in progress before it counts as hung (a request
+    /// completes within the HTTP client's 10 s timeout)
+    #[arg(long, value_name = "SECONDS", default_value_t = 120)]
+    hermes_hung_after: u64,
+    /// Seconds before an alert that stays active fires again
+    #[arg(long, value_name = "SECONDS", default_value_t = 3_600)]
+    realert: i64,
+    #[arg(required = true)]
+    windows: Vec<String>,
+}
+
+fn address(s: &str) -> Result<Address, String> {
+    s.parse()
+        .map_err(|_| format!("{s} is not a base58 address"))
+}
+
+/// `getBalance`, with the RPC URL never in an error.
+fn balance(url: &str, payer: &Address) -> Result<u64, String> {
+    let body =
+        json!({"jsonrpc": "2.0", "id": 1, "method": "getBalance", "params": [payer.to_string()]});
+    let mut response = ureq::post(url)
+        .header("Content-Type", "application/json")
+        .send(body.to_string())
+        .map_err(|_| "getBalance failed (RPC URL hidden)".to_string())?;
+    let text = response
+        .body_mut()
+        .read_to_string()
+        .map_err(|_| "getBalance: unreadable answer".to_string())?;
+    let v: serde_json::Value =
+        serde_json::from_str(&text).map_err(|_| "getBalance: not JSON".to_string())?;
+    v.pointer("/result/value")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| "getBalance: no value".to_string())
+}
+
+/// Prints the alert and runs the alert command; `true` if it was delivered (no command, or
+/// the command exited 0).
+fn fire(cmd: Option<&str>, a: &Alert) -> bool {
+    println!(
+        "{}",
+        json!({"alert": a.kind, "scope": a.scope, "subject": a.subject, "message": a.message})
+    );
+    let Some(cmd) = cmd.filter(|c| !c.trim().is_empty()) else {
+        return true;
+    };
+    let status = Command::new("sh")
+        .arg("-c")
+        .arg(cmd)
+        .env("VARSWAP_ALERT_KIND", a.kind)
+        .env("VARSWAP_ALERT_SUBJECT", &a.subject)
+        .env("VARSWAP_ALERT_MESSAGE", &a.message)
+        .status();
+    match status {
+        Ok(s) if s.success() => true,
+        Ok(s) => {
+            eprintln!("alert command exited with {s}; retried at the next pass");
+            false
+        }
+        Err(e) => {
+            eprintln!("alert command failed to start: {e}; retried at the next pass");
+            false
+        }
+    }
+}
+
+/// One pass: the alerts reported and the scopes actually observed (a read that failed is not
+/// an observation, so it resolves nothing).
+fn pass(
+    args: &Args,
+    program_id: &Address,
+    windows: &[Address],
+    payers: &[Address],
+    chain: &RpcTransport,
+    vaas: &mut VaaTracker,
+) -> Result<(i64, Vec<Alert>, Vec<String>), String> {
+    let now = chain.now().map_err(|e| e.to_string())?;
+    let height = chain.block_height().map_err(|e| e.to_string())?;
+    let t = Thresholds {
+        grace_s: args.grace,
+        deadline_warning_s: args.deadline_warning,
+    };
+    let mut alerts = Vec::new();
+    let mut observed = vec!["rpc".to_string()];
+    for w in windows {
+        let name = w.to_string();
+        let read = chain
+            .account(w)
+            .map_err(|e| e.to_string())
+            .and_then(|a| a.ok_or_else(|| "account missing".to_string()))
+            .and_then(|(owner, data)| {
+                let info = decode::window(program_id, &owner, &data)
+                    .map_err(|e| format!("not a window: {e:?}"))?;
+                let filled = decode::filled_buckets(program_id, &owner, &data)
+                    .map_err(|e| format!("not a window: {e:?}"))?;
+                Ok((info, filled))
+            });
+        match read.and_then(|(info, filled)| {
+            assess_window(&name, now, &info.spec, info.state, &filled, t).map_err(|e| e.to_string())
+        }) {
+            Ok((status, found)) => {
+                println!("{}", json!({"window": name, "now": now, "status": status}));
+                observed.push(window_scope(&name));
+                alerts.extend(found);
+            }
+            Err(e) => {
+                // Not observed: the window's earlier alerts stay active.
+                println!("{}", json!({"window": name, "now": now, "error": e}));
+                alerts.push(Alert {
+                    kind: "unreadable",
+                    scope: format!("unreadable:{name}"),
+                    subject: name.clone(),
+                    message: format!("window {name} cannot be read: {e}"),
+                });
+            }
+        }
+        // The unreadable alert resolves when the window is read again.
+        observed.push(format!("unreadable:{name}"));
+    }
+    for p in payers {
+        let name = p.to_string();
+        let lamports = balance(&args.url, p);
+        let open = pyth_post::scan_encoded_vaas(chain, p)
+            .map(|v| v.iter().map(ToString::to_string).collect::<Vec<_>>())
+            .map_err(|e| e.to_string());
+        println!(
+            "{}",
+            json!({
+                "payer": name, "now": now, "block_height": height,
+                "lamports": lamports.as_ref().ok(), "balance_error": lamports.as_ref().err(),
+                "open_encoded_vaas": open.as_ref().ok(), "scan_error": open.as_ref().err(),
+            })
+        );
+        if let Ok(l) = lamports {
+            observed.push(balance_scope(&name));
+            if l < args.min_balance {
+                alerts.push(Alert {
+                    kind: "balance",
+                    scope: balance_scope(&name),
+                    subject: name.clone(),
+                    message: format!(
+                        "payer {name} has {l} lamports, under {}: top it up",
+                        args.min_balance
+                    ),
+                });
+            }
+        }
+        if let Ok(open) = open {
+            observed.push(vaa_scope(&name));
+            alerts.extend(vaas.observe(&name, &open, height, args.vaa_alert_blocks));
+        }
+    }
+    hermes(args, &mut alerts, &mut observed);
+    Ok((now, alerts, observed))
+}
+
+/// The host's Hermes limiters (one state file per API key in the lock directory): a JSON line
+/// each, and `hermes-hung` when every slot is held by a request in progress for too long.
+fn hermes(args: &Args, alerts: &mut Vec<Alert>, observed: &mut Vec<String>) {
+    let files = match pyth_post::default_lock_dir().and_then(|d| match state_files(&d) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        other => other,
+    }) {
+        Ok(f) => f,
+        Err(e) => {
+            println!("{}", json!({"hermes": null, "error": e.to_string()}));
+            return;
+        }
+    };
+    let now_ms = host_now_ms();
+    for f in files {
+        let name = f
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_owned();
+        match held_requests(&f) {
+            Ok(held) => {
+                let pids: Vec<u32> = held.iter().map(|h| h.pid).collect();
+                println!(
+                    "{}",
+                    json!({"hermes": name, "held": held.len(), "pids": pids})
+                );
+                observed.push(hermes_scope(&name));
+                alerts.extend(assess_hermes(
+                    &name,
+                    &held,
+                    now_ms,
+                    args.hermes_rate,
+                    args.hermes_hung_after.saturating_mul(1_000),
+                ));
+            }
+            // Not observed: an earlier alert stays active.
+            Err(e) => println!("{}", json!({"hermes": name, "error": e.to_string()})),
+        }
+    }
+}
+
+fn host_now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| u64::try_from(d.as_millis()).ok())
+        .unwrap_or(0)
+}
+
+fn host_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| i64::try_from(d.as_secs()).ok())
+        .unwrap_or(0)
+}
+
+fn run(args: &Args) -> Result<(), String> {
+    let program_id = address(&args.program_id)?;
+    let windows = args
+        .windows
+        .iter()
+        .map(|w| address(w))
+        .collect::<Result<Vec<_>, _>>()?;
+    let payers = args
+        .payers
+        .iter()
+        .map(|p| address(p))
+        .collect::<Result<Vec<_>, _>>()?;
+    let chain = RpcTransport::new(&args.url);
+    let mut vaas = VaaTracker::default();
+    let mut book = AlertBook::default();
+    loop {
+        let (now, reported, observed) =
+            match pass(args, &program_id, &windows, &payers, &chain, &mut vaas) {
+                Ok(r) => r,
+                // The cluster cannot be read: an alert, and nothing observed (nothing
+                // resolves). The clock is the host's.
+                Err(e) => (
+                    host_now(),
+                    vec![Alert {
+                        kind: "rpc",
+                        scope: "rpc".to_string(),
+                        subject: "cluster".to_string(),
+                        message: format!("varswap-watch cannot read the cluster: {e}"),
+                    }],
+                    Vec::new(),
+                ),
+            };
+        let (due, resolved) = book.update(&reported, &observed, now, args.realert);
+        for (kind, subject) in resolved {
+            println!("{}", json!({"resolved": kind, "subject": subject}));
+        }
+        for a in &due {
+            if fire(args.alert_cmd.as_deref(), a) {
+                book.delivered(a, now);
+            }
+        }
+        match args.interval {
+            Some(s) => std::thread::sleep(Duration::from_secs(s)),
+            None => return Ok(()),
+        }
+    }
+}
+
+fn main() -> ExitCode {
+    match run(&Args::parse()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}

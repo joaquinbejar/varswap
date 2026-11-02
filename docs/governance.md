@@ -22,7 +22,8 @@ program over. There is no instruction to rotate it.
 | --- | --- | --- |
 | Upgrade authority | `Ai4e2jSFMV5vqLDGcyxQLf6GRbjeE5m8BiEMuqWiR9hX` (`~/.config/solana/varswap-devnet-upgrade.json` on the Studio, 0600, backed up; recorded by the coordinator) | 2026-11-02, transfer `4BjAJX9h6va6EKSnHo7gZRsgK9upK37GRasBg1N4spcV62V7kAcjcVfVqfLF5osu3bkitxu73AjUomXHw3wxgrL8` |
 | Config admin | `77ieYLKspRnGzAt1AK6ZVsttnTY6T7EY2k7CpTZeCPPV` (the deployer, which signed `init_config` as upgrade authority) | 2026-10-30 |
-| Keeper payer | `5MTVStedYVor97UjAYU4shkp6RaTiKXEFupfHJN79D1` (`~/.config/solana/varswap-devnet-keeper.json`) | 2026-10-31 |
+| Keeper payer (primary) | `5MTVStedYVor97UjAYU4shkp6RaTiKXEFupfHJN79D1` (`~/.config/solana/varswap-devnet-keeper.json`) | 2026-10-31 |
+| Keeper payer (standby) | `AaXbMDDnJFghzgaGc7wi3v5MsLJqS2PFvp6ZucKsYxqU` (`~/.config/solana/varswap-devnet-standby.json`) | 2026-11-02 |
 | Hermes key | `VARSWAP_HERMES_API_KEY` in the environment only, shared with metalbook: varswap 3 requests per minute across all its processes, metalbook 7 | 2026-11-02 allocation |
 
 No keypair is in the repository.

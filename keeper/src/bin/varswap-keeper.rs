@@ -13,6 +13,13 @@
 //! exclusive to this process: it takes `pyth_post::PayerLock` at start (a lock file in
 //! `$PYTH_POST_LOCK_DIR`, default `~/.local/state/pyth-post`) and refuses to run if another
 //! process holds it.
+//!
+//! Hermes requests go through a host-wide limiter (`HermesLimiter`): at most `--hermes-rate`
+//! requests (default 3, varswap's share of the shared key) in any 60 s window across every
+//! varswap process using the same lock directory, and a 429 pauses all of them for 61 s.
+//! `--standby-lag SECONDS` makes a standby keeper: it samples only buckets whose boundary is at
+//! least that old (600 s to the window interval minus 300 s), with its own payer, so while the
+//! primary keeps up it finds nothing to do and sends no Hermes request.
 
 use std::process::ExitCode;
 use std::time::Duration;
@@ -21,7 +28,8 @@ use clap::Parser;
 use solana_keypair::Keypair;
 use solana_signer::Signer;
 use varswap_keeper::{
-    HermesConfig, HermesSource, Keeper, KeeperError, ReceiverChain, RpcTransport, UreqHttp,
+    HermesConfig, HermesLimiter, HermesSource, Keeper, KeeperError, ReceiverChain, RpcTransport,
+    UreqHttp,
 };
 use varswap_sdk::Address;
 
@@ -41,6 +49,12 @@ struct Args {
     /// Repeat every SECONDS until every window is final (default: one tick).
     #[arg(long, value_name = "SECONDS")]
     watch: Option<u64>,
+    /// Run as a standby: sample only buckets whose boundary is at least SECONDS old
+    #[arg(long, value_name = "SECONDS")]
+    standby_lag: Option<u32>,
+    /// Hermes requests per minute for all varswap processes on this host (the shared limiter)
+    #[arg(long, value_name = "N", default_value_t = varswap_keeper::DEFAULT_REQUESTS_PER_MINUTE)]
+    hermes_rate: u32,
     /// Window addresses.
     #[arg(required = true)]
     windows: Vec<String>,
@@ -68,12 +82,32 @@ fn run(args: &Args) -> Result<(), String> {
     let payer = read_keypair(&args.keypair)?;
     // One poster process per payer (pyth-post's contract): held until the process exits.
     let _lock = pyth_post::PayerLock::acquire(&payer.pubkey()).map_err(|e| e.to_string())?;
-    // One source for the price queries and the posts: one cache, one rate limit.
-    let source = HermesConfig::from_env()
-        .map(|c| HermesSource::new(c, UreqHttp::new()))
-        .map_err(|e: KeeperError| e.to_string())?;
+    // One source for the price queries and the posts: one cache, and the host-wide limiter.
+    let config = HermesConfig::from_env().map_err(|e: KeeperError| e.to_string())?;
+    let lock_dir = pyth_post::default_lock_dir().map_err(|e| e.to_string())?;
+    let limiter = HermesLimiter::for_key(&lock_dir, config.api_key(), args.hermes_rate)
+        .map_err(|e| format!("Hermes limiter: {e}"))?;
+    // One line per request that reached Hermes (time and status only: never the URL or the
+    // key), so the per-minute budget can be audited from the keeper's log.
+    let source = HermesSource::new(config, UreqHttp::new())
+        .with_limiter(limiter)
+        .with_request_log(|ms, status| eprintln!("hermes: request at {ms} ms, HTTP {status}"));
     let mut chain = ReceiverChain::new(RpcTransport::new(&args.url), &source, payer, program_id);
-    let keeper = Keeper::new(program_id);
+    let keeper = match args.standby_lag {
+        Some(lag) => {
+            let keeper = Keeper::standby(program_id, lag);
+            for window in &windows {
+                let spec = keeper
+                    .window_spec(&chain, window)
+                    .map_err(|e| format!("{window}: {e}"))?;
+                Keeper::check_standby_lag(lag, spec.interval().get())
+                    .map_err(|e| format!("{window}: {e}"))?;
+            }
+            eprintln!("standby: sampling buckets at least {lag} s old");
+            keeper
+        }
+        None => Keeper::new(program_id),
+    };
     let mut printed = 0;
     let mut ticks: u64 = 0;
     loop {

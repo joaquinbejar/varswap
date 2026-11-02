@@ -21,6 +21,10 @@
 # <home>/<name>/keeper.sigs and the report lines to <home>/<name>/keeper.log.
 #
 # Run one agent per payer keypair (pyth-post's leftover scan assumes it).
+#
+# VARSWAP_KEEPER_ARGS adds options to the keeper's command line, for example
+# `--standby-lag 600` for a standby (its own payer and name) or `--hermes-rate 3`; only letters,
+# digits, spaces and `-` are accepted.
 
 set -eu
 
@@ -86,10 +90,12 @@ install)
 	for w in "$@"; do
 		case $w in *[!1-9A-HJ-NP-Za-km-z]*) echo "not a base58 address: $w" >&2 && exit 2 ;; esac
 	done
+	extra=${VARSWAP_KEEPER_ARGS:-}
+	case $extra in *[!A-Za-z0-9\ -]*) echo "VARSWAP_KEEPER_ARGS: letters, digits, spaces and - only" >&2 && exit 2 ;; esac
 	mkdir -p "$dir" "$HOME/Library/LaunchAgents"
 	cp "$bin" "$dir/varswap-keeper"
 	# zsh word-splits nothing here: every window was checked to be base58 above.
-	run="source \"\$HOME/.zshrc\" >/dev/null 2>&1; exec \"$dir/varswap-keeper\" --watch 300 $*"
+	run="source \"\$HOME/.zshrc\" >/dev/null 2>&1; exec \"$dir/varswap-keeper\" --watch 300 $extra $*"
 	cat >"$plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

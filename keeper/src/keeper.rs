@@ -25,7 +25,15 @@ pub struct TickReport {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Keeper {
     program_id: Address,
+    /// A standby keeper samples only buckets whose boundary is at least this many seconds old
+    /// (`docs/PLAN-improvements.md`, I6); 0 for a primary.
+    lag: u32,
 }
+
+/// The smallest standby lag: a standby never races a healthy primary's first tick.
+pub const MIN_STANDBY_LAG: u32 = 600;
+/// A standby lag must leave at least this much of the interval before the next boundary.
+pub const STANDBY_LAG_MARGIN: u32 = 300;
 
 struct View {
     spec: WindowSpec,
@@ -37,7 +45,49 @@ impl Keeper {
     /// A keeper for the program at `program_id`.
     #[must_use]
     pub const fn new(program_id: Address) -> Self {
-        Self { program_id }
+        Self { program_id, lag: 0 }
+    }
+
+    /// A standby keeper: it samples a bucket only once its boundary is `lag` seconds old, so
+    /// while a primary keeps up it finds nothing to do and queries no price source.
+    #[must_use]
+    pub const fn standby(program_id: Address, lag: u32) -> Self {
+        Self { program_id, lag }
+    }
+
+    /// The standby lag (0 for a primary).
+    #[must_use]
+    pub const fn lag(&self) -> u32 {
+        self.lag
+    }
+
+    /// Checks a standby lag against a window's interval: at least [`MIN_STANDBY_LAG`] and at
+    /// most `interval − STANDBY_LAG_MARGIN` (for an hourly window: 600 to 3,300 s).
+    ///
+    /// # Errors
+    ///
+    /// `KeeperError::Config` if the lag is outside those bounds for this interval.
+    pub fn check_standby_lag(lag: u32, interval: u32) -> Result<(), KeeperError> {
+        let max = interval.checked_sub(STANDBY_LAG_MARGIN);
+        match max {
+            Some(max) if (MIN_STANDBY_LAG..=max).contains(&lag) => Ok(()),
+            _ => Err(KeeperError::Config(
+                "standby lag must be at least 600 s and at most the window interval minus 300 s",
+            )),
+        }
+    }
+
+    /// Reads a window's spec (for checks before the first tick).
+    ///
+    /// # Errors
+    ///
+    /// As a tick's read: the account is missing or not a window of this program.
+    pub fn window_spec<C: Chain>(
+        &self,
+        chain: &C,
+        window: &Address,
+    ) -> Result<WindowSpec, KeeperError> {
+        Ok(self.read(chain, window)?.spec)
     }
 
     fn read<C: Chain>(&self, chain: &C, window: &Address) -> Result<View, KeeperError> {
@@ -81,6 +131,10 @@ impl Keeper {
         let feed = spec.feed().to_bytes();
         let deadline = spec.deadline()?.get();
         let tolerance = i64::from(spec.tolerance().get());
+        // The newest boundary this keeper may sample (a standby lags behind the primary).
+        let horizon = now
+            .checked_sub(i64::from(self.lag))
+            .ok_or(KeeperError::Config("clock out of range"))?;
 
         if now <= deadline {
             for k in 0..spec.buckets()? {
@@ -88,8 +142,9 @@ impl Keeper {
                     continue;
                 }
                 let b = spec.boundary(k)?.get();
-                if b > now {
-                    // No print can be canonical for a boundary that has not passed yet.
+                if b > horizon {
+                    // No print can be canonical for a boundary that has not passed yet; a
+                    // standby also leaves boundaries younger than its lag to the primary.
                     break;
                 }
                 let Some(m) = source.canonical_at(&feed, b, tolerance, now)? else {

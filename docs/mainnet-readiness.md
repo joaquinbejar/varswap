@@ -42,7 +42,9 @@ Status: `open`, `in progress`, `done` (with evidence), `n/a` (with the reason).
 
 | Item | Owner | Status | Evidence |
 | --- | --- | --- | --- |
-| Primary and standby keepers with their own payers, a shared Hermes limiter, and `varswap-watch` alerts | varswap | open | I6 |
+| Primary and standby keepers with their own payers, a shared Hermes limiter, and `varswap-watch` alerts | varswap | done (devnet) | I6, PR #39: scaled devnet drill on the final build `0bf234f` (`docs/devnet.md`, "Standby and watcher drills") |
+| Optional: the full drill at production cadence (a 24 bucket hourly window, the primary stopped for 3 h), as in the unamended I6 plan | varswap | open | |
+| Independent-host resilience: a standby and a watcher on a machine other than the primary's (the I6 drill ran all three on one host, and the Hermes limiter is per host: `R` must first be split into per host quotas) | varswap, coordinator | open | |
 | Window records published with provenance and quality labels | varswap | open | I7 |
 | Monitoring: who receives alerts and how fast they act | user | open | |
 

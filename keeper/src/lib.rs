@@ -27,8 +27,10 @@ mod chain;
 mod error;
 mod hermes;
 mod keeper;
+mod limiter;
 mod receiver_chain;
 mod source;
+pub mod watch;
 
 pub use chain::Chain;
 pub use error::KeeperError;
@@ -36,7 +38,11 @@ pub use hermes::{
     parse_update, AuthScheme, HermesConfig, HermesSource, HermesUpdate, HttpGet, HttpResponse,
     UreqHttp, DEFAULT_HERMES_URL, HERMES_API_KEY_VAR, HERMES_AUTH_VAR, HERMES_URL_VAR,
 };
-pub use keeper::{Keeper, TickReport};
+pub use keeper::{Keeper, TickReport, MIN_STANDBY_LAG, STANDBY_LAG_MARGIN};
+pub use limiter::{
+    held_requests, state_files, HeldRequest, HermesLimiter, Slot, BLOCK_MS,
+    DEFAULT_REQUESTS_PER_MINUTE, WINDOW_MS,
+};
 pub use pyth_post::{PostError, RpcTransport, Transport, UpdateSource};
 pub use receiver_chain::{Orphan, ReceiverChain};
 pub use source::{PriceSource, PrintMsg, TapeSource};

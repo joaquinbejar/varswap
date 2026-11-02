@@ -198,12 +198,38 @@ fault control crashes on its patch and passes without it, in CI.
     takes 8 minutes.
   - **One rolling-window limiter for every varswap process on one host**: a file under the
     lock directory (`$PYTH_POST_LOCK_DIR`, flock on every take), keyed by a hash of the API
-    key (never the key itself), holding the send times of the last `R` requests. A request
-    may leave only if fewer than `R` of them fall in the last 60 s; otherwise it waits until
-    the oldest one leaves the window. So at most `R` requests leave in any sliding minute
-    (a refilled token bucket could let nearly `2R` through). `HermesSource` takes a slot
-    before every HTTP request it sends, including retries and requests answered 404 or 429;
-    the cache answers without one. No slot available is a wait, not an error.
+    key (never the key itself), holding one entry per recent request. A request may leave
+    only if fewer than `R` entries fall in the last 60 s; otherwise it waits. So at most `R`
+    requests in any sliding minute (a refilled token bucket could let nearly `2R` through).
+    `HermesSource` takes a slot before every HTTP request it sends, including retries and
+    requests answered 404 or 429; the cache answers without one. No slot available is a
+    wait, not an error.
+  - **Amendment (review of #39; coordinator ruling): the contract is wire time.** Hermes
+    counts the requests that reach it, so at most `R` requests may arrive in any sliding
+    60 s, not merely be admitted. An entry recorded at admission does not bound arrival: a
+    process paused between admission and send (the drill's SIGSTOP, or scheduling on a
+    loaded host) sends after its entry has aged out, inside a window others have filled.
+    So an admitted request is recorded as pending, and its process creates and `flock`s a
+    lock file of its own for that request until it has been answered or has failed. A
+    pending entry counts for as long as that lock is held, however long the process is
+    stopped; when the request completes (`confirm`), or another process finds the lock free
+    (the owner died), the entry becomes completed at that time and counts for one more
+    window. So every entry counts from before its request can be sent until a window after
+    it can have arrived: no `R + 1` arrivals within one window. A stopped process holds one
+    slot until it resumes or dies. Widening test tolerances is not a remedy, and there is no
+    global send lock: a hung owner costs its own slot only, so the standby keeps the rest.
+    Pending reservations count with no time limit; a dead owner's (its lock released by the
+    kernel, even after SIGKILL) is reaped by the next process to look, and counts one more
+    window from then.
+  - **All slots hung**: `varswap-watch` reads the limiter files (read only, no key) and
+    raises `hermes-hung` when every slot has been held by a request in progress for longer
+    than `--hermes-hung-after` (120 s); the runbook action is to kill the hung process by PID
+    (`docs/runbooks/hermes.md`).
+  - **Tests**: a send stalled 1.5 and 5 windows after admission while another process sends
+    flat out; a holder stopped for 3 windows; across processes, a child SIGSTOPped while
+    holding the slot (held, shown with its PID, `hermes-hung` raised) and then SIGKILLed
+    (reaped, the next admission one window later). The first three fail under
+    admission-time accounting. A short drill reruns on the final head.
   - **Scope: one host.** The limiter covers every varswap process sharing one lock
     directory on one machine (process independence, not host independence). Running
     varswap keepers on a second host is out of this milestone; it would first need `R`
@@ -224,6 +250,14 @@ fault control crashes on its patch and passes without it, in CI.
 - *Done when* the mock control passes, the drill window finalizes complete with the alert
   times and the per minute request counts recorded in `docs/devnet.md`, and no minute
   exceeds `R`.
+- **Amendment (2026-11-02, coordinator bus #44829):** the drill runs scaled: a window of 12
+  intervals of 900 s (3 h), the primary stopped by PID for 1 h with `SIGSTOP` (a hung process
+  that keeps its payer lock; it does not test a host failure, since primary, standby and
+  watcher share one machine), standby lag `S = 600` (the validated minimum; `S <= interval −
+  300` needs intervals of at least 900 s). The assertions
+  are the same (alert time, the standby filling the gap, the window finalizing, no open
+  encoded VAA, requests per minute within `R`), in about 3.5 h instead of about 25 h. The full
+  24 hour hourly drill stays as an optional pre-mainnet item in `docs/mainnet-readiness.md`.
 
 ### I7. Reproducible publication of realized variance windows
 

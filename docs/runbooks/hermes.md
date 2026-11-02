@@ -2,11 +2,11 @@
 
 The API key is shared with metalbook: about 10 requests per minute on the timestamp endpoint,
 of which varswap's allocation is 3 per minute across all its processes (`docs/governance.md`).
-Until the shared limiter of I6 is merged, nothing enforces or guarantees that allocation:
-a keeper sends one request per missing bucket per tick, which can exceed 3 per minute during a
-backfill or with several keepers, and its 61 s back-off applies only after a 429. Operators
-pace it by hand: one keeper per key at a time, and backfills of many buckets coordinated with
-the coordinator.
+The host-wide limiter of I6 (README, "Hermes budget") enforces that allocation for every
+varswap process on one host: at most `--hermes-rate` requests reach Hermes in any 60 s, and a
+429 pauses them all for 61 s. It does not cover another host: running varswap keepers on a
+second machine needs the allocation split into per-host quotas first, coordinated with the
+coordinator.
 The key's only storage is `~/.zshrc`, which exports `VARSWAP_HERMES_API_KEY`. It is never in the
 repository, a plist, a log or a command line, and never printed; the keeper scrubs it from
 errors.
@@ -21,6 +21,25 @@ Detect: `price source rate limit (HTTP 429)` in the keeper log. The keeper backs
   (`launchctl list | grep com.varswap.keeper`), and ask the coordinator whether metalbook is in a
   settlement window; avoid manual backfills then.
 - Never restart keepers in a loop to "push through": each start queries Hermes again.
+
+## hermes-hung
+
+Detect: a `hermes-hung` alert from `varswap-watch`. Every slot of the host's Hermes budget is
+held by a request in progress for longer than `--hermes-hung-after` (120 s; a request
+completes within the HTTP client's 10 s timeout). The owners are alive but stopped or hung: a
+stopped process keeps its slot for as long as it is stopped, by design (the wire-time
+contract), so no varswap process on the host can reach Hermes, the standby included.
+
+1. The alert names the owner PIDs. Check each one: `ps -o pid,stat,etime,command -p <pid>`
+   (`T` in `stat`: stopped).
+2. A process stopped by an operator on purpose (a drill): `kill -CONT <pid>` when the drill
+   allows it.
+3. Otherwise kill it by PID, never by name (other repos run keepers on the same host):
+   `kill <pid>`, then `kill -9 <pid>` if it is still there after 10 s (a stopped process only
+   handles `SIGTERM` once continued). Its lock is released when it exits; the next request
+   from another process finds the slot free and counts it one more minute, then the budget is
+   back. The LaunchAgent restarts a killed keeper.
+4. The alert resolves at the next pass that finds a slot free.
 
 ## Rotate the key
 
