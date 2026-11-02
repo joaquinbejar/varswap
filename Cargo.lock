@@ -2774,9 +2774,9 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
 name = "optfix"
-version = "0.2.1"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f715dcd785d82935dbd27e2ac5f41178492873a46ad08d7d0c880efd2b558448"
+checksum = "4c10a234906b1a4a48a5b1a25bfba75bd5a931cb468277b116b7dbbb63ac29d2"
 dependencies = [
  "bytemuck",
 ]

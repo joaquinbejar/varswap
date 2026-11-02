@@ -300,7 +300,7 @@ make program    # target/deploy/varswap_program.so (the LiteSVM tests load it)
 make test       # every test
 ```
 
-optfix comes from crates.io (`optfix = "0.2"`).
+optfix comes from crates.io (`optfix = "0.3"`).
 
 ### Usage Examples
 
