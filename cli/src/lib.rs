@@ -283,6 +283,145 @@ pub fn read_swap<R: Rpc>(
     decode::swap(program_id, &info.owner, &info.data).map_err(|_| decode_err(swap, "swap"))
 }
 
+/// Which side of a swap a claim pays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    /// The long side (`claim_long`).
+    Long,
+    /// The short side (`claim_short`).
+    Short,
+}
+
+/// Checks that `account` is a token account of `mint` owned by `owner`, held by the swap's
+/// token program (the checks the program makes, so a wrong account fails before signing).
+fn check_token_account<R: Rpc>(
+    rpc: &mut R,
+    account: &Address,
+    token_program: &Address,
+    mint: &Address,
+    owner: &Address,
+) -> Result<(), CliError> {
+    let info = fetch(rpc, account)?;
+    let bad = |what: &str| CliError::Usage(format!("{account}: {what}"));
+    if info.owner != *token_program {
+        return Err(bad("not an account of the swap's token program"));
+    }
+    let field = |range: std::ops::Range<usize>| {
+        info.data
+            .get(range)
+            .and_then(|b| <[u8; 32]>::try_from(b).ok())
+            .map(Address::new_from_array)
+    };
+    if field(0..32) != Some(*mint) {
+        return Err(bad("not a token account of the swap's mint"));
+    }
+    if field(32..64) != Some(*owner) {
+        return Err(bad(&format!("not owned by {owner}")));
+    }
+    Ok(())
+}
+
+/// `owner`'s associated token account of the swap's mint (SPL Token swaps only).
+fn default_token_account(s: &SwapData, owner: &Address, flag: &str) -> Result<Address, CliError> {
+    if Address::new_from_array(s.token_program) != varswap_sdk::TOKEN_PROGRAM {
+        return Err(CliError::Usage(format!(
+            "the swap's token program is not SPL Token: pass {flag}"
+        )));
+    }
+    Ok(pda::ata(owner, &Address::new_from_array(s.mint)))
+}
+
+/// `settle_swap` for `swap`: the window is read from the swap.
+///
+/// # Errors
+///
+/// The swap cannot be read or is not a swap of this program.
+pub fn settle_swap_ix<R: Rpc>(
+    rpc: &mut R,
+    program_id: &Address,
+    swap: &Address,
+) -> Result<Instruction, CliError> {
+    let s = read_swap(rpc, program_id, swap)?;
+    Ok(ix::settle_swap(
+        program_id,
+        &Address::new_from_array(s.window),
+        swap,
+    ))
+}
+
+/// `claim_long` or `claim_short` for `swap`, into `dest` (default: the side's associated token
+/// account of the swap's mint), after checking `dest` is a token account of that mint owned
+/// by that side.
+///
+/// # Errors
+///
+/// The swap cannot be read, or `dest` is not the side's token account of the swap's mint.
+pub fn claim_ix<R: Rpc>(
+    rpc: &mut R,
+    program_id: &Address,
+    swap: &Address,
+    side: Side,
+    dest: Option<&Address>,
+) -> Result<Instruction, CliError> {
+    let s = read_swap(rpc, program_id, swap)?;
+    let owner = Address::new_from_array(match side {
+        Side::Long => s.long,
+        Side::Short => s.short,
+    });
+    let mint = Address::new_from_array(s.mint);
+    let dest = match dest {
+        Some(d) => *d,
+        None => default_token_account(&s, &owner, "--dest")?,
+    };
+    check_token_account(
+        rpc,
+        &dest,
+        &Address::new_from_array(s.token_program),
+        &mint,
+        &owner,
+    )?;
+    Ok(match side {
+        Side::Long => ix::claim_long(program_id, swap, &dest, &mint),
+        Side::Short => ix::claim_short(program_id, swap, &dest, &mint),
+    })
+}
+
+/// `close_swap` for `swap`: rents and any vault balance go to the payer recorded in the swap,
+/// tokens into `receiver_token` (default: the payer's associated token account of the mint),
+/// after checking it is the payer's token account of that mint.
+///
+/// # Errors
+///
+/// The swap cannot be read, or `receiver_token` is not the payer's token account of the mint.
+pub fn close_swap_ix<R: Rpc>(
+    rpc: &mut R,
+    program_id: &Address,
+    swap: &Address,
+    receiver_token: Option<&Address>,
+) -> Result<Instruction, CliError> {
+    let s = read_swap(rpc, program_id, swap)?;
+    let payer = Address::new_from_array(s.payer);
+    let mint = Address::new_from_array(s.mint);
+    let receiver_token = match receiver_token {
+        Some(t) => *t,
+        None => default_token_account(&s, &payer, "--receiver-token")?,
+    };
+    check_token_account(
+        rpc,
+        &receiver_token,
+        &Address::new_from_array(s.token_program),
+        &mint,
+        &payer,
+    )?;
+    Ok(ix::close_swap(
+        program_id,
+        swap,
+        &payer,
+        &receiver_token,
+        &mint,
+    ))
+}
+
 /// The config as JSON.
 #[must_use]
 pub fn config_json(program_id: &Address, c: &ConfigData) -> Value {

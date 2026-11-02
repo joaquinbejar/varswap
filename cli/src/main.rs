@@ -9,9 +9,10 @@ use solana_signer::Signer;
 use varswap_cli::record;
 use varswap_cli::rpc::Cluster;
 use varswap_cli::{
-    config_json, create_window_ix, describe, feed_config_json, init_config_ix, parse_address,
-    parse_feed_id, read_config, read_feed_config, read_keypair, read_swap, read_window,
-    set_feed_config_ix, submit, swap_json, window_json, CliError,
+    claim_ix, close_swap_ix, config_json, create_window_ix, describe, feed_config_json,
+    init_config_ix, parse_address, parse_feed_id, read_config, read_feed_config, read_keypair,
+    read_swap, read_window, set_feed_config_ix, settle_swap_ix, submit, swap_json, window_json,
+    CliError, Side,
 };
 use varswap_sdk::ix::FeedParams;
 use varswap_sdk::pda::{self, WindowKey};
@@ -100,6 +101,37 @@ enum Command {
     ShowSwap {
         /// The swap address.
         address: String,
+    },
+    /// `settle_swap`: anyone, once the swap's window is final (the window is read from the
+    /// swap); computes and stores both payouts, moves no tokens.
+    SettleSwap {
+        /// The swap address.
+        swap: String,
+    },
+    /// `claim_long`: anyone; pays the long side into its token account of the swap's mint.
+    ClaimLong {
+        /// The swap address.
+        swap: String,
+        /// The long's token account (default: its associated token account of the mint).
+        #[arg(long)]
+        dest: Option<String>,
+    },
+    /// `claim_short`: anyone; pays the short side into its token account of the swap's mint.
+    ClaimShort {
+        /// The swap address.
+        swap: String,
+        /// The short's token account (default: its associated token account of the mint).
+        #[arg(long)]
+        dest: Option<String>,
+    },
+    /// `close_swap`: anyone, after both claims; rents and any vault balance go to the payer
+    /// recorded in the swap.
+    CloseSwap {
+        /// The swap address.
+        swap: String,
+        /// The payer's token account of the mint (default: its associated token account).
+        #[arg(long)]
+        receiver_token: Option<String>,
     },
     /// Prints a window's record as JSON: account bytes, every transaction back to
     /// `create_window`, the derived fields and the quality label (finalized commitment).
@@ -239,6 +271,35 @@ fn run(cli: Cli) -> Result<(), CliError> {
             let address = parse_address(address)?;
             let s = read_swap(&mut rpc, &program_id, &address)?;
             print_json(&swap_json(&address, &s))
+        }
+        Command::SettleSwap { swap } => {
+            let instruction = settle_swap_ix(&mut rpc, &program_id, &parse_address(swap)?)?;
+            finish(&mut rpc, instruction, &signer()?, cli.dry_run)
+        }
+        Command::ClaimLong { swap, dest } | Command::ClaimShort { swap, dest } => {
+            let side = if matches!(cli.command, Command::ClaimLong { .. }) {
+                Side::Long
+            } else {
+                Side::Short
+            };
+            let dest = dest.as_deref().map(parse_address).transpose()?;
+            let instruction = claim_ix(
+                &mut rpc,
+                &program_id,
+                &parse_address(swap)?,
+                side,
+                dest.as_ref(),
+            )?;
+            finish(&mut rpc, instruction, &signer()?, cli.dry_run)
+        }
+        Command::CloseSwap {
+            swap,
+            receiver_token,
+        } => {
+            let token = receiver_token.as_deref().map(parse_address).transpose()?;
+            let instruction =
+                close_swap_ix(&mut rpc, &program_id, &parse_address(swap)?, token.as_ref())?;
+            finish(&mut rpc, instruction, &signer()?, cli.dry_run)
         }
         Command::ExportWindow { address, cluster } => {
             let address = parse_address(address)?;
