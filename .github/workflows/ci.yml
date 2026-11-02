@@ -67,3 +67,18 @@ jobs:
       - run: make $MAKE_PINS bench
       - name: docs/benchmarks.md is the committed one
         run: git diff --exit-code docs/benchmarks.md
+
+  # The verifiable build (docs/verifiable.md, docs/PLAN-improvements.md I2): rebuilds the program
+  # with solana-verify in the pinned image and requires the build hash docs/verifiable.md
+  # records, so a program change must record its new hash in the same PR.
+  verifiable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: solana-verify
+        run: |
+          cargo install --locked solana-verify --version 0.5.2
+          solana-verify --version
+      - name: Build hash is the recorded one
+        run: make verifiable-check
