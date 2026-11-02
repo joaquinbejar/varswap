@@ -32,4 +32,7 @@ pub enum CliError {
     /// Signing the transaction failed.
     #[error("signing: {0}")]
     Sign(&'static str),
+    /// A window record that cannot be built or does not verify.
+    #[error("window record: {0}")]
+    Record(String),
 }

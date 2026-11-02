@@ -7,6 +7,7 @@
 //! in-process one.
 
 pub mod error;
+pub mod record;
 pub mod rpc;
 
 use serde_json::{json, Value};
