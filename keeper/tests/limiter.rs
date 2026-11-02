@@ -7,10 +7,10 @@
 //! Asserted on arrival times at the mock, not admission times: no sliding window holds more
 //! than `R` requests (every request counted, 404s and the 429 included), every planned request
 //! is eventually answered, and after the mock answers one 429 at most `R - 1` other requests
-//! (admitted before the block was recorded) arrive before the block has passed. A request's
-//! entry stays at its latest arrival time until the request has completed, so these hold
-//! however long a process takes between admission and send; the only slack is
-//! [`SLACK_MS`] for comparing the mock's clock with the limiter's millisecond clock.
+//! (admitted before the block was recorded) arrive before the block has passed. A request
+//! counts from its admission until a window after it completed, so these hold however long a
+//! process takes between admission and send; the only slack is [`SLACK_MS`] for comparing
+//! the mock's clock with the limiter's millisecond clock.
 
 #![allow(
     clippy::unwrap_used,
@@ -258,9 +258,7 @@ fn assert_at_most(sends: &[u64], r: usize, window_ms: u64) {
 fn test_send_delayed_after_admission_still_counts() {
     let dir = scratch("delayed");
     let (r, window) = (2_usize, 300_u64);
-    let l = HermesLimiter::with_window(&dir, "k", 2, window, 400)
-        .unwrap()
-        .with_pending(2_000);
+    let l = HermesLimiter::with_window(&dir, "k", 2, window, 400).unwrap();
     let sends = Arc::new(Mutex::new(Vec::new()));
     let stopped = {
         let (l, sends) = (l.clone(), Arc::clone(&sends));
@@ -286,39 +284,41 @@ fn test_send_delayed_after_admission_still_counts() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A slot never confirmed (its process died after admission) delays the others until its
-/// pending bound plus the window, and no longer.
+/// A process stopped in the middle of a request (admitted, not yet answered) keeps its slot
+/// for as long as it is stopped, well past the window: the others are not admitted into it.
 #[test]
-fn test_unconfirmed_slot_expires_after_pending_and_window() {
-    let dir = scratch("dead");
-    let l = HermesLimiter::with_window(&dir, "k", 1, 200, 300)
-        .unwrap()
-        .with_pending(400);
+fn test_stopped_owner_keeps_its_slot() {
+    let dir = scratch("stopped");
+    let l = HermesLimiter::with_window(&dir, "k", 1, 200, 300).unwrap();
+    let slot = l.acquire().unwrap();
     let t = Instant::now();
-    let _dead = l.acquire().unwrap();
-    l.confirm(l.acquire().unwrap()).unwrap();
-    let waited = t.elapsed();
-    assert!(waited >= Duration::from_millis(595), "{waited:?}");
-    assert!(waited < Duration::from_millis(2_000), "{waited:?}");
+    let other = {
+        let l = l.clone();
+        std::thread::spawn(move || {
+            l.confirm(l.acquire().unwrap()).unwrap();
+            t.elapsed()
+        })
+    };
+    std::thread::sleep(Duration::from_millis(600));
+    l.confirm(slot).unwrap();
+    // Admitted no earlier than the confirmation plus the window.
+    let waited = other.join().unwrap();
+    assert!(waited >= Duration::from_millis(795), "{waited:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A send delayed past the pending bound is recorded again at its completion when confirmed.
+/// A slot dropped unconfirmed (its process died after admission) counts as completed when
+/// another process finds its lock free, and for one window after that.
 #[test]
-fn test_confirm_after_expiry_records_the_request_again() {
-    let dir = scratch("late");
-    let l = HermesLimiter::with_window(&dir, "k", 1, 200, 300)
-        .unwrap()
-        .with_pending(50);
-    let slot = l.acquire().unwrap();
-    std::thread::sleep(Duration::from_millis(400));
-    l.confirm(slot).unwrap();
+fn test_dead_owner_counts_from_when_it_is_found() {
+    let dir = scratch("dead");
+    let l = HermesLimiter::with_window(&dir, "k", 1, 200, 300).unwrap();
+    drop(l.acquire().unwrap());
+    std::thread::sleep(Duration::from_millis(300));
     let t = Instant::now();
     l.confirm(l.acquire().unwrap()).unwrap();
-    assert!(
-        t.elapsed() >= Duration::from_millis(190),
-        "the next request went {:?} after a late send",
-        t.elapsed()
-    );
+    let waited = t.elapsed();
+    assert!(waited >= Duration::from_millis(195), "{waited:?}");
+    assert!(waited < Duration::from_millis(1_000), "{waited:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }

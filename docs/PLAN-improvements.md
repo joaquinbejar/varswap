@@ -204,20 +204,21 @@ fault control crashes on its patch and passes without it, in CI.
     `HermesSource` takes a slot before every HTTP request it sends, including retries and
     requests answered 404 or 429; the cache answers without one. No slot available is a
     wait, not an error.
-  - **Amendment (review of #39): the budget is on arrivals, not admissions.** An entry
-    recorded at admission does not bound when the request reaches Hermes: a process paused
-    between admission and send (the drill's SIGSTOP, or scheduling on a loaded host) sends
-    after its entry has aged out, inside a window others have filled. So the entry is
-    recorded at admission as pending, at `admission + 15 s` (the HTTP client's 10 s global
-    timeout plus margin: the latest arrival of a request sent in time), and lowered to the
-    completion time once the request has been answered or has failed. Then no `R + 1`
-    requests arrive within one window, whatever the delay between admission and send, as
-    long as each send completes within 15 s of its admission. Residual: a process stalled
-    longer than that between admission and send; its entry has expired, so the late request
-    can share a window with `R` others. It is recorded again when it completes, and a 429
-    then blocks every process as below. A process that dies holding a pending entry delays
-    the others by at most 15 s plus the window. Tested deterministically: a request held
-    back 1.5 windows after admission (fails under admission-time accounting).
+  - **Amendment (review of #39; coordinator ruling): the contract is wire time.** Hermes
+    counts the requests that reach it, so at most `R` requests may arrive in any sliding
+    60 s, not merely be admitted. An entry recorded at admission does not bound arrival: a
+    process paused between admission and send (the drill's SIGSTOP, or scheduling on a
+    loaded host) sends after its entry has aged out, inside a window others have filled.
+    So an admitted request is recorded as pending, and its process creates and `flock`s a
+    lock file of its own for that request until it has been answered or has failed. A
+    pending entry counts for as long as that lock is held, however long the process is
+    stopped; when the request completes (`confirm`), or another process finds the lock free
+    (the owner died), the entry becomes completed at that time and counts for one more
+    window. So every entry counts from before its request can be sent until a window after
+    it can have arrived: no `R + 1` arrivals within one window. A stopped process holds one
+    slot until it resumes or dies. Widening test tolerances is not a remedy. Tested
+    deterministically: a request held back 1.5 windows after admission, and a holder stopped
+    for 3 windows; both fail under admission-time accounting.
   - **Scope: one host.** The limiter covers every varswap process sharing one lock
     directory on one machine (process independence, not host independence). Running
     varswap keepers on a second host is out of this milestone; it would first need `R`

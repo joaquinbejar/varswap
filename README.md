@@ -400,12 +400,12 @@ The binary takes a lock on the payer (`pyth_post::PayerLock`) and refuses to sta
 process holds it. On devnet the varswap keeper has its own payer, separate from metalbook's.
 
 **Hermes budget.** The API key is shared with metalbook; varswap gets 3 requests per minute
-across all its processes on a host. Every Hermes request is admitted by a host-wide
+across all its processes on a host. The contract is wire time: at most `--hermes-rate`
+(default 3) requests reach Hermes in any 60 s, retries and 404s included. A host-wide
 sliding-window limiter (a file in the `PayerLock` directory, named after a hash of the key)
-that counts each request at the latest time it can reach Hermes until it has completed: at
-most `--hermes-rate` (default 3) arrivals in any 60 s, retries and 404s included, even when a
-process stalls between admission and send (up to 15 s; a longer stall is recorded when the
-request completes), and a 429 pauses every varswap process for 61 s. Upgrade every varswap
+counts each request from its admission until 60 s after it completed; a process stopped in
+the middle of a request keeps its slot until it resumes or dies. A 429 pauses every varswap
+process for 61 s. Upgrade every varswap
 process on a host together: older binaries read the new state file conservatively. Each request is logged as `hermes: request at <ms> ms, HTTP
 <status>`, so the budget can be audited.
 
