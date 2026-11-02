@@ -67,7 +67,11 @@ fuzz_target!(|i: Input| {
     assert!(la <= lb, "long payout decreased: {la} > {lb}");
 
     let (ls, _) = t.payouts(Settlement::Realized(strike)).unwrap();
-    assert_eq!(ls, t.long_collateral(), "at the strike the long gets its collateral");
+    assert_eq!(
+        ls,
+        t.long_collateral(),
+        "at the strike the long gets its collateral"
+    );
     let (lc, _) = t.payouts(Settlement::Realized(cap)).unwrap();
     if vb >= cap {
         assert_eq!(lb, lc, "payout moved above the cap");

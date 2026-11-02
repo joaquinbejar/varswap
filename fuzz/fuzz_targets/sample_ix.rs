@@ -20,15 +20,15 @@ mod common;
 use std::cell::RefCell;
 
 use arbitrary::Arbitrary;
-use common::{Env, PriceUpdate as Update, RECEIVER, SOL, T0, H};
+use common::{Env, PriceUpdate as Update, H, RECEIVER, SOL, T0};
 use libfuzzer_sys::fuzz_target;
 use litesvm::LiteSVM;
+use pinocchio::error::ProgramError;
 use solana_address::Address;
+use solana_instruction_error::InstructionError;
 use solana_keypair::Keypair;
 use solana_signer::Signer;
 use solana_transaction::Transaction;
-use pinocchio::error::ProgramError;
-use solana_instruction_error::InstructionError;
 use solana_transaction_error::TransactionError;
 use varswap_core::{accept_print, LnKernel, RawPrint, UnixTimestamp, Window};
 use varswap_program::error::{core, pyth};
@@ -196,7 +196,10 @@ fuzz_target!(|steps: Vec<Step<'_>>| {
                 }
                 assert_eq!(after, before, "a failed sample wrote the window");
             }
-            (Err(f), Err(e)) => panic!("off chain error is not a custom code: {e:?}; on chain {:?}", f.err),
+            (Err(f), Err(e)) => panic!(
+                "off chain error is not a custom code: {e:?}; on chain {:?}",
+                f.err
+            ),
             (Ok(_), Err(e)) => panic!("on chain accepted, off chain rejected with {e:?}"),
             (Err(f), Ok(())) => panic!(
                 "on chain rejected with {:?}, off chain accepted\n{}",

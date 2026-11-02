@@ -103,6 +103,8 @@ jobs:
           rustup toolchain install "$FUZZ_TOOLCHAIN" --profile minimal
           cargo +"$FUZZ_TOOLCHAIN" install --locked cargo-fuzz --version "$CARGO_FUZZ_VERSION"
           cargo +"$FUZZ_TOOLCHAIN" fuzz --version
+      - name: Fuzz crate formatting
+        run: make $MAKE_PINS fuzz-fmt-check
       - name: Fuzz every target
         run: |
           secs=120

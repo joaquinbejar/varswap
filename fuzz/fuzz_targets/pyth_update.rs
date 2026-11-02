@@ -112,7 +112,10 @@ fuzz_target!(|input: Input<'_>| {
     for i in 0..8 {
         let mut bad = data.clone();
         bad[i] ^= 0x01;
-        assert_eq!(PriceUpdate::decode(&bad), Err(PythError::WrongDiscriminator));
+        assert_eq!(
+            PriceUpdate::decode(&bad),
+            Err(PythError::WrongDiscriminator)
+        );
     }
 
     // verify against the reference predicate.

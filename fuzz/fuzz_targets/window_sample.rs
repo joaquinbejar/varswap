@@ -14,8 +14,8 @@ use std::num::NonZeroU64;
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use varswap_core::{
-    window_size, Bps, CoreError, FeedId, LnKernel, Print, ReturnKernel, RiskParams,
-    Seconds, StoredPrice, SumSq, UnixTimestamp, Window, WindowSpec, WindowState,
+    window_size, Bps, CoreError, FeedId, LnKernel, Print, ReturnKernel, RiskParams, Seconds,
+    StoredPrice, SumSq, UnixTimestamp, Window, WindowSpec, WindowState,
 };
 
 const FEED: [u8; 32] = [7; 32];
@@ -125,7 +125,10 @@ fuzz_target!(|input: Input| {
                         assert_eq!(old_prices[k as usize], None, "refilled bucket {k}");
                         assert_eq!(prices[k as usize], Some(print.stored()));
                     } else {
-                        assert_eq!(prices[k as usize], old_prices[k as usize], "bucket {k} changed");
+                        assert_eq!(
+                            prices[k as usize], old_prices[k as usize],
+                            "bucket {k} changed"
+                        );
                     }
                 }
                 assert_eq!(
@@ -135,7 +138,11 @@ fuzz_target!(|input: Input| {
                 );
                 let filled = prices.iter().filter(|p| p.is_some()).count() as u32;
                 assert_eq!(w.missing().unwrap(), n - filled);
-                assert_eq!(sum, Some(w.sum_sq()), "sum_sq is not the sum of the returns");
+                assert_eq!(
+                    sum,
+                    Some(w.sum_sq()),
+                    "sum_sq is not the sum of the returns"
+                );
                 assert_eq!(w.state().unwrap(), WindowState::Sampling);
             }
         }

@@ -128,6 +128,11 @@ fuzz: program
 		cargo +$(FUZZ_TOOLCHAIN) fuzz run -O $$t -- -max_total_time=$(FUZZ_SECONDS) || exit 1; \
 	done
 
+# Formatting of the fuzz crate (its own workspace, so `fmt-check` does not reach it).
+.PHONY: fuzz-fmt-check
+fuzz-fmt-check:
+	cargo +$(RUST_TOOLCHAIN) fmt --manifest-path fuzz/Cargo.toml -- --check
+
 # Deterministic fault controls: each planted bug in fuzz/controls must crash its target on its
 # committed input, and the input must pass without the bug (fuzz/controls/run.sh).
 .PHONY: fuzz-control
