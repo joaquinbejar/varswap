@@ -22,7 +22,7 @@ Status: `open`, `in progress`, `done` (with evidence), `n/a` (with the reason).
 | Item | Owner | Status | Evidence |
 | --- | --- | --- | --- |
 | Squads v4 multisig created; threshold and members decided | user | open | [`docs/governance.md`](governance.md) |
-| Upgrade authority is the multisig vault before any other instruction; `init_config` signed by the multisig, so the config admin is the vault | user, varswap | open | |
+| Upgrade authority is the multisig vault before any other instruction; `init_config` signed by the multisig, so the config admin is the vault | user, varswap | open | devnet rehearsal: authority moved to a dedicated key (`docs/devnet.md`, transfer `4BjAJX9h…`) |
 | Program keypair generated and stored offline; never committed | user | open | |
 | Keeper payers: one per poster instance, small balances, top-up runbook | varswap | open | `docs/runbooks/` (I4) |
 | A dedicated mainnet Hermes key with a known per-key budget (the devnet key is shared with metalbook: 3 requests per minute for varswap) | user, coordinator | open | |
@@ -32,7 +32,7 @@ Status: `open`, `in progress`, `done` (with evidence), `n/a` (with the reason).
 | Item | Owner | Status | Evidence |
 | --- | --- | --- | --- |
 | CI green on every pull request (`checks`, `test`, `bench`) | varswap | done | `.github/workflows/ci.yml`, PR #31 |
-| Verifiable build: build hash reproduced by CI, deployed hash recorded after each upgrade | varswap | in progress | [`docs/verifiable.md`](verifiable.md), PR #36 (I2) |
+| Verifiable build: build hash reproduced by CI, deployed hash recorded after each upgrade | varswap | done (devnet) | [`docs/verifiable.md`](verifiable.md) (CI job `verifiable`, build hash `b9336e63…`), [`docs/devnet.md`](devnet.md#program-build-and-authority) (deployed hash equal, upgrade `3uhvEXQG…`), PR #36 |
 | Fuzzing of `pyth-lite` parsing, window sampling, swap conservation and the `sample` instruction, with fault controls | varswap | in progress | `fuzz/`, PR #35 (I3) |
 | Audit scope written and an audit completed, findings fixed | varswap, auditor | open | `docs/audit-scope.md` (I4) |
 | Runbooks drilled on devnet | varswap | open | `docs/runbooks/` (I4) |
