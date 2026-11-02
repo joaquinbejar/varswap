@@ -222,3 +222,22 @@ export VARSWAP_KEYPAIR=~/.config/solana/id.json   # pays fees only
 export VARSWAP_HERMES_API_KEY=...                  # environment only
 cargo run -p varswap-keeper --release --bin varswap-keeper -- --watch 30 <window>
 ```
+
+## Settlement through `varswap-admin` (2026-11-02)
+
+The first swap on devnet, settled, claimed and closed with the I8 commands
+(`docs/PLAN-improvements.md`), from `main` at `eb9fb5e` plus the I8 branch. Collateral: Circle
+devnet USDC, 2 units sent by metalbook (`5WbkRhbvzdJSKvf165Kfi5qVyoj1PPkVT1cTqKgHUVVA7go362EX1Q9ntBBfTtsh2pjEskzGQpwGtaQroxz6E7Zw`), one passed to the short
+(`4MaFtHK1dhRkf138WAAgSkPLmCPq7CFEiaDNiWGWdte32MzdAiEcnB7iDoMn5YVHEEdsJN4ZZ9Ypm6oNhRvHXPEj`).
+
+| What | Value |
+| --- | --- |
+| Window | `9Pm5ttAfxvsWyrbQ7GnYQ7mo1SkJZLCve66A3diPtGLA` (10:52 to 10:54Z, two 60 s intervals), `create_window` `3KYxX9P6KL5BcAL1kHUgTw2t94p81vzrPVGG5dzWHu3nXrbbfxgYt5tppQFitVhSB1DP96rCyjV9owuy3xjknnXp`; sampled by `varswap-keeper` and finalized, realized variance `0.058317865661` |
+| Long, short, payer | `77ieYLKspRnGzAt1AK6ZVsttnTY6T7EY2k7CpTZeCPPV`, `CmNdYPuAxpLKyfEjRpDk6Pvvqk42SqTkZWv6qwX1dnnk`, `77ie…` |
+| Terms | notional 1,000,000 atoms (1 USDC per unit of variance), strike 0.01, cap 0.0625: collateral 10,000 (long) and 52,501 (short) atoms |
+| `open_swap` (`cli/examples/open_swap.rs`) | swap `AquGkKfwgjvXqWG3yae121AM866rY2amBGiUi4hGkU7o`, `3HqcqvJKf5XMxqPgQZG7WBZFdKgve8S1RNWyPDmoywe4zHsBoQXgWy2Y9gDexRjpHrts5RaqCmn64h6P6uSm71At` |
+| `varswap-admin settle-swap` | `2LB5LoPzaEVXZ2gDfvYpgg8Zcg79CD5pdqm8zonJLJGMEn5nvZYH5Hr7owxiPJu8AxsNJFgsP19w3sRqMG1tcY2J`: payouts 58,317 (long) and 4,184 (short), sum 62,501 = the collateral |
+| `varswap-admin claim-long` | `gUGqVRscgb6dTkzazxnWeBJGWWS3xwGBVQMUh9VaWCzxG9NqEjXZ1ePaJwp2vJnNKvzYypvTMs6dErRPJpeZkzd` |
+| `varswap-admin claim-short` | `3Gdx5Yoj3ZwWNAWN8v2P3P9e5At8EMQkXUfnLqQSS3oskDCF1W8QcLf891x7nkvDq3yZpqf9AW7Ck64ZQKQDQfzA` |
+| `varswap-admin close-swap` | `V7iqxZ1fVhMmdXhAbvyircEx1TMe5P8L24NaXyxryAPXBTR8N2sWGRgVtb7FenEH2UMroA9vdu3xQS3Dn3tmVRM`; the swap account no longer exists |
+| Balances after | long 1.048317 USDC (1 − 0.010000 + 0.058317), short 0.951683 USDC (1 − 0.052501 + 0.004184) |
