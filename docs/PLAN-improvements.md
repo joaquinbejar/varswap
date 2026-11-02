@@ -19,7 +19,7 @@ authority and config admin. Property tests exist in `varswap-core` only (`tests/
 
 ## Phase 1: hardening
 
-### I1. CI as a required check
+### I1. CI on every pull request
 
 Port optfix milestone 9 (`optfix/.github/workflows/ci.yml`, `.github/actions/toolchains`).
 
@@ -44,12 +44,11 @@ Port optfix milestone 9 (`optfix/.github/workflows/ci.yml`, `.github/actions/too
 - Failing controls on scratch PRs closed unmerged: an unformatted line fails `checks` only;
   a planted failing test fails `test` only; one edited number in `docs/benchmarks.md` fails
   `bench` only.
-- `main` branch protection requires `checks`, `test` and `bench`, administrators included
-  (set on 2026-11-02 under the coordinator's GO; not strict about up to date branches).
-  Badge in the README.
+- No branch protection on `main` (decision 6: required CI is for optfix only). The rule is
+  a process rule instead: a PR merges only when `checks`, `test` and `bench` are green on
+  its head (and `fuzz` once I3 adds it). Badge in the README.
 - *Done when* every job passes on the milestone PR, a CI-built benchmark table equals the
-  committed one byte for byte, each failing control fails exactly its job, and the checks
-  are required on `main`.
+  committed one byte for byte, and each failing control fails exactly its job.
 
 ### I2. Verifiable build and a separate upgrade authority
 
@@ -192,24 +191,30 @@ fault control crashes on its patch and passes without it, in CI.
   and sends no Hermes request.
 - Hermes budget (decision 2: one key, shared with metalbook; R1 P2). Pacing is not inferred
   from `S`; it is an explicit allocation enforced where requests leave the process:
-  - **Allocation per key**, agreed with the coordinator and metalbook before I6 is merged
-    and written in `docs/governance.md`: of the key's quota on the timestamp endpoint
-    (about 10 requests per minute), varswap gets a fixed share `R` per minute for all its
-    processes together (proposed: 3), metalbook keeps the rest. Hourly windows need one
-    request per window per hour in steady state; a 24 bucket backfill at 3 per minute takes
-    8 minutes.
-  - **One limiter for every varswap process on the host**: a token bucket of `R` per minute
-    in a file under the lock directory (`$PYTH_POST_LOCK_DIR`, flock on every take), keyed by
-    a hash of the API key (never the key itself). `HermesSource` takes one token before
-    every HTTP request it sends, including retries and requests answered 404 or 429; the
-    cache answers without a token. A token not available is a wait, not an error.
+  - **Allocation per key** (decision 2): of the key's quota on the timestamp endpoint
+    (about 10 requests per minute), varswap gets `R = 3` per minute for all its processes
+    together and metalbook keeps 7; written in `docs/governance.md`. Hourly windows need
+    one request per window per hour in steady state; a 24 bucket backfill at 3 per minute
+    takes 8 minutes.
+  - **One rolling-window limiter for every varswap process on one host**: a file under the
+    lock directory (`$PYTH_POST_LOCK_DIR`, flock on every take), keyed by a hash of the API
+    key (never the key itself), holding the send times of the last `R` requests. A request
+    may leave only if fewer than `R` of them fall in the last 60 s; otherwise it waits until
+    the oldest one leaves the window. So at most `R` requests leave in any sliding minute
+    (a refilled token bucket could let nearly `2R` through). `HermesSource` takes a slot
+    before every HTTP request it sends, including retries and requests answered 404 or 429;
+    the cache answers without one. No slot available is a wait, not an error.
+  - **Scope: one host.** The limiter covers every varswap process sharing one lock
+    directory on one machine (process independence, not host independence). Running
+    varswap keepers on a second host is out of this milestone; it would first need `R`
+    split into per host quotas whose sum is at most `R`.
   - **429**: any process that receives one stops all varswap requests on that key for
     61 s, through the same file (a shared "blocked until" time), not only its own.
   - **Concurrent control with real HTTP**: an integration test runs a local mock Hermes
     (`std::net::TcpListener`, no new dependency) that counts requests per sliding minute
     and answers 429 above a threshold; a primary and a standby `HermesSource` in two
     processes backfill concurrently against it with a scaled clock. It asserts the total
-    never exceeds `R` per window of time, every 404 and retry counted, and that both
+    never exceeds `R` in any sliding window, every 404 and retry counted, and that both
     recover after a forced 429 without a second 429 inside the block.
   - The devnet drill counts the real requests from both keepers' logs per minute and
     checks the same bound.
@@ -249,8 +254,10 @@ rests on the sample events, and the events need provenance (R1 P2).
 - `varswap-admin verify-window <bundle>` has two modes, and says which one ran:
   - offline: checks the bundle against itself (account bytes decode to the stated prices,
     `sum_sq` and variance recomputed with `varswap-core`, events reconcile, the label is the
-    one the events give). It proves consistency of the supplied snapshot, not that the chain
-    agrees;
+    one the events give). The guarantee is consistency only: the supplied snapshot and
+    events agree with each other and with the program's rules. It authenticates nothing
+    against the chain, and a consistent forgery (for example an edited `publish_time` that
+    keeps the same run and prices) passes it;
   - `--rpc`: also refetches every listed signature and the account at finalized commitment
     and checks they exist, succeeded, invoked this program on this window and carry the
     same events, and that no successful sample transaction of the window is missing from
@@ -258,11 +265,12 @@ rests on the sample events, and the events need provenance (R1 P2).
 - `docs/windows/`: one bundle per window plus a README table generated by the CLI, starting
   with the demo window and `7s5K`. A CI step runs the offline verify on the committed
   bundles.
-- Negative controls, each must fail verify (offline unless stated): an edited bucket price
-  in the account bytes; a deleted event (a filled bucket left uncovered); an edited event
-  (run bounds, price or publish time); an event copied from another window (`--rpc`); a
-  forged label (`complete` on a compressed window); a signature removed from the list
-  (`--rpc`).
+- Negative controls, each must fail verify in the stated mode: offline, an edited bucket
+  price in the account bytes, a deleted event (a filled bucket left uncovered), an edited
+  event whose run bounds or price no longer match the buckets, and a forged label
+  (`complete` on a compressed window); with `--rpc`, an edited `publish_time` that keeps the
+  run and prices, an event copied from another window, and a signature removed from the
+  list.
 - *Done when* both devnet windows are published with a proven label, verify passes on each
   offline and with `--rpc` against devnet, and every negative control fails for its stated
   reason.
@@ -273,10 +281,13 @@ rests on the sample events, and the events need provenance (R1 P2).
    CI only (I3).
 2. No second Hermes key. The standby shares the key and queries only when the primary lags;
    the pacing of both keepers together stays within the per key budget (about 10 requests
-   per minute on the timestamp endpoint, shared with metalbook) (I6). The exact varswap
-   share `R` is still to agree with the coordinator and metalbook (proposed 3 per minute).
-5. Standing rule (bus #43629): merge when codex has no remaining findings and the required
-   checks are green; report at milestone completion and releases.
+   per minute on the timestamp endpoint, shared with metalbook) (I6). Allocation (bus
+   #43726): varswap 3 per minute across all its processes, metalbook 7.
+5. Standing rule (bus #43629): merge when codex has no remaining findings and CI is green;
+   report at milestone completion and releases.
+6. No branch protection on varswap's `main` (bus #43726: required CI is for optfix only).
+   CI runs on every PR, and merging only on green CI is a process rule. The protection set
+   on 2026-11-02 was removed the same day.
 3. The Squads threshold and members stay open in `docs/governance.md`: the user decides
    before mainnet (I2).
 4. The devnet upgrade authority change and the verifiable upgrade are approved, on
