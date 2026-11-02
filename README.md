@@ -426,7 +426,9 @@ cargo run -p varswap-keeper --release --bin varswap-watch -- --interval 60 \
 It prints one JSON line per window and payer, and alerts on a due bucket empty for longer than
 `--grace` (`lag`), empty buckets near the backfill deadline (`deadline`), a window that can be
 finalized and is not (`unfinalized`), a degraded window, a payer under `--min-balance`
-lamports, an encoded VAA left open for too long, and an unreadable cluster. An alert fires once,
+lamports, an encoded VAA left open for too long, every slot of the host's Hermes budget held by
+requests in progress for longer than `--hermes-hung-after` seconds (`hermes-hung`: it reads
+the limiter files in the lock directory, never writes them), and an unreadable cluster. An alert fires once,
 again every `--realert` seconds while active, and prints `resolved` when it clears.
 `scripts/keeper-agent.sh` (with `VARSWAP_KEEPER_ARGS="--standby-lag 600"` for a standby) and
 `scripts/watch-agent.sh` run them as macOS LaunchAgents.

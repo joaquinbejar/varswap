@@ -22,6 +22,25 @@ Detect: `price source rate limit (HTTP 429)` in the keeper log. The keeper backs
   settlement window; avoid manual backfills then.
 - Never restart keepers in a loop to "push through": each start queries Hermes again.
 
+## hermes-hung
+
+Detect: a `hermes-hung` alert from `varswap-watch`. Every slot of the host's Hermes budget is
+held by a request in progress for longer than `--hermes-hung-after` (120 s; a request
+completes within the HTTP client's 10 s timeout). The owners are alive but stopped or hung: a
+stopped process keeps its slot for as long as it is stopped, by design (the wire-time
+contract), so no varswap process on the host can reach Hermes, the standby included.
+
+1. The alert names the owner PIDs. Check each one: `ps -o pid,stat,etime,command -p <pid>`
+   (`T` in `stat`: stopped).
+2. A process stopped by an operator on purpose (a drill): `kill -CONT <pid>` when the drill
+   allows it.
+3. Otherwise kill it by PID, never by name (other repos run keepers on the same host):
+   `kill <pid>`, then `kill -9 <pid>` if it is still there after 10 s (a stopped process only
+   handles `SIGTERM` once continued). Its lock is released when it exits; the next request
+   from another process finds the slot free and counts it one more minute, then the budget is
+   back. The LaunchAgent restarts a killed keeper.
+4. The alert resolves at the next pass that finds a slot free.
+
 ## Rotate the key
 
 1. Get the new key from the owner (the user); the coordinator records it.

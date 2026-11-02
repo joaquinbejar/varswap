@@ -12,8 +12,10 @@
 )]
 
 use varswap_core::{Bps, FeedId, RiskParams, Seconds, UnixTimestamp, WindowSpec, WindowState};
-use varswap_keeper::watch::{assess_window, Alert, AlertBook, Thresholds, VaaTracker};
-use varswap_keeper::Keeper;
+use varswap_keeper::watch::{
+    assess_hermes, assess_window, hermes_scope, Alert, AlertBook, Thresholds, VaaTracker,
+};
+use varswap_keeper::{HeldRequest, HermesLimiter, Keeper};
 
 const START: i64 = 1_800_000_000;
 const H: u32 = 3_600;
@@ -249,4 +251,50 @@ fn test_standby_lag_bounds() {
     // Shorter intervals allow no standby.
     assert!(Keeper::check_standby_lag(600, 600).is_err());
     assert!(Keeper::check_standby_lag(600, 60).is_err());
+}
+
+/// `hermes-hung` only when every slot is held, each for at least the threshold.
+#[test]
+fn test_hermes_hung_needs_every_slot_held_long_enough() {
+    let held = |pid, since_ms| HeldRequest { pid, since_ms };
+    let now = 1_000_000;
+    let all = [held(11, 800_000), held(12, 850_000), held(11, 870_000)];
+    let a = assess_hermes("hermes-x.state", &all, now, 3, 120_000).unwrap();
+    assert_eq!(a.kind, "hermes-hung");
+    assert_eq!(a.scope, hermes_scope("hermes-x.state"));
+    assert!(a.message.contains("PID 11, 12"), "{}", a.message);
+    assert!(a.message.contains("200 s"), "{}", a.message);
+    // One of the three is recent: a request in flight, not hung.
+    let recent = [held(11, 800_000), held(12, 850_000), held(13, 990_000)];
+    assert!(assess_hermes("hermes-x.state", &recent, now, 3, 120_000).is_none());
+    // Fewer held than the rate: the others still have a slot.
+    assert!(assess_hermes("hermes-x.state", &all[..2], now, 3, 0).is_none());
+}
+
+/// The watcher's read of a live limiter: every slot held by this process shows as held, and
+/// a released slot no longer does. Nothing is written.
+#[test]
+fn test_held_requests_reads_a_live_limiter() {
+    let dir = std::env::temp_dir().join(format!("varswap-watch-held-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let l = HermesLimiter::with_window(&dir, "k", 2, 60_000, 61_000).unwrap();
+    let (a, b) = (l.acquire().unwrap(), l.acquire().unwrap());
+    let files = varswap_keeper::state_files(&dir).unwrap();
+    assert_eq!(files, vec![l.path().to_path_buf()]);
+    let before = std::fs::read(l.path()).unwrap();
+    let held = varswap_keeper::held_requests(l.path()).unwrap();
+    assert_eq!(held.len(), 2);
+    assert!(held.iter().all(|h| h.pid == std::process::id()));
+    assert_eq!(
+        std::fs::read(l.path()).unwrap(),
+        before,
+        "the read wrote the state"
+    );
+    let name = l.path().file_name().unwrap().to_str().unwrap();
+    assert!(assess_hermes(name, &held, u64::MAX, 2, 0).is_some());
+    l.confirm(a).unwrap();
+    assert_eq!(varswap_keeper::held_requests(l.path()).unwrap().len(), 1);
+    drop(b);
+    assert!(varswap_keeper::held_requests(l.path()).unwrap().is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
 }

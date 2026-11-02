@@ -7,16 +7,16 @@ use std::collections::HashMap;
 use serde::Serialize;
 use varswap_core::{WindowSpec, WindowState};
 
-use crate::KeeperError;
+use crate::{HeldRequest, KeeperError};
 
 /// What a check found wrong.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Alert {
-    /// `lag`, `deadline`, `unfinalized`, `degraded`, `balance`, `encoded-vaa`, `unreadable` or
-    /// `rpc`.
+    /// `lag`, `deadline`, `unfinalized`, `degraded`, `balance`, `encoded-vaa`, `hermes-hung`,
+    /// `unreadable` or `rpc`.
     pub kind: &'static str,
     /// The observation that produced it (`window:<address>`, `balance:<payer>`,
-    /// `vaas:<payer>`, `rpc`): an alert resolves only when its scope was observed again and the
+    /// `vaas:<payer>`, `hermes:<limiter>`, `rpc`): an alert resolves only when its scope was observed again and the
     /// alert was not reported.
     pub scope: String,
     /// The window, payer or encoded VAA address it is about.
@@ -58,6 +58,53 @@ pub fn balance_scope(payer: &str) -> String {
 #[must_use]
 pub fn vaa_scope(payer: &str) -> String {
     format!("vaas:{payer}")
+}
+
+/// The scope of a Hermes limiter's check (`limiter`: its state file name).
+#[must_use]
+pub fn hermes_scope(limiter: &str) -> String {
+    format!("hermes:{limiter}")
+}
+
+/// `hermes-hung` when at least `rate` requests of the limiter `limiter` have been held for
+/// `hung_after_ms` or longer at `now_ms`: every slot of the host's Hermes budget is taken by a
+/// process that is alive but not finishing its request (stopped or hung), so no varswap
+/// process can reach Hermes until one of them is killed (`docs/runbooks/hermes.md`).
+#[must_use]
+pub fn assess_hermes(
+    limiter: &str,
+    held: &[HeldRequest],
+    now_ms: u64,
+    rate: usize,
+    hung_after_ms: u64,
+) -> Option<Alert> {
+    let mut hung: Vec<&HeldRequest> = held
+        .iter()
+        .filter(|h| now_ms.saturating_sub(h.since_ms) >= hung_after_ms)
+        .collect();
+    if hung.len() < rate {
+        return None;
+    }
+    hung.sort_by_key(|h| (h.since_ms, h.pid));
+    let mut pids: Vec<u32> = hung.iter().map(|h| h.pid).collect();
+    pids.dedup();
+    let pids = pids
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let oldest_s = hung
+        .first()
+        .and_then(|h| now_ms.saturating_sub(h.since_ms).checked_div(1_000))
+        .unwrap_or(0);
+    Some(Alert {
+        kind: "hermes-hung",
+        scope: hermes_scope(limiter),
+        subject: limiter.to_owned(),
+        message: format!(
+            "all {rate} Hermes slots of {limiter} are held by requests in progress (the oldest for {oldest_s} s), owned by PID {pids}: no varswap process can reach Hermes; kill the hung process by PID to free them (docs/runbooks/hermes.md)"
+        ),
+    })
 }
 
 /// Alert thresholds.

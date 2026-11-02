@@ -216,9 +216,20 @@ fault control crashes on its patch and passes without it, in CI.
     (the owner died), the entry becomes completed at that time and counts for one more
     window. So every entry counts from before its request can be sent until a window after
     it can have arrived: no `R + 1` arrivals within one window. A stopped process holds one
-    slot until it resumes or dies. Widening test tolerances is not a remedy. Tested
-    deterministically: a request held back 1.5 windows after admission, and a holder stopped
-    for 3 windows; both fail under admission-time accounting.
+    slot until it resumes or dies. Widening test tolerances is not a remedy, and there is no
+    global send lock: a hung owner costs its own slot only, so the standby keeps the rest.
+    Pending reservations count with no time limit; a dead owner's (its lock released by the
+    kernel, even after SIGKILL) is reaped by the next process to look, and counts one more
+    window from then.
+  - **All slots hung**: `varswap-watch` reads the limiter files (read only, no key) and
+    raises `hermes-hung` when every slot has been held by a request in progress for longer
+    than `--hermes-hung-after` (120 s); the runbook action is to kill the hung process by PID
+    (`docs/runbooks/hermes.md`).
+  - **Tests**: a send stalled 1.5 and 5 windows after admission while another process sends
+    flat out; a holder stopped for 3 windows; across processes, a child SIGSTOPped while
+    holding the slot (held, shown with its PID, `hermes-hung` raised) and then SIGKILLed
+    (reaped, the next admission one window later). The first three fail under
+    admission-time accounting. A short drill reruns on the final head.
   - **Scope: one host.** The limiter covers every varswap process sharing one lock
     directory on one machine (process independence, not host independence). Running
     varswap keepers on a second host is out of this milestone; it would first need `R`

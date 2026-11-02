@@ -30,9 +30,10 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use varswap_keeper::watch::assess_hermes;
 use varswap_keeper::{
-    HermesConfig, HermesLimiter, HermesSource, KeeperError, UreqHttp, HERMES_API_KEY_VAR,
-    HERMES_URL_VAR,
+    held_requests, HermesConfig, HermesLimiter, HermesSource, KeeperError, UreqHttp,
+    HERMES_API_KEY_VAR, HERMES_URL_VAR,
 };
 
 const R: u32 = 3;
@@ -48,6 +49,8 @@ const SLACK_MS: u64 = 5;
 const CHILD_VAR: &str = "VARSWAP_LIMITER_CHILD";
 const URL_VAR: &str = "VARSWAP_LIMITER_URL";
 const DIR_VAR: &str = "VARSWAP_LIMITER_DIR";
+const HOLD_VAR: &str = "VARSWAP_LIMITER_HOLD_DIR";
+const HOLD_WINDOW_MS: u64 = 200;
 
 /// One child: `PER_CHILD` distinct queries (each a miss: one HTTP request), retrying a query
 /// that came back rate limited.
@@ -76,6 +79,21 @@ fn child_backfill() {
             other => panic!("child {child}: unexpected {other:?}"),
         }
     }
+}
+
+/// A child that takes a slot, says so through a file, and never finishes its request: the
+/// parent stops it (SIGSTOP) and then kills it.
+#[test]
+#[ignore = "run by test_stopped_then_killed_process as a child process"]
+fn child_hold() {
+    let Ok(dir) = std::env::var(HOLD_VAR) else {
+        return;
+    };
+    let dir = PathBuf::from(dir);
+    let l = HermesLimiter::with_window(&dir, "k", 1, HOLD_WINDOW_MS, 300).unwrap();
+    let _slot = l.acquire().unwrap();
+    std::fs::write(dir.join("admitted"), "").unwrap();
+    std::thread::sleep(Duration::from_secs(60));
 }
 
 #[test]
@@ -249,39 +267,43 @@ fn assert_at_most(sends: &[u64], r: usize, window_ms: u64) {
     }
 }
 
-/// The drill's failure mode, made deterministic: a process admitted and then stopped for
-/// longer than the window before it sends (SIGSTOP between `acquire` and the HTTP request).
-/// Its pending entry still counts, so the other process cannot fill the window it lands in.
-/// Send times are taken after admission and before confirmation, on the limiter's own clock,
-/// so the bound is exact: no slack.
+/// The drill's failure mode, made deterministic: a process admitted and then stalled before
+/// it sends (SIGSTOP between `acquire` and the HTTP request), for 1.5 and for 5 windows, while
+/// another process sends as fast as the limiter lets it for the whole stall. The stalled
+/// request still counts, so the other process never fills the window it lands in. Send times
+/// are taken after admission and before confirmation, on the limiter's own clock, so the
+/// bound is exact: no slack.
 #[test]
 fn test_send_delayed_after_admission_still_counts() {
-    let dir = scratch("delayed");
-    let (r, window) = (2_usize, 300_u64);
-    let l = HermesLimiter::with_window(&dir, "k", 2, window, 400).unwrap();
-    let sends = Arc::new(Mutex::new(Vec::new()));
-    let stopped = {
-        let (l, sends) = (l.clone(), Arc::clone(&sends));
-        std::thread::spawn(move || {
+    let window = 300_u64;
+    for stall in [window + window / 2, 5 * window] {
+        let dir = scratch(&format!("delayed-{stall}"));
+        let l = HermesLimiter::with_window(&dir, "k", 2, window, 400).unwrap();
+        let sends = Arc::new(Mutex::new(Vec::new()));
+        let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stalled = {
+            let (l, sends, done) = (l.clone(), Arc::clone(&sends), Arc::clone(&done));
+            std::thread::spawn(move || {
+                let slot = l.acquire().unwrap();
+                std::thread::sleep(Duration::from_millis(stall));
+                sends.lock().unwrap().push(wall_ms());
+                l.confirm(slot).unwrap();
+                done.store(true, std::sync::atomic::Ordering::SeqCst);
+            })
+        };
+        std::thread::sleep(Duration::from_millis(20));
+        let mut others = 0;
+        while !done.load(std::sync::atomic::Ordering::SeqCst) {
             let slot = l.acquire().unwrap();
-            // Lands after the other process's second and third admissions under admission-time
-            // accounting (at about `window` and `window + 20` ms), inside their window.
-            std::thread::sleep(Duration::from_millis(window + window / 2));
             sends.lock().unwrap().push(wall_ms());
             l.confirm(slot).unwrap();
-        })
-    };
-    std::thread::sleep(Duration::from_millis(20));
-    for _ in 0..3 {
-        let slot = l.acquire().unwrap();
-        sends.lock().unwrap().push(wall_ms());
-        l.confirm(slot).unwrap();
+            others += 1;
+        }
+        stalled.join().unwrap();
+        assert!(others >= 2, "stall {stall} ms: only {others} other sends");
+        assert_at_most(&sends.lock().unwrap(), 2, window);
+        let _ = std::fs::remove_dir_all(&dir);
     }
-    stopped.join().unwrap();
-    let sends = sends.lock().unwrap().clone();
-    assert_eq!(sends.len(), 4);
-    assert_at_most(&sends, r, window);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A process stopped in the middle of a request (admitted, not yet answered) keeps its slot
@@ -320,5 +342,90 @@ fn test_dead_owner_counts_from_when_it_is_found() {
     let waited = t.elapsed();
     assert!(waited >= Duration::from_millis(195), "{waited:?}");
     assert!(waited < Duration::from_millis(1_000), "{waited:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The I6 drill on one slot, across real processes: a child admitted and then SIGSTOPped keeps
+/// its slot for as long as it is stopped (3 windows here), the watcher's view shows it held by
+/// the child's PID and raises `hermes-hung`; once the child is killed (SIGKILL: its lock is
+/// released by the kernel) its entry is reaped, and the parent is admitted one window after
+/// that, not before.
+#[test]
+fn test_stopped_then_killed_process() {
+    let dir = scratch("hold");
+    std::fs::create_dir_all(&dir).unwrap();
+    // Killed on every exit, a failed assertion included: a stopped child left behind would
+    // hold the test's output pipe open.
+    struct KillOnDrop(std::process::Child);
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let mut child = KillOnDrop(
+        Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "child_hold", "--ignored"])
+            .env(HOLD_VAR, &dir)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let started = Instant::now();
+    while !dir.join("admitted").exists() {
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "child never admitted"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let pid = child.0.id().to_string();
+    assert!(Command::new("kill")
+        .args(["-STOP", &pid])
+        .status()
+        .unwrap()
+        .success());
+
+    let l = HermesLimiter::with_window(&dir, "k", 1, HOLD_WINDOW_MS, 300).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let waiter = {
+        let l = l.clone();
+        std::thread::spawn(move || {
+            let slot = l.acquire().unwrap();
+            tx.send(Instant::now()).unwrap();
+            l.confirm(slot).unwrap();
+        })
+    };
+    std::thread::sleep(Duration::from_millis(3 * HOLD_WINDOW_MS));
+    assert!(
+        rx.try_recv().is_err(),
+        "admitted while the stopped child held the slot"
+    );
+
+    let held = held_requests(l.path()).unwrap();
+    assert_eq!(held.len(), 1);
+    assert_eq!(held[0].pid, child.0.id());
+    let name = l.path().file_name().unwrap().to_str().unwrap().to_owned();
+    let now = wall_ms();
+    let alert = assess_hermes(&name, &held, now, 1, 2 * HOLD_WINDOW_MS).unwrap();
+    assert_eq!(alert.kind, "hermes-hung");
+    assert!(alert.message.contains(&pid), "{}", alert.message);
+    assert!(
+        assess_hermes(&name, &held, now, 2, 0).is_none(),
+        "one held slot of two"
+    );
+
+    child.0.kill().unwrap();
+    child.0.wait().unwrap();
+    let killed = Instant::now();
+    let admitted = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    waiter.join().unwrap();
+    let after = admitted.duration_since(killed);
+    assert!(
+        after >= Duration::from_millis(HOLD_WINDOW_MS - 5),
+        "admitted {after:?} after the kill, inside the reaped request's window"
+    );
+    assert!(held_requests(l.path()).unwrap().is_empty());
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -11,9 +11,13 @@
 //! `--deadline-warning` seconds of the backfill deadline (`deadline`), a window that can be
 //! finalized and is not (`unfinalized`), a degraded window (`degraded`), a payer under
 //! `--min-balance` lamports (`balance`), and an encoded VAA of a payer open for more than
-//! `--vaa-alert-blocks` blocks (`encoded-vaa`).
+//! `--vaa-alert-blocks` blocks (`encoded-vaa`), and every slot of a host Hermes limiter held by
+//! requests in progress for `--hermes-hung-after` seconds or more (`hermes-hung`: alive but
+//! stopped or hung keepers; the limiter files in the lock directory are read, never written,
+//! and the API key is not needed).
 //!
-//! Configuration: `SOLANA_URL` (never printed) and `VARSWAP_PROGRAM_ID`.
+//! Configuration: `SOLANA_URL` (never printed), `VARSWAP_PROGRAM_ID`, and
+//! `PYTH_POST_LOCK_DIR` (the keepers' lock directory; default `~/.local/state/pyth-post`).
 
 use std::process::{Command, ExitCode};
 use std::time::Duration;
@@ -21,9 +25,10 @@ use std::time::Duration;
 use clap::Parser;
 use serde_json::json;
 use varswap_keeper::watch::{
-    assess_window, balance_scope, vaa_scope, window_scope, Alert, AlertBook, Thresholds, VaaTracker,
+    assess_hermes, assess_window, balance_scope, hermes_scope, vaa_scope, window_scope, Alert,
+    AlertBook, Thresholds, VaaTracker,
 };
-use varswap_keeper::{RpcTransport, Transport};
+use varswap_keeper::{held_requests, state_files, RpcTransport, Transport};
 use varswap_sdk::{decode, Address};
 
 #[derive(Parser)]
@@ -55,6 +60,13 @@ struct Args {
     /// Repeat every SECONDS (default: one pass)
     #[arg(long, value_name = "SECONDS")]
     interval: Option<u64>,
+    /// Requests per minute of the host Hermes budget (the keepers' `--hermes-rate`)
+    #[arg(long, value_name = "N", default_value_t = 3)]
+    hermes_rate: usize,
+    /// Seconds a Hermes request may stay in progress before it counts as hung (a request
+    /// completes within the HTTP client's 10 s timeout)
+    #[arg(long, value_name = "SECONDS", default_value_t = 120)]
+    hermes_hung_after: u64,
     /// Seconds before an alert that stays active fires again
     #[arg(long, value_name = "SECONDS", default_value_t = 3_600)]
     realert: i64,
@@ -202,7 +214,58 @@ fn pass(
             alerts.extend(vaas.observe(&name, &open, height, args.vaa_alert_blocks));
         }
     }
+    hermes(args, &mut alerts, &mut observed);
     Ok((now, alerts, observed))
+}
+
+/// The host's Hermes limiters (one state file per API key in the lock directory): a JSON line
+/// each, and `hermes-hung` when every slot is held by a request in progress for too long.
+fn hermes(args: &Args, alerts: &mut Vec<Alert>, observed: &mut Vec<String>) {
+    let files = match pyth_post::default_lock_dir().and_then(|d| match state_files(&d) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        other => other,
+    }) {
+        Ok(f) => f,
+        Err(e) => {
+            println!("{}", json!({"hermes": null, "error": e.to_string()}));
+            return;
+        }
+    };
+    let now_ms = host_now_ms();
+    for f in files {
+        let name = f
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_owned();
+        match held_requests(&f) {
+            Ok(held) => {
+                let pids: Vec<u32> = held.iter().map(|h| h.pid).collect();
+                println!(
+                    "{}",
+                    json!({"hermes": name, "held": held.len(), "pids": pids})
+                );
+                observed.push(hermes_scope(&name));
+                alerts.extend(assess_hermes(
+                    &name,
+                    &held,
+                    now_ms,
+                    args.hermes_rate,
+                    args.hermes_hung_after.saturating_mul(1_000),
+                ));
+            }
+            // Not observed: an earlier alert stays active.
+            Err(e) => println!("{}", json!({"hermes": name, "error": e.to_string()})),
+        }
+    }
+}
+
+fn host_now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| u64::try_from(d.as_millis()).ok())
+        .unwrap_or(0)
 }
 
 fn host_now() -> i64 {

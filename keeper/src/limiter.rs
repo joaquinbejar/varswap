@@ -156,10 +156,15 @@ pub struct Slot {
     _guard: File,
 }
 
-/// Whether the owner of pending request `id` still holds its lock file at `path`. A file that
-/// is missing or can be locked has no owner: the request is over. Anything else (an I/O error)
-/// is read as held, which only delays requests.
-fn owner_holds(path: &Path) -> bool {
+/// The lock file of request `id` of the limiter whose files start with `base` in `dir`.
+fn request_file(dir: &Path, base: &str, id: u64) -> PathBuf {
+    dir.join(format!("{base}.{id:016x}.request"))
+}
+
+/// Whether the owner of a pending request still holds its lock file at `path`. A file that is
+/// missing or can be locked has no owner: the request is over (with `reap`, the file is then
+/// removed). Anything else (an I/O error) is read as held, which only delays requests.
+fn owner_holds(path: &Path, reap: bool) -> bool {
     let file = match OpenOptions::new().write(true).open(path) {
         Ok(f) => f,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return false,
@@ -168,7 +173,9 @@ fn owner_holds(path: &Path) -> bool {
     match file.try_lock() {
         Ok(()) => {
             drop(file);
-            let _ = std::fs::remove_file(path);
+            if reap {
+                let _ = std::fs::remove_file(path);
+            }
             false
         }
         Err(TryLockError::WouldBlock) => true,
@@ -240,7 +247,7 @@ impl HermesLimiter {
 
     /// The lock file of request `id`.
     fn request_path(&self, id: u64) -> PathBuf {
-        self.dir.join(format!("{}.{id:016x}.request", self.base))
+        request_file(&self.dir, &self.base, id)
     }
 
     /// The shared state file.
@@ -312,7 +319,7 @@ impl HermesLimiter {
             // A pending request whose owner no longer holds its lock is over: it reached
             // Hermes, if at all, before now.
             for e in s.entries.iter_mut().filter(|e| e.pending) {
-                if !owner_holds(&self.request_path(e.id)) {
+                if !owner_holds(&self.request_path(e.id), true) {
                     e.pending = false;
                     e.at = now;
                 }
@@ -410,6 +417,62 @@ impl HermesLimiter {
             s.blocked_until = s.blocked_until.max(now.saturating_add(block));
         })
     }
+}
+
+/// A request in progress: admitted, not yet answered or failed, and its owner still holding
+/// its lock (alive, possibly stopped or hung).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HeldRequest {
+    /// The owner's process id.
+    pub pid: u32,
+    /// When it was admitted, in Unix milliseconds.
+    pub since_ms: u64,
+}
+
+/// The limiter state files in `dir`, one per API key (`hermes-<hash>.state`), sorted.
+///
+/// # Errors
+///
+/// The directory cannot be read.
+pub fn state_files(dir: &Path) -> io::Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if name.starts_with("hermes-") && name.ends_with(".state") {
+            files.push(path);
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+/// The requests of the limiter whose state file is `state` that are still held by their owner.
+/// Read only: nothing is reaped or written, and the state's own lock is not taken (the file is
+/// replaced atomically, so a read sees one whole state).
+///
+/// # Errors
+///
+/// The file cannot be read or parsed, or its name is not a limiter state file's.
+pub fn held_requests(state: &Path) -> io::Result<Vec<HeldRequest>> {
+    let base = state
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.strip_suffix(".state"))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "not a limiter state file"))?;
+    let dir = state.parent().unwrap_or_else(|| Path::new("."));
+    let text = std::fs::read_to_string(state)?;
+    let parsed = State::parse(&text)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "unreadable limiter state"))?;
+    Ok(parsed
+        .entries
+        .iter()
+        .filter(|e| e.pending && owner_holds(&request_file(dir, base, e.id), false))
+        .map(|e| HeldRequest {
+            pid: u32::try_from(e.id >> 32).unwrap_or(0),
+            since_ms: e.at,
+        })
+        .collect())
 }
 
 #[cfg(test)]
