@@ -241,3 +241,67 @@ devnet USDC, 2 units sent by metalbook (`5WbkRhbvzdJSKvf165Kfi5qVyoj1PPkVT1cTqKg
 | `varswap-admin claim-short` | `3Gdx5Yoj3ZwWNAWN8v2P3P9e5At8EMQkXUfnLqQSS3oskDCF1W8QcLf891x7nkvDq3yZpqf9AW7Ck64ZQKQDQfzA` |
 | `varswap-admin close-swap` | `V7iqxZ1fVhMmdXhAbvyircEx1TMe5P8L24NaXyxryAPXBTR8N2sWGRgVtb7FenEH2UMroA9vdu3xQS3Dn3tmVRM`; the swap account no longer exists |
 | Balances after | long 1.048317 USDC (1 − 0.010000 + 0.058317), short 0.951683 USDC (1 − 0.052501 + 0.004184) |
+
+## Standby and watcher drills (I6, 2026-11-02)
+
+The scaled I6 drill (`docs/PLAN-improvements.md`): a primary keeper, a standby keeper
+(`--standby-lag 600`, its own payer `AaXbMDDnJFghzgaGc7wi3v5MsLJqS2PFvp6ZucKsYxqU`) and
+`varswap-watch` (`--grace 600`, alerts appended to a file), all three LaunchAgents on the
+Studio, on one 15-minute-interval window each. The primary (payer
+`5MTVStedYVor97UjAYU4shkp6RaTiKXEFupfHJN79D1`) is stopped with `kill -STOP <pid>` (a hung
+process: alive, holding its payer lock) and resumed with `kill -CONT <pid>`. Every varswap
+Hermes request is logged as `hermes: request at <ms> ms, HTTP <status>`; the counts below are
+over the primary's and the standby's logs together. All three ran on one host, so this shows
+process independence only; host independence is a pre-mainnet gate
+(`docs/mainnet-readiness.md`).
+
+### Run 1: 2b6beda, admission-time limiter
+
+Binaries built from `2b6beda` (keeper
+`e992e36211ac68e3b7d48333749ff156f92cee30333d4b991d43672d6b299747`, watch
+`0eafbcf26edf65c30d0cbdf80e9b49dc28f6743874df2f3d9e10956dcbf42e32`), before the review of
+#39 moved the limiter to the wire-time contract; this run does not certify that limiter (run
+2 does). Window `5Tz9Z2BdUCo4B95KqYefNRPDrQxf5e27woJMFQCdHxFb`, 13 buckets of 900 s from
+10:30Z to 13:30Z.
+
+| Time (UTC) | Event |
+| --- | --- |
+| 10:31:35, 10:46:40 | primary posts buckets 0 and 1 |
+| 11:00:08 | `kill -STOP 56034` (primary) |
+| 11:10:30 | watcher: `lag`, bucket 2 empty for 629 s |
+| 11:11:38 | standby posts bucket 2 (`4Qtte3GCkyoYT7mZUgw1D9BbXetejHaqVdxoraJRFQKymAxetKQvqf6QoVNxWodtH5aJsKSujiFayyXtPPtRh7qx`); `resolved lag` at the 11:12:30 pass |
+| 11:25:45 to 11:57:07 | the same for buckets 3, 4 and 5: `lag` at 644, 654 and 605 s, standby posts at 11:26:44, 11:41:49 and 11:56:54, each resolved at the next pass |
+| 12:00:03 | `kill -CONT 56034`; the primary posts bucket 6 at 12:00:07 and every later one |
+| 13:30:38 | primary posts bucket 12 and finalizes: `5voTsAL6QvK3jfwChkpFBbrMswgxcoghGPWoUFofGGMNvKRcYXLWVz5JS2eJ3z4ARBmXDMTV8HjwWZ1gsfDxZAUy`, slot 517870546 |
+
+Result: finalized, 13 of 13 buckets, 15 transactions on the window (create, 13 posts,
+finalize), none failed; 13 Hermes requests, all HTTP 200, at most 1 in any 60 s; no encoded
+VAA left open by either payer.
+
+### Run 2: 0bf234f, wire-time limiter
+
+The short rerun on the final code of #39. Binaries built from `0bf234f` (keeper
+`a340b9eb2558fa5dc64ff243a72619c8404257de098d0af94aa0e418bb8c60e2`, watch
+`31e955a36804287cd3ddd47cb398ad2c59073845323eeaedcfabc386a66693dd`), copied into each
+LaunchAgent's directory; the primary and the standby run the same keeper binary. Window
+`5GAX5tC1rVdU1M5Us8ZtEramaUAHXGJ6CEDjBYafzqj3` (created by
+`2XaVKAn8qMqaAW3C2GtwkkpYtQF8Am1LE7gBKcEfYZN2gYUQPEuyyzYD4TbRLUVXMkaR5d72R2AXXBzSzN8L6tHZ`),
+5 buckets of 900 s from 13:45Z to 14:45Z. The watcher also ran the `hermes-hung` check
+(`--hermes-rate 3`, `--hermes-hung-after 120`) on every pass.
+
+| Time (UTC) | Event |
+| --- | --- |
+| 13:47:10, 14:02:15 | primary posts buckets 0 and 1 |
+| 14:05:04 | `kill -STOP 26619` (primary) |
+| 14:25:46 | watcher: `lag`, bucket 2 empty for 644 s |
+| 14:27:13 | standby posts bucket 2 (`2aTwhWQtu88oyXkLH1PzwnEDqwr7jVCtg1beBbmswbrSDSetaSLEFHLs1yPLffEg4qMskb1foyuYAAKUbRJxLMYd`); `resolved lag` at the 14:27:46 pass |
+| 14:35:06 | `kill -CONT 26619`; the primary posts bucket 3 at 14:35:10, before the standby's 600 s lag or the watcher's grace was reached |
+| 14:45:16 | primary posts bucket 4 at 14:45:14 and finalizes: `3hvAqH37fN9tmABjoA6oZhtfgahPpp8A3m8Gh3Q29Vp1xocCEExvkX45PyDyzVBLTPzwTuVi8SBLCjXQpCdmuLyJ`, slot 517889248 |
+
+Result: finalized, 5 of 5 buckets, 7 transactions on the window (create, 5 posts, finalize),
+none failed; 5 Hermes requests, all HTTP 200, at most 1 in any 60 s; no encoded VAA left open
+by either payer. The watcher's `hermes` line showed `held 0` on all 59 passes and
+`hermes-hung` never fired: the SIGSTOP landed between two requests, so the stopped primary
+held no Hermes slot. A process stopped while it holds a slot, and the alert when all R are
+held, are covered with real processes by `test_stopped_then_killed_process`
+(`keeper/tests/limiter.rs`).
