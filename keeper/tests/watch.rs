@@ -179,6 +179,35 @@ fn test_failed_delivery_is_retried_at_the_next_pass() {
 }
 
 #[test]
+fn test_failed_delivery_of_an_unobserved_alert_is_retried_as_last_known() {
+    let a = lag();
+    let mut book = AlertBook::default();
+    // Reported, and its first delivery fails.
+    let (due, _) = book.update(std::slice::from_ref(&a), &observed(&["window:w"]), 0, 3_600);
+    assert_eq!(due.len(), 1);
+    // Then the window cannot be read, and then the whole pass fails (only the rpc alert is
+    // reported, nothing observed): the pending lag alert is still due, marked last known.
+    let (due, _) = book.update(&[], &observed(&["rpc"]), 60, 3_600);
+    assert_eq!(due.len(), 1);
+    assert!(due[0].message.contains("last known"), "{}", due[0].message);
+    let rpc = Alert {
+        kind: "rpc",
+        scope: "rpc".into(),
+        subject: "cluster".into(),
+        message: "down".into(),
+    };
+    let (due, _) = book.update(std::slice::from_ref(&rpc), &[], 120, 3_600);
+    let kinds: Vec<&str> = due.iter().map(|d| d.kind).collect();
+    assert_eq!(kinds, ["lag", "rpc"]);
+    // Delivered at last: not due again until the realert interval.
+    for d in &due {
+        book.delivered(d, 120);
+    }
+    let (due, _) = book.update(&[], &[], 180, 3_600);
+    assert!(due.is_empty());
+}
+
+#[test]
 fn test_vaa_tracker_ages_by_first_sight_and_forgets_closed() {
     let mut t = VaaTracker::default();
     let open = vec!["v1".to_string()];

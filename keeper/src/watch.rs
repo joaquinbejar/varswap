@@ -227,17 +227,20 @@ impl VaaTracker {
 /// When an alert is delivered: as soon as it is seen, then again every `realert_s` while it
 /// stays active; a delivery that fails is retried at the next pass, not after `realert_s`. An
 /// alert resolves only when its scope was observed again and the alert was not reported, so a
-/// failed read never resolves what it could not see.
+/// failed read never resolves what it could not see. An active alert whose scope was not
+/// observed (a failed read, or a whole pass that could not reach the cluster) is still due
+/// for delivery, with its last known payload marked as such.
 #[derive(Debug, Default)]
 pub struct AlertBook {
-    /// Active alerts and when each was last delivered (`None`: not yet, or the last attempt
-    /// failed).
-    active: HashMap<(&'static str, String), (String, Option<i64>)>,
+    /// Active alerts: the last known payload, and when it was last delivered (`None`: not
+    /// yet, or the last attempt failed).
+    active: HashMap<(&'static str, String), (Alert, Option<i64>)>,
 }
 
 impl AlertBook {
     /// Records the alerts reported now and the scopes observed now. Returns the alerts due for
-    /// delivery and the alerts resolved (their scope was observed and they were not reported).
+    /// delivery (reported ones, and retained ones whose scope was not observed, marked last
+    /// known) and the alerts resolved (their scope was observed and they were not reported).
     pub fn update(
         &mut self,
         reported: &[Alert],
@@ -252,25 +255,33 @@ impl AlertBook {
         let resolved: Vec<_> = self
             .active
             .iter()
-            .filter(|(k, (scope, _))| !keys.contains(k) && observed.contains(scope))
+            .filter(|(k, (a, _))| !keys.contains(k) && observed.contains(&a.scope))
             .map(|(k, _)| k.clone())
             .collect();
         for k in &resolved {
             self.active.remove(k);
         }
-        let mut due = Vec::new();
         for a in reported {
-            let entry = self
-                .active
+            self.active
                 .entry((a.kind, a.subject.clone()))
-                .or_insert_with(|| (a.scope.clone(), None));
-            let is_due = entry
-                .1
-                .is_none_or(|last| now.saturating_sub(last) >= realert_s);
-            if is_due {
+                .and_modify(|e| e.0 = a.clone())
+                .or_insert_with(|| (a.clone(), None));
+        }
+        let mut due = Vec::new();
+        for (k, (a, last)) in &self.active {
+            let is_due = last.is_none_or(|l| now.saturating_sub(l) >= realert_s);
+            if !is_due {
+                continue;
+            }
+            if keys.contains(k) {
                 due.push(a.clone());
+            } else {
+                let mut stale = a.clone();
+                stale.message = format!("{} (last known: not observed this pass)", a.message);
+                due.push(stale);
             }
         }
+        due.sort_by(|x, y| (x.kind, &x.subject).cmp(&(y.kind, &y.subject)));
         (due, resolved)
     }
 
