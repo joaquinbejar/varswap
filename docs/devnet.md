@@ -11,7 +11,8 @@ receiver), and the 2026-10-31 hourly window, which a detached keeper fills hour 
 | --- | --- |
 | Program | `BWqsaXvASrbErApP1ovz7vSvBLYqXGaMaZANEYf1xrB9` |
 | ProgramData | `E5adgeUSG4tqpWMCU5y49kVskY6XEEfYMkh88e8GdF2g` |
-| Upgrade authority, admin and payer | `77ieYLKspRnGzAt1AK6ZVsttnTY6T7EY2k7CpTZeCPPV` |
+| Upgrade authority (since 2026-11-02, [below](#program-build-and-authority)) | `Ai4e2jSFMV5vqLDGcyxQLf6GRbjeE5m8BiEMuqWiR9hX` |
+| Config admin and deployer (upgrade authority until 2026-11-02) | `77ieYLKspRnGzAt1AK6ZVsttnTY6T7EY2k7CpTZeCPPV` |
 | `Config` (`["config"]`) | `H2H2gn4mwkWoJ8ftQf97hpKJuunRzhuVPn84ZzW58uLB` |
 | Collateral mint (Circle devnet USDC, SPL Token, 6 decimals) | `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU` |
 | SOL/USD `FeedConfig` (`["feed", feed_id]`) | `85wokHgbLDTDqNeWhgBgD3hu2ZBM3r8qc1UnCUFixmEF` |
@@ -22,7 +23,40 @@ The program id keypair was generated with `solana-keygen` and stays on the deplo
 machine; it is not in the repository. The program is upgradeable (loader v3), which
 `init_config` requires: it reads the upgrade authority from `ProgramData`.
 
-## Build
+## Program build and authority
+
+Since 2026-11-02 devnet runs the verifiable build ([`docs/verifiable.md`](verifiable.md)), and
+the upgrade authority is a dedicated key instead of the deployer ([`docs/governance.md`](governance.md)).
+
+| What | Value |
+| --- | --- |
+| Deployed hash (`solana-verify get-program-hash`) | `b9336e631b92f0213652a67440376fb9b275f6a5101c2c6ef809d555273386bb` |
+| Built from | `main` at `06c882c` with `make verifiable` (program source unchanged since `aef8e3a`); equals that commit's build hash |
+| Upgrade (`solana program deploy`, signed by `77ie…`; the CLI extended the program data to 101,064 bytes) | `3uhvEXQGH71ZTCXijv3FgcHx1G9E4bHbP4Ny3og6aUvJFt1MB4xnYnk6gUFsCcn19qhFZ3z4zVf9MWFd5iZxEiCE`, slot 517796296 |
+| Upgrade authority transfer `77ie…` to `Ai4e…` (signed by both) | `4BjAJX9h6va6EKSnHo7gZRsgK9upK37GRasBg1N4spcV62V7kAcjcVfVqfLF5osu3bkitxu73AjUomXHw3wxgrL8`, slot 517796470, finalized before anything else used the new key |
+| Before the upgrade | the `make program` build of `aef8e3a` (below), program hash `45513b34ccdf3edbd5c9863d72726dacc9105870c3f54c0b7ab660ed303e95a2` |
+
+The deployed hash may lag `main`: it changes only with an upgrade, recorded here.
+
+Checks after the upgrade (2026-11-02):
+
+- The 24 print replay (`program/tests/replay.rs`) and all 81 program tests pass with the
+  verifiable `.so`, and `program/tests/cu.rs` measures every `docs/benchmarks.md` row with
+  the same CU.
+- A keeper run on devnet: `varswap-keeper --watch 30` (build of `06c882c`, payer
+  `5MTVStedYVor97UjAYU4shkp6RaTiKXEFupfHJN79D1`) sampled a fresh SOL/USD window of ten
+  60-second intervals and finalized it.
+
+| What | Value |
+| --- | --- |
+| Window | `DymB1ecC8gfgy2DD6SQgNgB1yfEpm4X7Y9MFYB6tqqGE` (`start = 1793608680`, 2026-11-02 08:38:00Z, `end = 1793609280`, `interval = 60`, 11 buckets) |
+| `create_window` | `3EHDoZGguE4CFNjqy6mRjWFGhRNRVqkLVRueEBQuXCCppV23bV7RhXz89ZGnrUSzoJ3Amy7VCJtHDzdzFFErHNDn` |
+| Samples | 11 posts, three transactions each, no error, no Hermes 429 |
+| Final state | `Finalized`, 11 of 11 buckets, annualized realized variance `0.610348143891` (`show-window`) |
+| `finalize` | `5ssHdYGDTGWBs2HjHaoArCC4mX28cTjoAYShZMZb62QBVAAPDYiCaA6bpjTZ8nhL56ZZr4A6h4NnNF2JE4oh3otk`, slot 517799874 |
+| Left open | none: the keeper's scan reports no open encoded VAA |
+
+## Build (2026-10-30 deployment)
 
 `make program` (sBPF v3; SIMD-0178/0189/0377 is active on devnet since epoch 1069) with
 `cargo-build-sbf 4.5.0`, platform-tools v1.57, Rust 1.95.0. `varswap_program.so` is 90,824

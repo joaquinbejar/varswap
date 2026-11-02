@@ -97,6 +97,25 @@ study:
 fixtures:
 	python3 pyth-lite/fixtures/fetch.py
 
+# Verifiable build (docs/verifiable.md, docs/PLAN-improvements.md I2): `solana-verify build` in
+# the pinned image (platform-tools v1.57, Rust 1.95.0: the SBF compiler CI pins), then the
+# executable hash. `verifiable-check` fails unless it equals the build hash recorded in
+# docs/verifiable.md. Needs Docker and `cargo install --locked solana-verify --version 0.5.2`.
+# It writes target/deploy/varswap_program.so: run `make program` again before the tests.
+VERIFY_IMAGE ?= solanafoundation/solana-verifiable-build@sha256:12fd4c0a0790f0fc41ef74b0cdb6bccc167ba6137eb1adb749bac649481c86bd
+.PHONY: verifiable
+verifiable:
+	solana-verify build -b $(VERIFY_IMAGE) --library-name varswap_program --arch $(SBF_ARCH)
+	@solana-verify get-executable-hash target/deploy/varswap_program.so
+
+.PHONY: verifiable-check
+verifiable-check: verifiable
+	@got=$$(solana-verify get-executable-hash target/deploy/varswap_program.so); \
+	want=$$(sed -n 's/^| Build hash | `\([0-9a-f]*\)` |$$/\1/p' docs/verifiable.md); \
+	if [ -z "$$want" ] || [ "$$got" != "$$want" ]; then \
+		echo "verifiable-check: build hash $$got, docs/verifiable.md records '$$want'"; exit 1; fi; \
+	echo "verifiable-check: build hash $$got matches docs/verifiable.md"
+
 # Pre-push checks: must pass with zero warnings
 .PHONY: pre-push
 pre-push: fmt-check lint lint-control sbf sbf-control test doc
