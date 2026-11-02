@@ -321,14 +321,22 @@ fn check_token_account<R: Rpc>(
     Ok(())
 }
 
-/// `owner`'s associated token account of the swap's mint (SPL Token swaps only).
-fn default_token_account(s: &SwapData, owner: &Address, flag: &str) -> Result<Address, CliError> {
-    if Address::new_from_array(s.token_program) != varswap_sdk::TOKEN_PROGRAM {
-        return Err(CliError::Usage(format!(
-            "the swap's token program is not SPL Token: pass {flag}"
-        )));
+/// The commands support SPL Token swaps only: the SDK's claim and close builders, and the
+/// program's `open_swap`, use SPL Token. Any other token program is rejected, whatever
+/// account the caller passes.
+fn require_spl_token(s: &SwapData) -> Result<(), CliError> {
+    if Address::new_from_array(s.token_program) == varswap_sdk::TOKEN_PROGRAM {
+        Ok(())
+    } else {
+        Err(CliError::Usage(
+            "the swap's token program is not SPL Token: unsupported".to_owned(),
+        ))
     }
-    Ok(pda::ata(owner, &Address::new_from_array(s.mint)))
+}
+
+/// `owner`'s associated token account of the swap's mint.
+fn default_token_account(s: &SwapData, owner: &Address) -> Address {
+    pda::ata(owner, &Address::new_from_array(s.mint))
 }
 
 /// `settle_swap` for `swap`: the window is read from the swap.
@@ -355,7 +363,8 @@ pub fn settle_swap_ix<R: Rpc>(
 ///
 /// # Errors
 ///
-/// The swap cannot be read, or `dest` is not the side's token account of the swap's mint.
+/// The swap cannot be read, its token program is not SPL Token (unsupported), or `dest` is not
+/// the side's token account of the swap's mint.
 pub fn claim_ix<R: Rpc>(
     rpc: &mut R,
     program_id: &Address,
@@ -364,6 +373,7 @@ pub fn claim_ix<R: Rpc>(
     dest: Option<&Address>,
 ) -> Result<Instruction, CliError> {
     let s = read_swap(rpc, program_id, swap)?;
+    require_spl_token(&s)?;
     let owner = Address::new_from_array(match side {
         Side::Long => s.long,
         Side::Short => s.short,
@@ -371,7 +381,7 @@ pub fn claim_ix<R: Rpc>(
     let mint = Address::new_from_array(s.mint);
     let dest = match dest {
         Some(d) => *d,
-        None => default_token_account(&s, &owner, "--dest")?,
+        None => default_token_account(&s, &owner),
     };
     check_token_account(
         rpc,
@@ -392,7 +402,8 @@ pub fn claim_ix<R: Rpc>(
 ///
 /// # Errors
 ///
-/// The swap cannot be read, or `receiver_token` is not the payer's token account of the mint.
+/// The swap cannot be read, its token program is not SPL Token (unsupported), or
+/// `receiver_token` is not the payer's token account of the mint.
 pub fn close_swap_ix<R: Rpc>(
     rpc: &mut R,
     program_id: &Address,
@@ -400,11 +411,12 @@ pub fn close_swap_ix<R: Rpc>(
     receiver_token: Option<&Address>,
 ) -> Result<Instruction, CliError> {
     let s = read_swap(rpc, program_id, swap)?;
+    require_spl_token(&s)?;
     let payer = Address::new_from_array(s.payer);
     let mint = Address::new_from_array(s.mint);
     let receiver_token = match receiver_token {
         Some(t) => *t,
-        None => default_token_account(&s, &payer, "--receiver-token")?,
+        None => default_token_account(&s, &payer),
     };
     check_token_account(
         rpc,

@@ -103,7 +103,8 @@ enum Command {
         address: String,
     },
     /// `settle_swap`: anyone, once the swap's window is final (the window is read from the
-    /// swap); computes and stores both payouts, moves no tokens.
+    /// swap); computes and stores both payouts, moves no tokens. The claim and close commands
+    /// support SPL Token swaps only (the only kind the program opens).
     SettleSwap {
         /// The swap address.
         swap: String,

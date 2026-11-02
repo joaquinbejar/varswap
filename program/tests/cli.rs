@@ -328,3 +328,29 @@ fn test_cli_close_rejects_a_forged_receiver_token_account() {
         .get_account(&swap)
         .is_some_and(|a| !a.data.is_empty()));
 }
+
+#[test]
+fn test_cli_rejects_a_swap_of_another_token_program() {
+    let (mut env, open, _) = degraded_swap();
+    let swap = open.swap();
+    // The same swap, its token program field rewritten (offset: header 8, then window, long,
+    // short and mint, 32 bytes each).
+    let mut acc = env.account(&swap);
+    acc.data[8 + 4 * 32..8 + 5 * 32].copy_from_slice(&[7; 32]);
+    env.set(swap, PROGRAM_ID, acc.data);
+    for r in [
+        claim_ix(
+            &mut Svm(&mut env),
+            &PROGRAM_ID,
+            &swap,
+            Side::Long,
+            Some(&open.long_src),
+        ),
+        close_swap_ix(&mut Svm(&mut env), &PROGRAM_ID, &swap, None),
+    ] {
+        match r {
+            Err(CliError::Usage(m)) => assert!(m.contains("unsupported"), "{m}"),
+            other => panic!("{other:?}"),
+        }
+    }
+}
