@@ -4,10 +4,13 @@
 # run time, so rules/global_rules.md makes it a build failure. A failing cargo fails too: its
 # status comes from the command substitution, not from a pipe.
 # Usage: sbf-build.sh <manifest> [extra cargo build-sbf arguments]
+# CARGO_FLAGS (for example `--locked` in CI) is passed through to cargo after `--`.
 set -u
 manifest=$1
 shift
-out=$(cargo build-sbf --manifest-path "$manifest" --arch "${SBF_ARCH:-v3}" "$@" 2>&1)
+# shellcheck disable=SC2086 # CARGO_FLAGS is a list of flags
+out=$(cargo build-sbf --manifest-path "$manifest" --arch "${SBF_ARCH:-v3}" "$@" \
+    ${CARGO_FLAGS:+-- $CARGO_FLAGS} 2>&1)
 status=$?
 printf '%s\n' "$out" | grep -v 'installed with the Solana CLI'
 if [ $status -ne 0 ]; then

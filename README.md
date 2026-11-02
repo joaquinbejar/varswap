@@ -1,5 +1,6 @@
 # VarSwap
 
+[![CI](https://github.com/joaquinbejar/varswap/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/joaquinbejar/varswap/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/joaquinbejar/varswap/blob/main/LICENSE)
 [![Stars](https://img.shields.io/github/stars/joaquinbejar/varswap.svg)](https://github.com/joaquinbejar/varswap/stargazers)
 [![Issues](https://img.shields.io/github/issues/joaquinbejar/varswap.svg)](https://github.com/joaquinbejar/varswap/issues)
