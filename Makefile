@@ -116,6 +116,29 @@ verifiable-check: verifiable
 		echo "verifiable-check: build hash $$got, docs/verifiable.md records '$$want'"; exit 1; fi; \
 	echo "verifiable-check: build hash $$got matches docs/verifiable.md"
 
+# Fuzz every target for FUZZ_SECONDS each on its committed corpus (fuzz/, cargo-fuzz, nightly;
+# docs/PLAN-improvements.md I3). sample_ix loads the program: `make program` first.
+FUZZ_TOOLCHAIN ?= nightly
+FUZZ_SECONDS ?= 120
+FUZZ_TARGETS = pyth_update window_sample swap_conservation sample_ix
+.PHONY: fuzz
+fuzz: program
+	@for t in $(FUZZ_TARGETS); do \
+		echo "fuzz: $$t for $(FUZZ_SECONDS) s"; \
+		cargo +$(FUZZ_TOOLCHAIN) fuzz run -O $$t -- -max_total_time=$(FUZZ_SECONDS) || exit 1; \
+	done
+
+# Formatting of the fuzz crate (its own workspace, so `fmt-check` does not reach it).
+.PHONY: fuzz-fmt-check
+fuzz-fmt-check:
+	cargo +$(RUST_TOOLCHAIN) fmt --manifest-path fuzz/Cargo.toml -- --check
+
+# Deterministic fault controls: each planted bug in fuzz/controls must crash its target on its
+# committed input, and the input must pass without the bug (fuzz/controls/run.sh).
+.PHONY: fuzz-control
+fuzz-control:
+	@FUZZ_TOOLCHAIN=$(FUZZ_TOOLCHAIN) sh fuzz/controls/run.sh
+
 # Pre-push checks: must pass with zero warnings
 .PHONY: pre-push
 pre-push: fmt-check lint lint-control sbf sbf-control test doc
