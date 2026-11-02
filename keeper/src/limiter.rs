@@ -12,13 +12,17 @@
 //! Requests that took their slot before the 429 was recorded (at most `R − 1` others, from the
 //! same window) are already in flight and still arrive.
 //!
-//! The file is named after a hash of the API key (64-bit FNV-1a, never the key itself), so two
-//! keys never share a budget. A file that cannot be parsed (a crash mid-write) is read as a full
-//! window, which only delays requests. The scope is one host: processes on another machine do
-//! not see this file.
+//! The files are named after a hash of the API key (64-bit FNV-1a, never the key itself), so two
+//! keys never share a budget. Crash safety: the `flock` is held on a separate lock file whose
+//! inode never changes, and the state is replaced atomically (written to a temporary file,
+//! synced, then renamed over the state file), so a process killed at any point leaves either
+//! the old state or the new one. The state ends with an `end` line; a state file without it, or
+//! one that cannot be parsed, is read conservatively: a full window and a block from now, which
+//! only delays requests. A missing state file is a fresh budget. The scope is one host:
+//! processes on another machine do not see these files.
 
 use std::fs::{File, OpenOptions};
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -57,15 +61,18 @@ struct State {
 }
 
 impl State {
-    /// `blocked_until` on the first line, then one send time per line. `None` if malformed.
+    /// `blocked_until` on the first line, one send time per line, then `end`. `None` if
+    /// malformed or incomplete (no `end` line: an empty or cut file).
     fn parse(text: &str) -> Option<Self> {
-        let mut lines = text.lines();
-        let Some(first) = lines.next() else {
-            return Some(Self::default());
-        };
-        let blocked_until = first.trim().parse().ok()?;
-        let sends = lines
-            .map(|l| l.trim().parse().ok())
+        let mut lines: Vec<&str> = text.lines().map(str::trim).collect();
+        if lines.pop() != Some("end") {
+            return None;
+        }
+        let (first, rest) = lines.split_first()?;
+        let blocked_until = first.parse().ok()?;
+        let sends = rest
+            .iter()
+            .map(|l| l.parse().ok())
             .collect::<Option<Vec<u64>>>()?;
         Some(Self {
             blocked_until,
@@ -80,6 +87,7 @@ impl State {
         for t in &self.sends {
             let _ = writeln!(s, "{t}");
         }
+        s.push_str("end\n");
         s
     }
 }
@@ -93,7 +101,12 @@ enum Take {
 /// A host-wide sliding-window limit on Hermes requests for one API key.
 #[derive(Debug, Clone)]
 pub struct HermesLimiter {
+    /// The state file (replaced atomically).
     path: PathBuf,
+    /// The lock file (never replaced: a stable inode for `flock`).
+    lock: PathBuf,
+    /// The temporary file the next state is written to before the rename.
+    tmp: PathBuf,
     max: usize,
     window_ms: u64,
     block_ms: u64,
@@ -131,47 +144,68 @@ impl HermesLimiter {
         }
         std::fs::create_dir_all(dir)?;
         let max = usize::try_from(max).map_err(|_| io::Error::other("limit out of range"))?;
+        let base = format!("hermes-{:016x}", fnv1a(api_key.as_bytes()));
         Ok(Self {
-            path: dir.join(format!("hermes-{:016x}.limit", fnv1a(api_key.as_bytes()))),
+            path: dir.join(format!("{base}.state")),
+            lock: dir.join(format!("{base}.lock")),
+            tmp: dir.join(format!("{base}.state.tmp")),
             max,
             window_ms,
             block_ms,
         })
     }
 
-    /// The shared file.
+    /// The shared state file.
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    fn open(&self) -> io::Result<File> {
-        OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(&self.path)
+    /// The state under the lock: a missing file is a fresh budget; an unreadable or incomplete
+    /// one is a full window and a block from `now` (it can only delay requests).
+    fn read_state(&self, now: u64) -> io::Result<State> {
+        let text = match File::open(&self.path) {
+            Ok(mut f) => {
+                let mut text = String::new();
+                f.read_to_string(&mut text)?;
+                text
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(State::default()),
+            Err(e) => return Err(e),
+        };
+        Ok(State::parse(&text).unwrap_or_else(|| State {
+            blocked_until: now.saturating_add(self.block_ms),
+            sends: vec![now; self.max],
+        }))
     }
 
-    /// Runs `f` on the state under the exclusive lock and writes back what it returns.
+    /// Writes `state` to the temporary file, syncs it, and renames it over the state file.
+    fn write_state(&self, state: &State) -> io::Result<()> {
+        let mut tmp = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&self.tmp)?;
+        tmp.write_all(state.render().as_bytes())?;
+        tmp.sync_all()?;
+        drop(tmp);
+        std::fs::rename(&self.tmp, &self.path)
+    }
+
+    /// Runs `f` on the state under the exclusive lock and writes back what it leaves.
     fn update<T>(&self, f: impl FnOnce(&mut State, u64) -> T) -> io::Result<T> {
-        let mut file = self.open()?;
-        file.lock()?;
-        let mut text = String::new();
-        file.read_to_string(&mut text)?;
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&self.lock)?;
+        lock.lock()?;
         let now = now_ms()?;
-        // Unreadable state counts as a full window from now: it can only delay requests.
-        let mut state = State::parse(&text).unwrap_or_else(|| State {
-            blocked_until: 0,
-            sends: vec![now; self.max],
-        });
+        let mut state = self.read_state(now)?;
         let out = f(&mut state, now);
-        file.set_len(0)?;
-        file.seek(SeekFrom::Start(0))?;
-        file.write_all(state.render().as_bytes())?;
-        file.flush()?;
-        // The lock is released when `file` is dropped.
+        self.write_state(&state)?;
+        // The lock is released when `lock` is dropped.
+        drop(lock);
         Ok(out)
     }
 
@@ -232,8 +266,12 @@ mod tests {
             sends: vec![1, 2, 3],
         };
         assert_eq!(State::parse(&s.render()), Some(s));
-        assert_eq!(State::parse(""), Some(State::default()));
-        assert_eq!(State::parse("12\nnot a number\n"), None);
+        // Empty, cut before `end`, or malformed: never a fresh budget.
+        assert_eq!(State::parse(""), None);
+        assert_eq!(State::parse("0\n"), None);
+        assert_eq!(State::parse("7\n1\n2\n"), None);
+        assert_eq!(State::parse("12\nnot a number\nend\n"), None);
+        assert_eq!(State::parse("0\nend\n"), Some(State::default()));
     }
 
     #[test]

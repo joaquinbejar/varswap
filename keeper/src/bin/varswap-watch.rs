@@ -20,7 +20,9 @@ use std::time::Duration;
 
 use clap::Parser;
 use serde_json::json;
-use varswap_keeper::watch::{assess_window, Alert, AlertBook, Thresholds, VaaTracker};
+use varswap_keeper::watch::{
+    assess_window, balance_scope, vaa_scope, window_scope, Alert, AlertBook, Thresholds, VaaTracker,
+};
 use varswap_keeper::{RpcTransport, Transport};
 use varswap_sdk::{decode, Address};
 
@@ -84,13 +86,15 @@ fn balance(url: &str, payer: &Address) -> Result<u64, String> {
         .ok_or_else(|| "getBalance: no value".to_string())
 }
 
-fn fire(cmd: Option<&str>, a: &Alert) {
+/// Prints the alert and runs the alert command; `true` if it was delivered (no command, or
+/// the command exited 0).
+fn fire(cmd: Option<&str>, a: &Alert) -> bool {
     println!(
         "{}",
-        json!({"alert": a.kind, "subject": a.subject, "message": a.message})
+        json!({"alert": a.kind, "scope": a.scope, "subject": a.subject, "message": a.message})
     );
     let Some(cmd) = cmd.filter(|c| !c.trim().is_empty()) else {
-        return;
+        return true;
     };
     let status = Command::new("sh")
         .arg("-c")
@@ -100,12 +104,20 @@ fn fire(cmd: Option<&str>, a: &Alert) {
         .env("VARSWAP_ALERT_MESSAGE", &a.message)
         .status();
     match status {
-        Ok(s) if s.success() => {}
-        Ok(s) => eprintln!("alert command exited with {s}"),
-        Err(e) => eprintln!("alert command failed to start: {e}"),
+        Ok(s) if s.success() => true,
+        Ok(s) => {
+            eprintln!("alert command exited with {s}; retried at the next pass");
+            false
+        }
+        Err(e) => {
+            eprintln!("alert command failed to start: {e}; retried at the next pass");
+            false
+        }
     }
 }
 
+/// One pass: the alerts reported and the scopes actually observed (a read that failed is not
+/// an observation, so it resolves nothing).
 fn pass(
     args: &Args,
     program_id: &Address,
@@ -113,7 +125,7 @@ fn pass(
     payers: &[Address],
     chain: &RpcTransport,
     vaas: &mut VaaTracker,
-) -> Result<(i64, Vec<Alert>), String> {
+) -> Result<(i64, Vec<Alert>, Vec<String>), String> {
     let now = chain.now().map_err(|e| e.to_string())?;
     let height = chain.block_height().map_err(|e| e.to_string())?;
     let t = Thresholds {
@@ -121,6 +133,7 @@ fn pass(
         deadline_warning_s: args.deadline_warning,
     };
     let mut alerts = Vec::new();
+    let mut observed = vec!["rpc".to_string()];
     for w in windows {
         let name = w.to_string();
         let read = chain
@@ -139,17 +152,22 @@ fn pass(
         }) {
             Ok((status, found)) => {
                 println!("{}", json!({"window": name, "now": now, "status": status}));
+                observed.push(window_scope(&name));
                 alerts.extend(found);
             }
             Err(e) => {
+                // Not observed: the window's earlier alerts stay active.
                 println!("{}", json!({"window": name, "now": now, "error": e}));
                 alerts.push(Alert {
                     kind: "unreadable",
+                    scope: format!("unreadable:{name}"),
                     subject: name.clone(),
                     message: format!("window {name} cannot be read: {e}"),
                 });
             }
         }
+        // The unreadable alert resolves when the window is read again.
+        observed.push(format!("unreadable:{name}"));
     }
     for p in payers {
         let name = p.to_string();
@@ -166,9 +184,11 @@ fn pass(
             })
         );
         if let Ok(l) = lamports {
+            observed.push(balance_scope(&name));
             if l < args.min_balance {
                 alerts.push(Alert {
                     kind: "balance",
+                    scope: balance_scope(&name),
                     subject: name.clone(),
                     message: format!(
                         "payer {name} has {l} lamports, under {}: top it up",
@@ -178,10 +198,19 @@ fn pass(
             }
         }
         if let Ok(open) = open {
+            observed.push(vaa_scope(&name));
             alerts.extend(vaas.observe(&name, &open, height, args.vaa_alert_blocks));
         }
     }
-    Ok((now, alerts))
+    Ok((now, alerts, observed))
+}
+
+fn host_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| i64::try_from(d.as_secs()).ok())
+        .unwrap_or(0)
 }
 
 fn run(args: &Args) -> Result<(), String> {
@@ -199,36 +228,30 @@ fn run(args: &Args) -> Result<(), String> {
     let chain = RpcTransport::new(&args.url);
     let mut vaas = VaaTracker::default();
     let mut book = AlertBook::default();
-    // Its own book, so a failed pass does not resolve the cluster alerts still active.
-    let mut rpc_book = AlertBook::default();
     loop {
-        match pass(args, &program_id, &windows, &payers, &chain, &mut vaas) {
-            Ok((now, active)) => {
-                let _ = rpc_book.update(&[], now, args.realert);
-                let (to_fire, resolved) = book.update(&active, now, args.realert);
-                for (kind, subject) in resolved {
-                    println!("{}", json!({"resolved": kind, "subject": subject}));
-                }
-                for a in &to_fire {
-                    fire(args.alert_cmd.as_deref(), a);
-                }
-            }
-            Err(e) => {
-                // The cluster cannot be read: that is an alert too (the clock is the host's).
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .ok()
-                    .and_then(|d| i64::try_from(d.as_secs()).ok())
-                    .unwrap_or(0);
-                let a = Alert {
-                    kind: "rpc",
-                    subject: "cluster".to_string(),
-                    message: format!("varswap-watch cannot read the cluster: {e}"),
-                };
-                let (to_fire, _) = rpc_book.update(std::slice::from_ref(&a), now, args.realert);
-                for a in &to_fire {
-                    fire(args.alert_cmd.as_deref(), a);
-                }
+        let (now, reported, observed) =
+            match pass(args, &program_id, &windows, &payers, &chain, &mut vaas) {
+                Ok(r) => r,
+                // The cluster cannot be read: an alert, and nothing observed (nothing
+                // resolves). The clock is the host's.
+                Err(e) => (
+                    host_now(),
+                    vec![Alert {
+                        kind: "rpc",
+                        scope: "rpc".to_string(),
+                        subject: "cluster".to_string(),
+                        message: format!("varswap-watch cannot read the cluster: {e}"),
+                    }],
+                    Vec::new(),
+                ),
+            };
+        let (due, resolved) = book.update(&reported, &observed, now, args.realert);
+        for (kind, subject) in resolved {
+            println!("{}", json!({"resolved": kind, "subject": subject}));
+        }
+        for a in &due {
+            if fire(args.alert_cmd.as_deref(), a) {
+                book.delivered(a, now);
             }
         }
         match args.interval {

@@ -113,26 +113,69 @@ fn test_deadline_and_unfinalized_and_degraded() {
     assert!(a.is_empty());
 }
 
-#[test]
-fn test_alert_book_fires_once_then_realerts_and_resolves() {
-    let lag = Alert {
+fn lag() -> Alert {
+    Alert {
         kind: "lag",
+        scope: "window:w".into(),
         subject: "w".into(),
         message: "m".into(),
-    };
+    }
+}
+
+fn observed(s: &[&str]) -> Vec<String> {
+    s.iter().map(|x| (*x).to_string()).collect()
+}
+
+#[test]
+fn test_alert_book_delivers_once_then_realerts_and_resolves() {
+    let a = lag();
+    let seen = observed(&["window:w"]);
     let mut book = AlertBook::default();
-    let (fire, resolved) = book.update(std::slice::from_ref(&lag), 0, 3_600);
-    assert_eq!((fire.len(), resolved.len()), (1, 0));
-    let (fire, _) = book.update(std::slice::from_ref(&lag), 3_599, 3_600);
-    assert!(fire.is_empty());
-    let (fire, _) = book.update(std::slice::from_ref(&lag), 3_600, 3_600);
-    assert_eq!(fire.len(), 1);
-    let (fire, resolved) = book.update(&[], 3_700, 3_600);
-    assert!(fire.is_empty());
+    let (due, resolved) = book.update(std::slice::from_ref(&a), &seen, 0, 3_600);
+    assert_eq!((due.len(), resolved.len()), (1, 0));
+    book.delivered(&a, 0);
+    let (due, _) = book.update(std::slice::from_ref(&a), &seen, 3_599, 3_600);
+    assert!(due.is_empty());
+    let (due, _) = book.update(std::slice::from_ref(&a), &seen, 3_600, 3_600);
+    assert_eq!(due.len(), 1);
+    book.delivered(&a, 3_600);
+    let (due, resolved) = book.update(&[], &seen, 3_700, 3_600);
+    assert!(due.is_empty());
     assert_eq!(resolved, vec![("lag", "w".to_string())]);
-    // Active again after resolving: fires at once.
-    let (fire, _) = book.update(std::slice::from_ref(&lag), 3_701, 3_600);
-    assert_eq!(fire.len(), 1);
+    // Active again after resolving: due at once.
+    let (due, _) = book.update(std::slice::from_ref(&a), &seen, 3_701, 3_600);
+    assert_eq!(due.len(), 1);
+}
+
+#[test]
+fn test_unobserved_scope_never_resolves() {
+    let a = lag();
+    let mut book = AlertBook::default();
+    let _ = book.update(std::slice::from_ref(&a), &observed(&["window:w"]), 0, 3_600);
+    book.delivered(&a, 0);
+    // The window could not be read (or the whole pass failed): not reported, not observed.
+    let (_, resolved) = book.update(&[], &observed(&["rpc", "balance:p"]), 60, 3_600);
+    assert!(resolved.is_empty(), "resolved without seeing the window");
+    let (_, resolved) = book.update(&[], &[], 120, 3_600);
+    assert!(resolved.is_empty());
+    // Observed again and gone: resolved.
+    let (_, resolved) = book.update(&[], &observed(&["window:w"]), 180, 3_600);
+    assert_eq!(resolved.len(), 1);
+}
+
+#[test]
+fn test_failed_delivery_is_retried_at_the_next_pass() {
+    let a = lag();
+    let seen = observed(&["window:w"]);
+    let mut book = AlertBook::default();
+    let (due, _) = book.update(std::slice::from_ref(&a), &seen, 0, 3_600);
+    assert_eq!(due.len(), 1);
+    // The command failed: not marked delivered, so due again 60 s later, not after an hour.
+    let (due, _) = book.update(std::slice::from_ref(&a), &seen, 60, 3_600);
+    assert_eq!(due.len(), 1);
+    book.delivered(&a, 60);
+    let (due, _) = book.update(std::slice::from_ref(&a), &seen, 120, 3_600);
+    assert!(due.is_empty());
 }
 
 #[test]

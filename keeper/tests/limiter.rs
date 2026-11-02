@@ -176,3 +176,53 @@ fn test_two_processes_share_the_budget() {
         "{elapsed:?}"
     );
 }
+
+fn scratch(name: &str) -> PathBuf {
+    let d = std::env::temp_dir().join(format!("varswap-limiter-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    d
+}
+
+/// Crash controls: whatever a killed writer can leave behind never frees the budget.
+#[test]
+fn test_cut_or_empty_state_is_read_conservatively() {
+    for (name, text) in [("cut", "0\n"), ("empty", ""), ("partial", "0\n1\n2\n")] {
+        let dir = scratch(name);
+        let l = HermesLimiter::with_window(&dir, "k", 3, 300, 400).unwrap();
+        std::fs::write(l.path(), text).unwrap();
+        let t = Instant::now();
+        l.acquire().unwrap();
+        assert!(
+            t.elapsed() >= Duration::from_millis(390),
+            "{name}: a broken state let a request through after {:?}",
+            t.elapsed()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[test]
+fn test_missing_state_is_a_fresh_budget_and_a_dead_temp_file_changes_nothing() {
+    let dir = scratch("tmp");
+    let l = HermesLimiter::with_window(&dir, "k", 3, 600, 700).unwrap();
+    let t = Instant::now();
+    for _ in 0..3 {
+        l.acquire().unwrap();
+    }
+    assert!(
+        t.elapsed() < Duration::from_millis(200),
+        "fresh budget: {:?}",
+        t.elapsed()
+    );
+    // A writer killed before its rename leaves a temporary file; the state is the old one.
+    let mut tmp = l.path().as_os_str().to_owned();
+    tmp.push(".tmp");
+    std::fs::write(&tmp, "0\nend\n").unwrap();
+    l.acquire().unwrap();
+    assert!(
+        t.elapsed() >= Duration::from_millis(590),
+        "the fourth request left after {:?}, inside the window",
+        t.elapsed()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

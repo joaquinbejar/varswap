@@ -12,8 +12,13 @@ use crate::KeeperError;
 /// What a check found wrong.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Alert {
-    /// `lag`, `deadline`, `unfinalized`, `degraded`, `balance` or `encoded-vaa`.
+    /// `lag`, `deadline`, `unfinalized`, `degraded`, `balance`, `encoded-vaa`, `unreadable` or
+    /// `rpc`.
     pub kind: &'static str,
+    /// The observation that produced it (`window:<address>`, `balance:<payer>`,
+    /// `vaas:<payer>`, `rpc`): an alert resolves only when its scope was observed again and the
+    /// alert was not reported.
+    pub scope: String,
     /// The window, payer or encoded VAA address it is about.
     pub subject: String,
     /// One line for a human.
@@ -35,6 +40,24 @@ pub struct WindowStatus {
     pub max_lag_s: i64,
     /// Seconds until `end + backfill_deadline` (negative once past).
     pub to_deadline_s: i64,
+}
+
+/// The scope of a window's checks.
+#[must_use]
+pub fn window_scope(window: &str) -> String {
+    format!("window:{window}")
+}
+
+/// The scope of a payer's balance check.
+#[must_use]
+pub fn balance_scope(payer: &str) -> String {
+    format!("balance:{payer}")
+}
+
+/// The scope of a payer's encoded VAA scan.
+#[must_use]
+pub fn vaa_scope(payer: &str) -> String {
+    format!("vaas:{payer}")
 }
 
 /// Alert thresholds.
@@ -96,9 +119,11 @@ pub fn assess_window(
 
     let mut alerts = Vec::new();
     let subject = window.to_string();
+    let scope = window_scope(window);
     match state {
         WindowState::Degraded => alerts.push(Alert {
             kind: "degraded",
+            scope: scope.clone(),
             subject: subject.clone(),
             message: format!(
                 "window {window} degraded with {filled_count} of {buckets} buckets: its swaps unwind"
@@ -110,6 +135,7 @@ pub fn assess_window(
                 let first = missing_due.first().copied().unwrap_or(0);
                 alerts.push(Alert {
                     kind: "lag",
+                    scope: scope.clone(),
                     subject: subject.clone(),
                     message: format!(
                         "window {window}: {} due bucket(s) empty, the oldest (bucket {first}) for {max_lag_s} s (grace {} s): is the keeper running?",
@@ -121,6 +147,7 @@ pub fn assess_window(
             if missing_total > 0 && to_deadline_s >= 0 && to_deadline_s <= t.deadline_warning_s {
                 alerts.push(Alert {
                     kind: "deadline",
+                    scope: scope.clone(),
                     subject: subject.clone(),
                     message: format!(
                         "window {window}: {missing_total} bucket(s) empty with {to_deadline_s} s to the backfill deadline: it degrades if they stay empty"
@@ -135,6 +162,7 @@ pub fn assess_window(
             if to_deadline_s < 0 || complete_since_grace {
                 alerts.push(Alert {
                     kind: "unfinalized",
+                    scope,
                     subject,
                     message: format!("window {window} can be finalized and is not"),
                 });
@@ -180,6 +208,7 @@ impl VaaTracker {
             if age > max_blocks {
                 alerts.push(Alert {
                     kind: "encoded-vaa",
+                    scope: vaa_scope(payer),
                     subject: a.clone(),
                     message: format!(
                         "encoded VAA {a} of payer {payer} open for {age} blocks: the keeper's scan should have closed it"
@@ -191,45 +220,60 @@ impl VaaTracker {
     }
 }
 
-/// When an alert fires: the first time it is seen, then again every `realert_s` while it
-/// stays active. An alert that stops being reported is resolved.
+/// When an alert is delivered: as soon as it is seen, then again every `realert_s` while it
+/// stays active; a delivery that fails is retried at the next pass, not after `realert_s`. An
+/// alert resolves only when its scope was observed again and the alert was not reported, so a
+/// failed read never resolves what it could not see.
 #[derive(Debug, Default)]
 pub struct AlertBook {
-    last_fired: HashMap<(&'static str, String), i64>,
+    /// Active alerts and when each was last delivered (`None`: not yet, or the last attempt
+    /// failed).
+    active: HashMap<(&'static str, String), (String, Option<i64>)>,
 }
 
 impl AlertBook {
-    /// Given every alert active now, returns those to fire and the keys resolved since the
-    /// last call.
+    /// Records the alerts reported now and the scopes observed now. Returns the alerts due for
+    /// delivery and the alerts resolved (their scope was observed and they were not reported).
     pub fn update(
         &mut self,
-        active: &[Alert],
+        reported: &[Alert],
+        observed: &[String],
         now: i64,
         realert_s: i64,
     ) -> (Vec<Alert>, Vec<(&'static str, String)>) {
-        let keys: Vec<(&'static str, String)> =
-            active.iter().map(|a| (a.kind, a.subject.clone())).collect();
+        let keys: Vec<(&'static str, String)> = reported
+            .iter()
+            .map(|a| (a.kind, a.subject.clone()))
+            .collect();
         let resolved: Vec<_> = self
-            .last_fired
-            .keys()
-            .filter(|k| !keys.contains(k))
-            .cloned()
+            .active
+            .iter()
+            .filter(|(k, (scope, _))| !keys.contains(k) && observed.contains(scope))
+            .map(|(k, _)| k.clone())
             .collect();
         for k in &resolved {
-            self.last_fired.remove(k);
+            self.active.remove(k);
         }
-        let mut fire = Vec::new();
-        for a in active {
-            let key = (a.kind, a.subject.clone());
-            let due = self
-                .last_fired
-                .get(&key)
-                .is_none_or(|last| now.saturating_sub(*last) >= realert_s);
-            if due {
-                self.last_fired.insert(key, now);
-                fire.push(a.clone());
+        let mut due = Vec::new();
+        for a in reported {
+            let entry = self
+                .active
+                .entry((a.kind, a.subject.clone()))
+                .or_insert_with(|| (a.scope.clone(), None));
+            let is_due = entry
+                .1
+                .is_none_or(|last| now.saturating_sub(last) >= realert_s);
+            if is_due {
+                due.push(a.clone());
             }
         }
-        (fire, resolved)
+        (due, resolved)
+    }
+
+    /// Records a successful delivery of `a` at `now`; a failed one is simply not recorded.
+    pub fn delivered(&mut self, a: &Alert, now: i64) {
+        if let Some(e) = self.active.get_mut(&(a.kind, a.subject.clone())) {
+            e.1 = Some(now);
+        }
     }
 }
