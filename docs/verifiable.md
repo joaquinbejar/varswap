@@ -27,11 +27,14 @@ cluster (where the program data account is padded with zeros).
 ## Same compiler as CI and the benchmarks
 
 The image's `cargo-build-sbf` is 4.3.0, CI's is 4.5.0, but both drive platform-tools v1.57
-with Rust 1.95.0, the SBF compiler `docs/benchmarks.md` records. The bytes differ (the image
-builds under `/build`, so embedded paths differ) and the code does not: with the verifiable
-`.so` in `target/deploy`, `program/tests/cu.rs` measures every row of `docs/benchmarks.md`
-with the same CU, and all 81 program tests pass, the 24 print replay included (checked on
-2026-11-02 at the commit that added this file).
+with Rust 1.95.0, the SBF compiler `docs/benchmarks.md` records. The two `.so` files are not
+byte identical (92,376 bytes for the verifiable build, 90,824 for `make program`; the image
+builds under `/build`, among other differences), and no claim is made that their code is the
+same. What was checked is behaviour: with the verifiable `.so` in `target/deploy`,
+`program/tests/cu.rs` measures every row of `docs/benchmarks.md` with the same CU, and all 81
+program tests pass, the 24 print replay included (2026-11-02, at the commit that added this
+file). The deployed program is the verifiable `.so` byte for byte (`solana program dump`, cut
+to 92,376 bytes; the rest of the program data is zeros).
 
 ## Reproduce
 
