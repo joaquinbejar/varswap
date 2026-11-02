@@ -2,7 +2,7 @@
   "account": {
     "data_hex": "0101ff0000000000ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d6c8fe46a00000000c491e46a000000000cb7fabb52f7a648bb5b317d9a018b9057cb024774fafe01e6c4df98cc3858813c0000006054000080510100e803f800020000000b000000ca965b86f1dd4455943e00000000000011c43fcba25630320000000000000000ff07000000000000d7e3cd3f02000000c15dec3f0200000015a5a53f020000007914203f02000000b3dee83e02000000cced023f0200000007d7763e0200000067fa323e02000000a0d67f3e02000000ced75f3e02000000f49df43e02000000f8f8f8f8f8f8f8f8f8f8f8",
     "owner": "BWqsaXvASrbErApP1ovz7vSvBLYqXGaMaZANEYf1xrB9",
-    "slot": 517819821
+    "slot": 517823793
   },
   "cluster": "devnet",
   "derived": {
@@ -70,6 +70,7 @@
       {
         "block_time": 1793363597,
         "creates_window": true,
+        "events_complete": true,
         "samples": [],
         "signature": "5VsQaAF6gfGT7VuSsQvK7uZTubYySQKjH9fUNHiNeGh9V4yXWqe1fpxRFT9wxyjKvsvKmFTHmwyAP3UKCyET4oXG",
         "slot": 516776143,
@@ -78,6 +79,7 @@
       {
         "block_time": 1793363851,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -95,6 +97,7 @@
       {
         "block_time": 1793363895,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -112,6 +115,7 @@
       {
         "block_time": 1793363960,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -129,6 +133,7 @@
       {
         "block_time": 1793364024,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -146,6 +151,7 @@
       {
         "block_time": 1793364088,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -163,6 +169,7 @@
       {
         "block_time": 1793364152,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -180,6 +187,7 @@
       {
         "block_time": 1793364186,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -197,6 +205,7 @@
       {
         "block_time": 1793364250,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -214,6 +223,7 @@
       {
         "block_time": 1793364314,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -231,6 +241,7 @@
       {
         "block_time": 1793364378,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -248,6 +259,7 @@
       {
         "block_time": 1793364443,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -265,6 +277,7 @@
       {
         "block_time": 1793364444,
         "creates_window": false,
+        "events_complete": true,
         "samples": [],
         "signature": "4HoUsuSYMEvY4ydVsapcciXT2M9rXEk8e4mHRu45WnYg3EdiNUotMHnGhs3zCUodGmUiq4dNFjsM2F1idcrhXU3t",
         "slot": 516779655,

@@ -67,6 +67,9 @@ pub struct TxRecord {
     pub creates_window: bool,
     /// The events of its successful `sample` instructions on this window.
     pub samples: Vec<SampleEvent>,
+    /// Whether every such instruction's event was found: `false` if the logs were truncated
+    /// or do not carry one event per `sample` instruction (the record is then `unknown`).
+    pub events_complete: bool,
 }
 
 /// What a record needs from a cluster, at finalized commitment.
@@ -225,6 +228,11 @@ pub fn parse_transaction(
     let window_s = window.to_string();
 
     let mut creates_window = false;
+    // Our program's top-level instructions in message order, and which of them are `sample`
+    // on this window (by position in the message). Logs are matched to them by counting only
+    // our program's depth-1 invocations: other programs (precompiles included) may log no
+    // invocation at all, so message positions and logged invocations are not one-to-one.
+    let mut ours: Vec<u32> = Vec::new();
     let mut sample_ixs: Vec<u32> = Vec::new();
     let instructions = v
         .pointer("/transaction/message/instructions")
@@ -235,6 +243,7 @@ pub fn parse_transaction(
         if ix.get("programIdIndex").and_then(key) != Some(&program) {
             continue;
         }
+        ours.push(i);
         let data = ix
             .get("data")
             .and_then(Value::as_str)
@@ -262,37 +271,56 @@ pub fn parse_transaction(
     }
 
     let mut samples = Vec::new();
+    let mut events_complete = true;
     if success && !sample_ixs.is_empty() {
-        let logs = meta
+        let logs: Vec<&str> = meta
             .get("logMessages")
             .and_then(Value::as_array)
-            .ok_or_else(|| bad("successful transaction without logs"))?;
-        let top_invoke = format!("Program {program} invoke [1]");
-        let mut top: Option<u32> = None;
-        let mut current_is_ours = false;
-        for line in logs.iter().filter_map(Value::as_str) {
-            if line.starts_with("Program ") && line.ends_with(" invoke [1]") {
-                top = Some(top.map_or(Ok(0), |t| {
-                    t.checked_add(1).ok_or_else(|| bad("too many instructions"))
-                })?);
-                current_is_ours = line == top_invoke;
-                continue;
+            .map(|l| l.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        // A stack of the programs currently executing: an event counts only when our program
+        // is the only frame (depth 1), so a nested program's matching text is never ours (a
+        // sample reached through CPI is unsupported: its bucket stays uncovered, `unknown`).
+        let mut stack: Vec<&str> = Vec::new();
+        let mut our_invocations: usize = 0;
+        let mut current: Option<u32> = None;
+        for line in &logs {
+            if line.starts_with("Log truncated") {
+                events_complete = false;
             }
-            if let (Some(rest), true, Some(t)) =
-                (line.strip_prefix(EVENT_PREFIX), current_is_ours, top)
-            {
-                if sample_ixs.contains(&t) {
-                    samples
-                        .push(parse_event(rest, t).ok_or_else(|| bad("malformed sample event"))?);
+            if let Some(rest) = line.strip_prefix("Program ") {
+                if let Some((id, depth)) = rest.split_once(" invoke [") {
+                    stack.push(id);
+                    if depth == "1]" && id == program {
+                        current = ours.get(our_invocations).copied();
+                        our_invocations = our_invocations.saturating_add(1);
+                    } else if depth == "1]" {
+                        current = None;
+                    }
+                    continue;
+                }
+                // `Program <id> success` or `Program <id> failed: …` (never a `log:` line).
+                let closes = rest.split_once(' ').is_some_and(|(id, tail)| {
+                    !id.ends_with(':') && (tail == "success" || tail.starts_with("failed"))
+                });
+                if closes {
+                    stack.pop();
+                    continue;
+                }
+            }
+            if let Some(event) = line.strip_prefix(EVENT_PREFIX) {
+                if stack.len() == 1 && stack.first() == Some(&program.as_str()) {
+                    if let Some(i) = current.filter(|i| sample_ixs.contains(i)) {
+                        match parse_event(event, i) {
+                            Some(e) => samples.push(e),
+                            None => events_complete = false,
+                        }
+                    }
                 }
             }
         }
         if samples.len() != sample_ixs.len() {
-            return Err(bad(format!(
-                "{signature}: {} sample instruction(s) on the window, {} event(s)",
-                sample_ixs.len(),
-                samples.len()
-            )));
+            events_complete = false;
         }
     }
     Ok(TxRecord {
@@ -302,6 +330,7 @@ pub fn parse_transaction(
         success,
         creates_window,
         samples,
+        events_complete,
     })
 }
 
@@ -379,10 +408,14 @@ pub fn derive(
         _ => None,
     };
 
-    let reconciled = if history_reaches_creation {
-        reconcile(&prices, records)
-    } else {
-        Err("the history does not reach create_window".to_owned())
+    let incomplete = records.iter().find(|r| r.success && !r.events_complete);
+    let reconciled = match (history_reaches_creation, incomplete) {
+        (false, _) => Err("the history does not reach create_window".to_owned()),
+        (true, Some(r)) => Err(format!(
+            "{}: its logs do not carry one event per sample instruction",
+            r.signature
+        )),
+        (true, None) => reconcile(&prices, records),
     };
     let (runs, unproven) = match reconciled {
         Ok(runs) => (Some(runs), None),
@@ -492,6 +525,7 @@ fn record_json(r: &TxRecord) -> Value {
         "block_time": r.block_time,
         "success": r.success,
         "creates_window": r.creates_window,
+        "events_complete": r.events_complete,
         "samples": r.samples.iter().map(|e| json!({
             "instruction": e.instruction, "first": e.first, "last": e.last,
             "publish_time": e.publish_time, "price": e.price.to_string(), "expo": e.expo,
@@ -522,16 +556,14 @@ fn record_from_json(v: &Value) -> Option<TxRecord> {
         success: v.get("success")?.as_bool()?,
         creates_window: v.get("creates_window")?.as_bool()?,
         samples,
+        events_complete: v.get("events_complete")?.as_bool()?,
     })
 }
 
 /// Every transaction of `window`, oldest first, and whether the list reaches its
 /// `create_window`.
-fn history<H: History>(
-    h: &mut H,
-    program_id: &Address,
-    window: &Address,
-) -> Result<(Vec<TxRecord>, bool), CliError> {
+/// Every signature the cluster lists for `window`, newest first.
+fn list_signatures<H: History>(h: &mut H, window: &Address) -> Result<Vec<String>, CliError> {
     let mut signatures = Vec::new();
     let mut before: Option<String> = None;
     loop {
@@ -542,6 +574,15 @@ fn history<H: History>(
         signatures.extend(page);
         before = Some(last);
     }
+    Ok(signatures)
+}
+
+fn history<H: History>(
+    h: &mut H,
+    program_id: &Address,
+    window: &Address,
+) -> Result<(Vec<TxRecord>, bool), CliError> {
+    let signatures = list_signatures(h, window)?;
     let mut records = Vec::new();
     let mut missing = false;
     for s in &signatures {
@@ -650,19 +691,23 @@ fn parse_bundle(b: &Value) -> Result<Parsed, CliError> {
 pub fn verify_offline(b: &Value) -> Result<Value, CliError> {
     let p = parse_bundle(b)?;
     let derived = derived_json(&derive(&p.data, &p.records, p.reaches)?);
-    let stated = b.get("derived").ok_or_else(|| bad("no derived fields"))?;
-    if let (Some(want), Some(got)) = (derived.as_object(), stated.as_object()) {
-        for (k, v) in want {
-            if got.get(k) != Some(v) {
-                return Err(bad(format!(
-                    "derived.{k} is {}, the account and events give {v}",
-                    got.get(k).unwrap_or(&Value::Null)
-                )));
-            }
+    let got = b
+        .get("derived")
+        .and_then(Value::as_object)
+        .ok_or_else(|| bad("derived is missing or not an object"))?;
+    let want = derived
+        .as_object()
+        .ok_or_else(|| bad("derived fields are not an object"))?;
+    for (k, v) in want {
+        if got.get(k) != Some(v) {
+            return Err(bad(format!(
+                "derived.{k} is {}, the account and events give {v}",
+                got.get(k).unwrap_or(&Value::Null)
+            )));
         }
-        if got.len() != want.len() {
-            return Err(bad("derived has extra fields"));
-        }
+    }
+    if got.len() != want.len() {
+        return Err(bad("derived has extra fields"));
     }
     Ok(derived)
 }
@@ -682,22 +727,30 @@ pub fn verify_rpc<H: History>(h: &mut H, b: &Value) -> Result<Value, CliError> {
     if account.owner != p.program_id || account.data != p.data {
         return Err(bad("the account on chain differs from the bundle's bytes"));
     }
+    // The complete list first: every signature the cluster has for the window must be in the
+    // bundle and every bundled one on the cluster, before any transaction is fetched.
+    let listed = list_signatures(h, &p.window)?;
+    for s in &listed {
+        if !p.records.iter().any(|r| &r.signature == s) {
+            return Err(bad(format!("{s}: on the cluster, missing from the bundle")));
+        }
+    }
     for r in &p.records {
-        let v = h
-            .transaction(&r.signature)?
-            .ok_or_else(|| bad(format!("{}: not on the cluster", r.signature)))?;
+        if !listed.contains(&r.signature) {
+            return Err(bad(format!(
+                "{}: in the bundle, not listed by the cluster",
+                r.signature
+            )));
+        }
+        let v = h.transaction(&r.signature)?.ok_or_else(|| {
+            bad(format!(
+                "{}: the cluster lists it but cannot return it: completeness unproven",
+                r.signature
+            ))
+        })?;
         let fresh = parse_transaction(&v, &p.program_id, &p.window)?;
         if &fresh != r {
             return Err(bad(format!("{}: differs from the cluster's", r.signature)));
-        }
-    }
-    let (chain, _) = history(h, &p.program_id, &p.window)?;
-    for c in &chain {
-        if !p.records.iter().any(|r| r.signature == c.signature) {
-            return Err(bad(format!(
-                "{}: on the cluster, missing from the bundle",
-                c.signature
-            )));
         }
     }
     Ok(derived)
@@ -742,6 +795,85 @@ mod tests {
         assert_eq!(base58("0"), None);
         assert_eq!(unhex(&hex(&[0, 1, 255])), Some(vec![0, 1, 255]));
         assert_eq!(unhex("abc"), None);
+    }
+
+    const PROGRAM: &str = "BWqsaXvASrbErApP1ovz7vSvBLYqXGaMaZANEYf1xrB9";
+    const WINDOW: &str = "9P3vhP8pe8WcebFXZ77njPHddnCtLLFGFHLiAucQ2Wz8";
+    const PAYER: &str = "5MTVStedYVor97UjAYU4shkp6RaTiKXEFupfHJN79D1";
+    const PRECOMPILE: &str = "Ed25519SigVerify111111111111111111111111111";
+    const OTHER: &str = "rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ";
+    const EVENT: &str = "Program log: varswap:sample first=2 last=2 publish_time=9 price=5 expo=-8";
+
+    /// A successful transaction: `ixs` as (program key index, first account key index, data).
+    fn tx(ixs: &[(u64, u64, &str)], logs: &[&str]) -> Value {
+        json!({
+            "slot": 7,
+            "blockTime": 1,
+            "meta": { "err": null, "logMessages": logs },
+            "transaction": {
+                "signatures": ["sig"],
+                "message": {
+                    "accountKeys": [PAYER, WINDOW, PROGRAM, PRECOMPILE, OTHER],
+                    "instructions": ixs.iter().map(|(p, a, d)| json!({
+                        "programIdIndex": p, "accounts": [a], "data": d
+                    })).collect::<Vec<_>>(),
+                }
+            }
+        })
+    }
+
+    fn parse(v: &Value) -> TxRecord {
+        parse_transaction(v, &PROGRAM.parse().unwrap(), &WINDOW.parse().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn test_precompile_before_sample_keeps_the_instruction_position() {
+        // The precompile logs no invocation: counting every depth-1 invoke would misplace it.
+        let r = parse(&tx(
+            &[(3, 0, "1"), (2, 1, "4")],
+            &[
+                &format!("Program {PROGRAM} invoke [1]"),
+                EVENT,
+                &format!("Program {PROGRAM} success"),
+            ],
+        ));
+        assert!(r.events_complete);
+        assert_eq!(r.samples.len(), 1);
+        assert_eq!((r.samples[0].instruction, r.samples[0].first), (1, 2));
+    }
+
+    #[test]
+    fn test_nested_matching_text_is_not_an_event() {
+        // Another program at depth 1 invokes something that logs the same text at depth 2;
+        // our sample instruction logs nothing: no event is attributed, the record is incomplete.
+        let r = parse(&tx(
+            &[(4, 0, "1"), (2, 1, "4")],
+            &[
+                &format!("Program {OTHER} invoke [1]"),
+                &format!("Program {PROGRAM} invoke [2]"),
+                EVENT,
+                &format!("Program {PROGRAM} success"),
+                &format!("Program {OTHER} success"),
+                &format!("Program {PROGRAM} invoke [1]"),
+                "Program log: something failed here",
+                &format!("Program {PROGRAM} success"),
+            ],
+        ));
+        assert!(r.samples.is_empty());
+        assert!(!r.events_complete);
+    }
+
+    #[test]
+    fn test_truncated_logs_are_incomplete() {
+        let r = parse(&tx(
+            &[(2, 1, "4")],
+            &[
+                &format!("Program {PROGRAM} invoke [1]"),
+                EVENT,
+                "Log truncated",
+            ],
+        ));
+        assert!(!r.events_complete);
     }
 
     #[test]

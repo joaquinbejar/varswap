@@ -9,6 +9,7 @@
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,
     clippy::disallowed_macros,
+    clippy::panic_in_result_fn,
     missing_docs
 )]
 
@@ -139,4 +140,106 @@ fn test_history_without_create_window_is_unknown() {
         verify_offline(&b).unwrap()
     };
     assert_eq!(d["label"], "unknown");
+}
+
+#[test]
+fn test_derived_that_is_not_an_object_fails() {
+    for bad in [Value::Null, Value::String("x".into()), Value::Array(vec![])] {
+        let mut b = demo();
+        b["derived"] = bad;
+        fails(&b, "derived is missing or not an object");
+    }
+    let mut b = demo();
+    b.as_object_mut().unwrap().remove("derived");
+    fails(&b, "derived is missing or not an object");
+}
+
+/// A cluster that serves the record's own account and signature list, plus or minus a change.
+struct Fake {
+    data: Vec<u8>,
+    owner: varswap_sdk::Address,
+    signatures: Vec<String>,
+    unavailable: Vec<String>,
+}
+
+impl varswap_cli::record::History for Fake {
+    fn signatures(
+        &mut self,
+        _: &varswap_sdk::Address,
+        before: Option<&str>,
+    ) -> Result<Vec<String>, varswap_cli::CliError> {
+        // One page, then an empty one.
+        Ok(if before.is_none() {
+            self.signatures.clone()
+        } else {
+            vec![]
+        })
+    }
+
+    fn transaction(&mut self, s: &str) -> Result<Option<Value>, varswap_cli::CliError> {
+        assert!(
+            self.unavailable.iter().any(|u| u == s),
+            "fetched {s} before the list check"
+        );
+        Ok(None)
+    }
+
+    fn account_at(
+        &mut self,
+        _: &varswap_sdk::Address,
+    ) -> Result<(u64, Option<varswap_cli::AccountInfo>), varswap_cli::CliError> {
+        Ok((
+            1,
+            Some(varswap_cli::AccountInfo {
+                owner: self.owner,
+                data: self.data.clone(),
+            }),
+        ))
+    }
+}
+
+fn fake(b: &Value) -> Fake {
+    let hex = b["account"]["data_hex"].as_str().unwrap();
+    let data = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+        .collect();
+    let signatures = b["history"]["transactions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .map(|t| t["signature"].as_str().unwrap().to_owned())
+        .collect();
+    Fake {
+        data,
+        owner: b["program_id"].as_str().unwrap().parse().unwrap(),
+        signatures,
+        unavailable: vec![],
+    }
+}
+
+#[test]
+fn test_rpc_fails_on_an_extra_listed_signature_even_if_unavailable() {
+    let b = demo();
+    let mut f = fake(&b);
+    f.signatures
+        .insert(0, "extraSignatureNotInTheBundle".to_owned());
+    f.unavailable
+        .push("extraSignatureNotInTheBundle".to_owned());
+    let e = varswap_cli::record::verify_rpc(&mut f, &b)
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("missing from the bundle"), "{e}");
+}
+
+#[test]
+fn test_rpc_fails_when_a_listed_transaction_cannot_be_fetched() {
+    let b = demo();
+    let mut f = fake(&b);
+    f.unavailable = f.signatures.clone();
+    let e = varswap_cli::record::verify_rpc(&mut f, &b)
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("completeness unproven"), "{e}");
 }

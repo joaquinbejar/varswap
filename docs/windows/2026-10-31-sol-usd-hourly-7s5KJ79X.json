@@ -2,7 +2,7 @@
   "account": {
     "data_hex": "0101ff0000000000ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d802fe56a000000000081e66a000000000cb7fabb52f7a648bb5b317d9a018b9057cb024774fafe01e6c4df98cc385881100e00006054000080510100e803f80002000000190000008e1fb35c3b80d970813c0c0000000000a3d41be68d4472110000000000000000ffffff0100000000fc579e3d0200000019021e40020000000a87ac3f02000000de3f6d4002000000911de73c020000002d5e023a02000000e4404a3b020000005d55743b0200000010ed443902000000f22cb73702000000be50cb380200000016fe443902000000963bdf3a0200000095122e3c0200000060d7553a020000003d8fe83902000000e8f6543b020000005de3133b02000000f012033c02000000e01fb63b02000000500a9d3a02000000f6f6ab39020000009046443b02000000b337893802000000593c983802000000f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8",
     "owner": "BWqsaXvASrbErApP1ovz7vSvBLYqXGaMaZANEYf1xrB9",
-    "slot": 517819931
+    "slot": 517823861
   },
   "cluster": "devnet",
   "derived": {
@@ -126,6 +126,7 @@
       {
         "block_time": 1793361048,
         "creates_window": true,
+        "events_complete": true,
         "samples": [],
         "signature": "4sudzjBz4ZU6Bw5QNq9pVJPhVUoyoaN3mg2gPMW36GKL5PymMeS5MWeSbs6UJiFR8tKBF9Wi44MhEr6UwtRJMdY9",
         "slot": 516765573,
@@ -134,6 +135,7 @@
       {
         "block_time": 1793404886,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -151,6 +153,7 @@
       {
         "block_time": 1793408492,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -168,6 +171,7 @@
       {
         "block_time": 1793412099,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -185,6 +189,7 @@
       {
         "block_time": 1793415716,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -202,6 +207,7 @@
       {
         "block_time": 1793419322,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -219,6 +225,7 @@
       {
         "block_time": 1793422928,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -236,6 +243,7 @@
       {
         "block_time": 1793426534,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -253,6 +261,7 @@
       {
         "block_time": 1793430140,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -270,6 +279,7 @@
       {
         "block_time": 1793433748,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -287,6 +297,7 @@
       {
         "block_time": 1793437435,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -304,6 +315,7 @@
       {
         "block_time": 1793440885,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -321,6 +333,7 @@
       {
         "block_time": 1793444493,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -338,6 +351,7 @@
       {
         "block_time": 1793448100,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -355,6 +369,7 @@
       {
         "block_time": 1793451708,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -372,6 +387,7 @@
       {
         "block_time": 1793455315,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -389,6 +405,7 @@
       {
         "block_time": 1793458922,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -406,6 +423,7 @@
       {
         "block_time": 1793462530,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -423,6 +441,7 @@
       {
         "block_time": 1793466140,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -440,6 +459,7 @@
       {
         "block_time": 1793469758,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -457,6 +477,7 @@
       {
         "block_time": 1793473366,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -474,6 +495,7 @@
       {
         "block_time": 1793476974,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -491,6 +513,7 @@
       {
         "block_time": 1793480582,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -508,6 +531,7 @@
       {
         "block_time": 1793484191,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -525,6 +549,7 @@
       {
         "block_time": 1793487810,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -542,6 +567,7 @@
       {
         "block_time": 1793491418,
         "creates_window": false,
+        "events_complete": true,
         "samples": [
           {
             "expo": -8,
@@ -559,6 +585,7 @@
       {
         "block_time": 1793491419,
         "creates_window": false,
+        "events_complete": true,
         "samples": [],
         "signature": "3QfLstG15JfgiJaiE7RB9LHuZCcbegEgLsKkQ24k4MdM4Q1L3NxAftaLuNrCfgQHEQnwHMP7i71DBbynLTfHcb1B",
         "slot": 517308509,
