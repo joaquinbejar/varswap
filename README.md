@@ -81,7 +81,7 @@ reproducible window records) are tracked in
 - **Hardened code**: `unsafe_code`, `panic`, `unwrap`, `expect`, indexing, unchecked arithmetic,
   float arithmetic and integer division are all denied by workspace lints, with a failing
   control (`make lint-control`) that proves the lints fire.
-- **Bounded compute**: every instruction under 17,000 CU (see [Testing and Benchmarks](#testing-and-benchmarks)).
+- **Measured compute**: every benchmarked scenario under 17,000 CU (see [Testing and Benchmarks](#testing-and-benchmarks)); the table's cases, not a proven worst case (PDA creation varies with the bump search).
 
 ### Workspace Crates
 
