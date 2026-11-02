@@ -47,8 +47,7 @@ fn run() -> Result<String, String> {
             &ix::WORMHOLE_PROGRAM,
         ),
         ix::init_encoded_vaa(&payer.pubkey(), &vaa.pubkey()),
-        ix::write_encoded_vaa(&payer.pubkey(), &vaa.pubkey(), 0, &BODY)
-            .ok_or("chunk too long")?,
+        ix::write_encoded_vaa(&payer.pubkey(), &vaa.pubkey(), 0, &BODY).ok_or("chunk too long")?,
     ];
     let signature = chain
         .send(&instructions, &payer, Some(&vaa))
