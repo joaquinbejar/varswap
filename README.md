@@ -6,7 +6,7 @@
 [![Issues](https://img.shields.io/github/issues/joaquinbejar/varswap.svg)](https://github.com/joaquinbejar/varswap/issues)
 [![PRs](https://img.shields.io/github/issues-pr/joaquinbejar/varswap.svg)](https://github.com/joaquinbejar/varswap/pulls)
 
-## VarSwap v0.1.0: Realized Variance and Variance Swaps on Solana
+## VarSwap: Realized Variance and Variance Swaps on Solana
 
 ### Table of Contents
 1. [Introduction](#introduction)
@@ -47,14 +47,21 @@ posts Pyth updates through the Pyth receiver, varswap only reads them).
 
 ### Status
 
-Milestones 1 to 5 are done (accumulator, `pyth-lite`, window program, swaps, CU benchmarks and
-the outage study), and so are the three parts of milestone 6 that run off chain: `varswap-sdk`,
-`varswap-keeper` and the `varswap-admin` CLI. What remains is the devnet run (a keeper pushing
-samples for a live SOL/USD window until it finalizes, and a replay of 24 real canonical prints).
-The program is deployed on **devnet only**, at `BWqsaXvASrbErApP1ovz7vSvBLYqXGaMaZANEYf1xrB9`
-([docs/devnet.md](docs/devnet.md): config, the SOL/USD feed config and one hourly window;
-live sampling waits on the Hermes key). It is not on mainnet, and no crate is published on
-crates.io.
+The milestones of [`docs/PLAN.md`](docs/PLAN.md) are done: the accumulator, `pyth-lite`, the
+window program, swaps, CU benchmarks, the outage study, the SDK, the keeper, the admin CLI and
+the devnet run. On **devnet** (program `BWqsaXvASrbErApP1ovz7vSvBLYqXGaMaZANEYf1xrB9`,
+[`docs/devnet.md`](docs/devnet.md)) `varswap-keeper` has sampled live Hermes prints through
+Wormhole and the Pyth receiver and finalized the hourly 2026-10-31 SOL/USD window (25 of 25
+buckets) and two ten-minute demo windows; 24 real canonical prints replay through the real
+programs to the same `sum_sq` as `varswap-core`. `pyth-lite` 0.1.0, `varswap-core` 0.2.0,
+`varswap-sdk` 0.2.0 and `pyth-post` 0.1.1 are on crates.io ([Install](#install)).
+
+It is **not on mainnet** and has not been audited. The hardening and the next steps (CI on
+every pull request, verifiable builds, a separate upgrade authority, fuzzing, runbooks, an
+audit scope, the [`Degraded` policy ADR](docs/adr/0001-degraded-unwind.md), the
+[mainnet readiness checklist](docs/mainnet-readiness.md), a standby keeper with alerts and
+reproducible window records) are tracked in
+[`docs/PLAN-improvements.md`](docs/PLAN-improvements.md).
 
 ### Features
 
