@@ -305,3 +305,54 @@ by either payer. The watcher's `hermes` line showed `held 0` on all 59 passes an
 held no Hermes slot. A process stopped while it holds a slot, and the alert when all R are
 held, are covered with real processes by `test_stopped_then_killed_process`
 (`keeper/tests/limiter.rs`).
+
+## Daily hourly series (from 2026-11-02)
+
+Hourly sampling runs continuously on devnet as a series of daily windows on the SOL/USD feed:
+window k starts at day k's 17:00Z and ends 24 h later, 25 buckets of 3600 s. A window ends,
+so the series needs a new one every day. `scripts/window-roll.sh run` creates the window that
+starts at the next 17:00Z if `show-window` reports it not found. It then reinstalls the keeper
+and watcher agents with the series' open windows, but only when one of them is missing from
+the agent's plist. The window address is derived from the spec, so every run is idempotent.
+If any read fails, the run stops before it sends anything. `scripts/window-roll.sh install
+<name>` runs it under launchd at load and every 6 hours.
+
+| Agent | Configuration |
+| --- | --- |
+| `com.varswap.keeper.devnet-hourly` | payer `5MTVStedYVor97UjAYU4shkp6RaTiKXEFupfHJN79D1`, `--watch 300` |
+| `com.varswap.watch.devnet-watch` | `--payer 5MTV… --grace 600 --min-balance 300000000` (0.3 SOL; the devnet airdrop script refills the payer every 8 h), alerts appended to `~/.local/share/varswap-keeper/devnet-watch/alerts.log` |
+
+| Window | Start | Created by |
+| --- | --- | --- |
+| `7ywXkV5Sa3fGHKhTAcdXqR5jkNg5J7pqvGQg1Hh6XjG1` | 2026-11-02 17:00Z | `3UuXz2DFxSpCYPeLmxDCWSdi4Qafnko8MiFi9GPH899KwjgCVZf9AqENDKKzNegyzK23zbzMBfxdSeE2oJcVMWNq` (by hand) |
+| `CjtkCZY1BEzN8MFgrbViGtW9KEUqP6vMKu7CCPRqiATG` | 2026-11-03 17:00Z | `3eJVefeKHPb4Gk5K4QdDt7PNquK81T1VRaNwwvwcEYq8VvXrgx7SKbk8R8d9rXRvAPje8UBZVNtnj7wBjtBwjRfP` (by hand) |
+
+The roll job is installed once its PR has been reviewed. Until then, the windows above are
+created by hand. The roll job's configuration, written into its plist (no secret):
+
+```shell
+SOLANA_URL=https://api.devnet.solana.com \
+VARSWAP_PROGRAM_ID=BWqsaXvASrbErApP1ovz7vSvBLYqXGaMaZANEYf1xrB9 \
+VARSWAP_KEYPAIR=$HOME/.config/solana/id.json \
+VARSWAP_ROLL_FEED=ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d \
+VARSWAP_ROLL_KEEPER=devnet-hourly \
+VARSWAP_ROLL_KEEPER_KEYPAIR=$HOME/.config/solana/varswap-devnet-keeper.json \
+VARSWAP_ROLL_WATCH=devnet-watch \
+VARSWAP_ROLL_WATCH_ARGS="--payer 5MTVStedYVor97UjAYU4shkp6RaTiKXEFupfHJN79D1 --grace 600 --min-balance 300000000" \
+VARSWAP_WATCH_ALERT_CMD='printf "%s %s %s %s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$VARSWAP_ALERT_KIND" "$VARSWAP_ALERT_SUBJECT" "$VARSWAP_ALERT_MESSAGE" >> "$HOME/.local/share/varswap-keeper/devnet-watch/alerts.log"' \
+sh scripts/window-roll.sh install devnet-roll
+```
+
+Test of the script, 2026-11-02 15:54Z, on a throwaway series anchored at 18:00Z, with test
+agents and the standby payer:
+- The install's dry run reported the window to create and both agents to reinstall.
+- The first launchd run created `AGpn2Ux83LeRcXsEE3fbjRsEYnQ7oiyDj8v4YYqoJzst`
+  (`wwNAr7WEUYtjgWTwzbR7bTd9gELAk3WbTggQEv79Bt4eQnRn37CWVV4YJbxKEhsnWkn2j7m1jGHUBQ3Tg7utNQi`)
+  and installed both agents.
+- A second run, by `launchctl kickstart`, found the window, left both agents running and
+  changed nothing; the keeper kept its PID.
+- With an unreachable RPC the run stops at the first `show-window`, sends nothing and exits
+  1. Its error mentions "AccountNotFound", which is not the not-found answer the script looks
+  for.
+
+The test agents were then uninstalled; `AGpn…` stays pending and unsampled.
