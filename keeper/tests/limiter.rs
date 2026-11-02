@@ -4,10 +4,13 @@
 //! `HermesSource`, sharing one limiter file. Scaled clock: a 1,000 ms window with `R = 3`
 //! instead of 60 s, so the test takes seconds.
 //!
-//! Asserted: no sliding window holds more than `R` requests (every request counted, 404s and
-//! the 429 included), every planned request is eventually answered, and after the mock answers
-//! one 429 no request from either process takes a slot during the block (requests already in
-//! flight, at most `R - 1`, may still arrive).
+//! Asserted on arrival times at the mock, not admission times: no sliding window holds more
+//! than `R` requests (every request counted, 404s and the 429 included), every planned request
+//! is eventually answered, and after the mock answers one 429 at most `R - 1` other requests
+//! (admitted before the block was recorded) arrive before the block has passed. A request's
+//! entry stays at its latest arrival time until the request has completed, so these hold
+//! however long a process takes between admission and send; the only slack is
+//! [`SLACK_MS`] for comparing the mock's clock with the limiter's millisecond clock.
 
 #![allow(
     clippy::unwrap_used,
@@ -38,11 +41,9 @@ const BLOCK_MS: u64 = 1_100;
 const PER_CHILD: i64 = 9;
 /// The mock answers 429 to this request (1-based, across both children).
 const RATE_LIMITED_AT: usize = 7;
-/// Slack for the time between a slot being taken and the request reaching the mock: process
-/// scheduling and loopback latency on a loaded CI runner (a 50 ms margin flaked on GitHub's).
-/// Without the limiter the 19 requests arrive within a few milliseconds, and `R + 1` slots per
-/// window would still put 4 arrivals in 750 ms, so the checks keep their power.
-const JITTER_MS: u64 = 250;
+/// The mock times arrivals with `Instant`; the limiter uses whole milliseconds of the system
+/// clock. Not latency: the window bound holds on arrivals whatever the send delay.
+const SLACK_MS: u64 = 5;
 
 const CHILD_VAR: &str = "VARSWAP_LIMITER_CHILD";
 const URL_VAR: &str = "VARSWAP_LIMITER_URL";
@@ -140,9 +141,8 @@ fn test_two_processes_share_the_budget() {
     assert_eq!(arrivals.len(), total, "requests that reached the mock");
     assert_eq!(arrivals.iter().filter(|(_, s)| *s == 429).count(), 1);
 
-    // At most R in any sliding window. Arrival times include scheduling and loopback latency,
-    // so the window checked is `JITTER_MS` shorter than the limiter's.
-    let window = Duration::from_millis(WINDOW_MS - JITTER_MS);
+    // At most R arrivals in any sliding window.
+    let window = Duration::from_millis(WINDOW_MS - SLACK_MS);
     for (i, (t0, _)) in arrivals.iter().enumerate() {
         let n = arrivals[i..]
             .iter()
@@ -154,24 +154,18 @@ fn test_two_processes_share_the_budget() {
         );
     }
 
-    // After the 429: requests that already held a slot (at most R - 1, sent in the same
-    // window, in flight within `JITTER_MS`) may still arrive; nothing else arrives
-    // until the block has passed.
+    // After the 429: requests admitted before the block was recorded (at most R - 1 besides
+    // the rate-limited one, since their entries overlap its) may still arrive; every other
+    // request was admitted after the block, so arrives after it has passed.
     let (t429, _) = arrivals[RATE_LIMITED_AT - 1];
-    let in_flight = Duration::from_millis(JITTER_MS);
-    let after: Vec<Duration> = arrivals[RATE_LIMITED_AT..]
+    let block = Duration::from_millis(BLOCK_MS - SLACK_MS);
+    let inside = arrivals[RATE_LIMITED_AT..]
         .iter()
-        .map(|(t, _)| t.duration_since(t429))
-        .collect();
-    let early = after.iter().filter(|d| **d <= in_flight).count();
+        .filter(|(t, _)| t.duration_since(t429) < block)
+        .count();
     assert!(
-        early < usize::try_from(R).unwrap(),
-        "{early} requests right after the 429"
-    );
-    let next = after.iter().find(|d| **d > in_flight).unwrap();
-    assert!(
-        *next >= Duration::from_millis(BLOCK_MS - JITTER_MS),
-        "a request took a slot {next:?} after the 429, inside the block"
+        inside < usize::try_from(R).unwrap(),
+        "{inside} requests arrived within the block after the 429"
     );
 
     // The budget, not the clients, set the pace: 19 requests at 3 per window need at least
@@ -196,7 +190,7 @@ fn test_cut_or_empty_state_is_read_conservatively() {
         let l = HermesLimiter::with_window(&dir, "k", 3, 300, 400).unwrap();
         std::fs::write(l.path(), text).unwrap();
         let t = Instant::now();
-        l.acquire().unwrap();
+        let _slot = l.acquire().unwrap();
         assert!(
             t.elapsed() >= Duration::from_millis(390),
             "{name}: a broken state let a request through after {:?}",
@@ -212,7 +206,7 @@ fn test_missing_state_is_a_fresh_budget_and_a_dead_temp_file_changes_nothing() {
     let l = HermesLimiter::with_window(&dir, "k", 3, 600, 700).unwrap();
     let t = Instant::now();
     for _ in 0..3 {
-        l.acquire().unwrap();
+        l.confirm(l.acquire().unwrap()).unwrap();
     }
     assert!(
         t.elapsed() < Duration::from_millis(200),
@@ -223,10 +217,107 @@ fn test_missing_state_is_a_fresh_budget_and_a_dead_temp_file_changes_nothing() {
     let mut tmp = l.path().as_os_str().to_owned();
     tmp.push(".tmp");
     std::fs::write(&tmp, "0\nend\n").unwrap();
-    l.acquire().unwrap();
+    let _slot = l.acquire().unwrap();
     assert!(
         t.elapsed() >= Duration::from_millis(590),
         "the fourth request left after {:?}, inside the window",
+        t.elapsed()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn wall_ms() -> u64 {
+    let d = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap();
+    u64::try_from(d.as_millis()).unwrap()
+}
+
+/// At most `r` of `sends` (milliseconds) in any half-open window of `window_ms`.
+fn assert_at_most(sends: &[u64], r: usize, window_ms: u64) {
+    let mut sends = sends.to_vec();
+    sends.sort_unstable();
+    for (i, t0) in sends.iter().enumerate() {
+        let n = sends[i..]
+            .iter()
+            .take_while(|t| **t < t0 + window_ms)
+            .count();
+        assert!(
+            n <= r,
+            "{n} sends within {window_ms} ms from {t0}: {sends:?}"
+        );
+    }
+}
+
+/// The drill's failure mode, made deterministic: a process admitted and then stopped for
+/// longer than the window before it sends (SIGSTOP between `acquire` and the HTTP request).
+/// Its pending entry still counts, so the other process cannot fill the window it lands in.
+/// Send times are taken after admission and before confirmation, on the limiter's own clock,
+/// so the bound is exact: no slack.
+#[test]
+fn test_send_delayed_after_admission_still_counts() {
+    let dir = scratch("delayed");
+    let (r, window) = (2_usize, 300_u64);
+    let l = HermesLimiter::with_window(&dir, "k", 2, window, 400)
+        .unwrap()
+        .with_pending(2_000);
+    let sends = Arc::new(Mutex::new(Vec::new()));
+    let stopped = {
+        let (l, sends) = (l.clone(), Arc::clone(&sends));
+        std::thread::spawn(move || {
+            let slot = l.acquire().unwrap();
+            // Lands after the other process's second and third admissions under admission-time
+            // accounting (at about `window` and `window + 20` ms), inside their window.
+            std::thread::sleep(Duration::from_millis(window + window / 2));
+            sends.lock().unwrap().push(wall_ms());
+            l.confirm(slot).unwrap();
+        })
+    };
+    std::thread::sleep(Duration::from_millis(20));
+    for _ in 0..3 {
+        let slot = l.acquire().unwrap();
+        sends.lock().unwrap().push(wall_ms());
+        l.confirm(slot).unwrap();
+    }
+    stopped.join().unwrap();
+    let sends = sends.lock().unwrap().clone();
+    assert_eq!(sends.len(), 4);
+    assert_at_most(&sends, r, window);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A slot never confirmed (its process died after admission) delays the others until its
+/// pending bound plus the window, and no longer.
+#[test]
+fn test_unconfirmed_slot_expires_after_pending_and_window() {
+    let dir = scratch("dead");
+    let l = HermesLimiter::with_window(&dir, "k", 1, 200, 300)
+        .unwrap()
+        .with_pending(400);
+    let t = Instant::now();
+    let _dead = l.acquire().unwrap();
+    l.confirm(l.acquire().unwrap()).unwrap();
+    let waited = t.elapsed();
+    assert!(waited >= Duration::from_millis(595), "{waited:?}");
+    assert!(waited < Duration::from_millis(2_000), "{waited:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A send delayed past the pending bound is recorded again at its completion when confirmed.
+#[test]
+fn test_confirm_after_expiry_records_the_request_again() {
+    let dir = scratch("late");
+    let l = HermesLimiter::with_window(&dir, "k", 1, 200, 300)
+        .unwrap()
+        .with_pending(50);
+    let slot = l.acquire().unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+    l.confirm(slot).unwrap();
+    let t = Instant::now();
+    l.confirm(l.acquire().unwrap()).unwrap();
+    assert!(
+        t.elapsed() >= Duration::from_millis(190),
+        "the next request went {:?} after a late send",
         t.elapsed()
     );
     let _ = std::fs::remove_dir_all(&dir);

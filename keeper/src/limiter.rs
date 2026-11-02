@@ -2,15 +2,31 @@
 //! I6).
 //!
 //! The Hermes API key is shared with metalbook; varswap's allocation is `R` requests per minute
-//! across all its processes (`docs/governance.md`: 3). [`HermesLimiter`] enforces it where
-//! requests leave the process: before every HTTP request (retries and requests answered 404 or
-//! 429 included) a process takes a slot from a file shared by every process using the same lock
-//! directory, under an exclusive `flock`. The file holds the send times of the last requests;
-//! a request may leave only if fewer than `R` of them fall in the last window (60 s), so at
-//! most `R` requests leave in any sliding window. A 429 blocks every process on that file for
-//! the block time (61 s: Hermes asks for 60): no request takes a slot until it has passed.
-//! Requests that took their slot before the 429 was recorded (at most `R − 1` others, from the
-//! same window) are already in flight and still arrive.
+//! across all its processes (`docs/governance.md`: 3). [`HermesLimiter`] enforces it on the
+//! times requests can reach Hermes, not only on the times they were admitted: every process
+//! shares one file of entries, under an exclusive `flock`, one entry per request (retries and
+//! requests answered 404 or 429 included), each an upper bound on when that request reached
+//! Hermes.
+//!
+//! - [`HermesLimiter::acquire`] admits a request only if fewer than `R` entries are later than
+//!   `now - window`, and records a pending entry at `now + pending` (15 s: the HTTP client's
+//!   10 s global timeout plus margin), the latest time the request can arrive if it is sent
+//!   within that bound.
+//! - [`HermesLimiter::confirm`], called once the request has completed (answered or failed),
+//!   lowers the entry to the completion time: the request arrived before it was answered.
+//!
+//! So a request admitted at `g` is counted from `g` until its arrival bound plus the window,
+//! and no `R + 1` requests reach Hermes within one window: at most `R` arrivals in any sliding
+//! window, however long the sends take after admission (the drill's SIGSTOP
+//! included), provided each send completes within `pending` of its admission. The residual
+//! case: a process paused between admission and send for longer than `pending`. Its entry has
+//! expired by then, so its late request can share a window with `R` others; `confirm` re-records
+//! it at the completion time, and if Hermes answers 429 the block below applies. A process that
+//! dies holding a pending entry only delays the others until that entry expires.
+//!
+//! A 429 blocks every process on that file for the block time (61 s: Hermes asks for 60): no
+//! request is admitted until it has passed. Requests admitted before the block was recorded (at
+//! most `R − 1` others whose entries overlap the rate-limited one) can still arrive.
 //!
 //! The files are named after a hash of the API key (64-bit FNV-1a, never the key itself), so two
 //! keys never share a budget. Crash safety: the `flock` is held on a separate lock file whose
@@ -18,12 +34,16 @@
 //! synced, then renamed over the state file), so a process killed at any point leaves either
 //! the old state or the new one. The state ends with an `end` line; a state file without it, or
 //! one that cannot be parsed, is read conservatively: a full window and a block from now, which
-//! only delays requests. A missing state file is a fresh budget. The scope is one host:
-//! processes on another machine do not see these files.
+//! only delays requests. A missing state file is a fresh budget. Entry lines are
+//! `<time> <request id>`; a line with a time only (the format before `confirm`) is read as a
+//! confirmed entry, while older binaries read the new format conservatively, so every varswap
+//! process on a host is upgraded together. The scope is one host: processes on another machine
+//! do not see these files.
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// varswap's share of the shared key's quota on the timestamp endpoint, per minute.
@@ -32,6 +52,12 @@ pub const DEFAULT_REQUESTS_PER_MINUTE: u32 = 3;
 pub const WINDOW_MS: u64 = 60_000;
 /// How long a 429 blocks every process, in milliseconds (Hermes asks for 60 s).
 pub const BLOCK_MS: u64 = 61_000;
+/// How long after admission a request's entry is held at its latest possible arrival time
+/// until it is confirmed, in milliseconds: the HTTP client's 10 s global timeout plus margin.
+pub const PENDING_MS: u64 = 15_000;
+
+/// The per-process counter behind request ids (the high half is the process id).
+static NEXT_SLOT: AtomicU32 = AtomicU32::new(1);
 
 /// 64-bit FNV-1a: a stable, dependency free name for the key's file. Not a secret-preserving
 /// hash in the cryptographic sense; it names the file and nothing else.
@@ -52,17 +78,25 @@ fn now_ms() -> io::Result<u64> {
     u64::try_from(d.as_millis()).map_err(|_| io::Error::other("system clock out of range"))
 }
 
+/// One request: an upper bound on when it reached (or will reach) Hermes, and its id (0 for
+/// an entry read from the format without ids).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Entry {
+    at: u64,
+    id: u64,
+}
+
 /// The state in the file: the time until which every request waits (after a 429), and the
-/// send times of the requests in the current window.
+/// entries of the requests that still count.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct State {
     blocked_until: u64,
-    sends: Vec<u64>,
+    entries: Vec<Entry>,
 }
 
 impl State {
-    /// `blocked_until` on the first line, one send time per line, then `end`. `None` if
-    /// malformed or incomplete (no `end` line: an empty or cut file).
+    /// `blocked_until` on the first line, one entry per line (`<time> <id>`, or `<time>`),
+    /// then `end`. `None` if malformed or incomplete (no `end` line: an empty or cut file).
     fn parse(text: &str) -> Option<Self> {
         let mut lines: Vec<&str> = text.lines().map(str::trim).collect();
         if lines.pop() != Some("end") {
@@ -70,13 +104,21 @@ impl State {
         }
         let (first, rest) = lines.split_first()?;
         let blocked_until = first.parse().ok()?;
-        let sends = rest
+        let entries = rest
             .iter()
-            .map(|l| l.parse().ok())
-            .collect::<Option<Vec<u64>>>()?;
+            .map(|l| {
+                let mut fields = l.split_whitespace();
+                let at = fields.next()?.parse().ok()?;
+                let id = match fields.next() {
+                    Some(f) => f.parse().ok()?,
+                    None => 0,
+                };
+                fields.next().is_none().then_some(Entry { at, id })
+            })
+            .collect::<Option<Vec<Entry>>>()?;
         Some(Self {
             blocked_until,
-            sends,
+            entries,
         })
     }
 
@@ -84,17 +126,26 @@ impl State {
         use std::fmt::Write as _;
         let mut s = String::new();
         let _ = writeln!(s, "{}", self.blocked_until);
-        for t in &self.sends {
-            let _ = writeln!(s, "{t}");
+        for e in &self.entries {
+            let _ = writeln!(s, "{} {}", e.at, e.id);
         }
         s.push_str("end\n");
         s
     }
 }
 
+/// A request admitted by [`HermesLimiter::acquire`]; pass it to [`HermesLimiter::confirm`]
+/// once the request has completed, answered or failed. Dropping it unconfirmed is safe: the
+/// entry keeps its latest arrival time until it expires.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use = "confirm the slot once the request has completed"]
+pub struct Slot {
+    id: u64,
+}
+
 /// What a take found: go now, or wait this many milliseconds.
 enum Take {
-    Sent,
+    Admitted,
     Wait(u64),
 }
 
@@ -110,6 +161,7 @@ pub struct HermesLimiter {
     max: usize,
     window_ms: u64,
     block_ms: u64,
+    pending_ms: u64,
 }
 
 impl HermesLimiter {
@@ -152,7 +204,15 @@ impl HermesLimiter {
             max,
             window_ms,
             block_ms,
+            pending_ms: PENDING_MS,
         })
+    }
+
+    /// The same limiter with another pending bound (tests run on a scaled clock).
+    #[must_use]
+    pub fn with_pending(mut self, pending_ms: u64) -> Self {
+        self.pending_ms = pending_ms;
+        self
     }
 
     /// The shared state file.
@@ -175,7 +235,7 @@ impl HermesLimiter {
         };
         Ok(State::parse(&text).unwrap_or_else(|| State {
             blocked_until: now.saturating_add(self.block_ms),
-            sends: vec![now; self.max],
+            entries: vec![Entry { at: now, id: 0 }; self.max],
         }))
     }
 
@@ -209,36 +269,69 @@ impl HermesLimiter {
         Ok(out)
     }
 
-    fn try_take(&self) -> io::Result<Take> {
-        let (max, window) = (self.max, self.window_ms);
+    fn try_take(&self, id: u64) -> io::Result<Take> {
+        let (max, window, pending) = (self.max, self.window_ms, self.pending_ms);
         self.update(|s, now| {
             let horizon = now.saturating_sub(window);
-            s.sends.retain(|t| *t > horizon);
+            s.entries.retain(|e| e.at > horizon);
             if now < s.blocked_until {
                 return Take::Wait(s.blocked_until.saturating_sub(now));
             }
-            if s.sends.len() < max {
-                s.sends.push(now);
-                return Take::Sent;
+            if s.entries.len() < max {
+                s.entries.push(Entry {
+                    at: now.saturating_add(pending),
+                    id,
+                });
+                return Take::Admitted;
             }
-            // The oldest send in the window leaves it at oldest + window.
-            let oldest = s.sends.iter().copied().min().unwrap_or(now);
-            Take::Wait(oldest.saturating_add(window).saturating_sub(now).max(1))
+            // The earliest entry leaves the window at its time plus the window, unless it is
+            // pending and confirmed sooner: look again at least every tenth of a window (at
+            // most every second).
+            let earliest = s.entries.iter().map(|e| e.at).min().unwrap_or(now);
+            let poll = window.checked_div(10).unwrap_or(0).clamp(1, 1_000);
+            Take::Wait(
+                earliest
+                    .saturating_add(window)
+                    .saturating_sub(now)
+                    .clamp(1, poll),
+            )
         })
     }
 
-    /// Takes one request slot, waiting as long as needed.
+    /// Admits one request, waiting as long as needed; [`HermesLimiter::confirm`] the slot once
+    /// the request has completed.
     ///
     /// # Errors
     ///
     /// The file cannot be opened, locked, read or written.
-    pub fn acquire(&self) -> io::Result<()> {
+    pub fn acquire(&self) -> io::Result<Slot> {
+        let id = (u64::from(std::process::id()) << 32)
+            | u64::from(NEXT_SLOT.fetch_add(1, Ordering::Relaxed));
         loop {
-            match self.try_take()? {
-                Take::Sent => return Ok(()),
+            match self.try_take(id)? {
+                Take::Admitted => return Ok(Slot { id }),
                 Take::Wait(ms) => std::thread::sleep(Duration::from_millis(ms)),
             }
         }
+    }
+
+    /// The request of `slot` has completed (answered or failed): it reached Hermes before now,
+    /// so its entry moves to now. An entry that already left the window (a send delayed past
+    /// the pending bound) is recorded again at now.
+    ///
+    /// # Errors
+    ///
+    /// The file cannot be opened, locked, read or written.
+    pub fn confirm(&self, slot: Slot) -> io::Result<()> {
+        self.update(
+            |s, now| match s.entries.iter_mut().find(|e| e.id == slot.id) {
+                Some(e) => e.at = now,
+                None => s.entries.push(Entry {
+                    at: now,
+                    id: slot.id,
+                }),
+            },
+        )
     }
 
     /// After a 429: no process on this file sends before the block time has passed.
@@ -263,9 +356,18 @@ mod tests {
     fn test_state_roundtrip_and_malformed() {
         let s = State {
             blocked_until: 7,
-            sends: vec![1, 2, 3],
+            entries: vec![Entry { at: 1, id: 9 }, Entry { at: 2, id: 10 }],
         };
         assert_eq!(State::parse(&s.render()), Some(s));
+        // The format without ids: confirmed entries with id 0.
+        assert_eq!(
+            State::parse("7\n1\n2\nend\n"),
+            Some(State {
+                blocked_until: 7,
+                entries: vec![Entry { at: 1, id: 0 }, Entry { at: 2, id: 0 }],
+            })
+        );
+        assert_eq!(State::parse("7\n1 2 3\nend\n"), None);
         // Empty, cut before `end`, or malformed: never a fresh budget.
         assert_eq!(State::parse(""), None);
         assert_eq!(State::parse("0\n"), None);

@@ -2,11 +2,11 @@
 
 The API key is shared with metalbook: about 10 requests per minute on the timestamp endpoint,
 of which varswap's allocation is 3 per minute across all its processes (`docs/governance.md`).
-Until the shared limiter of I6 is merged, nothing enforces or guarantees that allocation:
-a keeper sends one request per missing bucket per tick, which can exceed 3 per minute during a
-backfill or with several keepers, and its 61 s back-off applies only after a 429. Operators
-pace it by hand: one keeper per key at a time, and backfills of many buckets coordinated with
-the coordinator.
+The host-wide limiter of I6 (README, "Hermes budget") enforces that allocation for every
+varswap process on one host: at most `--hermes-rate` requests reach Hermes in any 60 s, and a
+429 pauses them all for 61 s. It does not cover another host: running varswap keepers on a
+second machine needs the allocation split into per-host quotas first, coordinated with the
+coordinator.
 The key's only storage is `~/.zshrc`, which exports `VARSWAP_HERMES_API_KEY`. It is never in the
 repository, a plist, a log or a command line, and never printed; the keeper scrubs it from
 errors.

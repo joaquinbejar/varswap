@@ -39,7 +39,9 @@ pub use hermes::{
     UreqHttp, DEFAULT_HERMES_URL, HERMES_API_KEY_VAR, HERMES_AUTH_VAR, HERMES_URL_VAR,
 };
 pub use keeper::{Keeper, TickReport, MIN_STANDBY_LAG, STANDBY_LAG_MARGIN};
-pub use limiter::{HermesLimiter, BLOCK_MS, DEFAULT_REQUESTS_PER_MINUTE, WINDOW_MS};
+pub use limiter::{
+    HermesLimiter, Slot, BLOCK_MS, DEFAULT_REQUESTS_PER_MINUTE, PENDING_MS, WINDOW_MS,
+};
 pub use pyth_post::{PostError, RpcTransport, Transport, UpdateSource};
 pub use receiver_chain::{Orphan, ReceiverChain};
 pub use source::{PriceSource, PrintMsg, TapeSource};

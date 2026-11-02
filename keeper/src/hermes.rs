@@ -369,11 +369,21 @@ impl<H: HttpGet> HermesSource<H> {
         url: &str,
         feed: &[u8; 32],
     ) -> Result<Option<HermesUpdate>, KeeperError> {
-        if let Some(l) = &self.limiter {
-            l.acquire()
+        let slot = match &self.limiter {
+            Some(l) => Some(
+                l.acquire()
+                    .map_err(|e| KeeperError::Source(format!("Hermes limiter: {e}")))?,
+            ),
+            None => None,
+        };
+        let response = self.http.get(url, &[self.config.auth_header()]);
+        // Answered or failed, the request has reached Hermes if it ever will: its entry moves
+        // to now.
+        if let (Some(l), Some(slot)) = (&self.limiter, slot) {
+            l.confirm(slot)
                 .map_err(|e| KeeperError::Source(format!("Hermes limiter: {e}")))?;
         }
-        let response = self.http.get(url, &[self.config.auth_header()])?;
+        let response = response?;
         if let Some(log) = self.request_log {
             let ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -411,8 +421,9 @@ impl<H: HttpGet> HermesSource<H> {
     }
 
     /// The same source, taking a slot of `limiter` before every HTTP request it sends
-    /// (retries and requests answered 404 or 429 included; cache answers take none) and
-    /// blocking every process on the limiter after a 429.
+    /// (retries and requests answered 404 or 429 included; cache answers take none),
+    /// confirming it once the request has completed, and blocking every process on the
+    /// limiter after a 429.
     #[must_use]
     pub fn with_limiter(mut self, limiter: HermesLimiter) -> Self {
         self.limiter = Some(limiter);
