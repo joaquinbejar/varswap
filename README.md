@@ -310,6 +310,12 @@ optfix comes from crates.io (`optfix = "0.2"`).
 `--keypair` (`VARSWAP_KEYPAIR`); `--dry-run` prints the instruction instead of sending it. The
 URL is never printed.
 
+Window records ([`docs/windows/`](docs/windows/README.md)): `export-window <window>` writes a
+record (the account bytes, every transaction back to `create_window` with its `sample`
+events, the realized variance and a quality label), `verify-window <file>` checks it offline
+(consistency only) or with `--rpc` against the cluster, and `window-table` prints the
+`docs/windows/README.md` rows.
+
 ```shell
 cargo run -p varswap-cli --bin varswap-admin -- --help
 

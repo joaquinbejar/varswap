@@ -11,7 +11,7 @@ use solana_commitment_config::CommitmentConfig;
 use solana_hash::Hash;
 use solana_rpc_client::rpc_client::RpcClient;
 use solana_rpc_client_api::client_error::{Error as ClientError, ErrorKind};
-use solana_rpc_client_api::request::{RpcError, RpcResponseErrorData};
+use solana_rpc_client_api::request::{RpcError, RpcRequest, RpcResponseErrorData};
 use solana_transaction::Transaction;
 use varswap_sdk::Address;
 
@@ -79,6 +79,68 @@ impl Rpc for Cluster {
         self.client
             .send_and_confirm_transaction(tx)
             .map(|_| ())
+            .map_err(|e| self.error(&e))
+    }
+}
+
+impl crate::record::History for Cluster {
+    fn signatures(
+        &mut self,
+        address: &Address,
+        before: Option<&str>,
+    ) -> Result<Vec<String>, CliError> {
+        let mut config = serde_json::json!({ "commitment": "finalized", "limit": 1000 });
+        if let (Some(b), Some(o)) = (before, config.as_object_mut()) {
+            o.insert("before".to_owned(), serde_json::Value::String(b.to_owned()));
+        }
+        let page: serde_json::Value = self
+            .client
+            .send(
+                RpcRequest::GetSignaturesForAddress,
+                serde_json::json!([address.to_string(), config]),
+            )
+            .map_err(|e| self.error(&e))?;
+        page.as_array()
+            .ok_or_else(|| CliError::Rpc("getSignaturesForAddress: not a list".to_owned()))?
+            .iter()
+            .map(|s| {
+                s.get("signature")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+                    .ok_or_else(|| {
+                        CliError::Rpc("getSignaturesForAddress: no signature".to_owned())
+                    })
+            })
+            .collect()
+    }
+
+    fn transaction(&mut self, signature: &str) -> Result<Option<serde_json::Value>, CliError> {
+        let v: serde_json::Value = self
+            .client
+            .send(
+                RpcRequest::GetTransaction,
+                serde_json::json!([signature, {
+                    "encoding": "json",
+                    "commitment": "finalized",
+                    "maxSupportedTransactionVersion": 0
+                }]),
+            )
+            .map_err(|e| self.error(&e))?;
+        Ok((!v.is_null()).then_some(v))
+    }
+
+    fn account_at(&mut self, address: &Address) -> Result<(u64, Option<AccountInfo>), CliError> {
+        self.client
+            .get_account_with_commitment(address, CommitmentConfig::finalized())
+            .map(|r| {
+                (
+                    r.context.slot,
+                    r.value.map(|a| AccountInfo {
+                        owner: a.owner,
+                        data: a.data,
+                    }),
+                )
+            })
             .map_err(|e| self.error(&e))
     }
 }

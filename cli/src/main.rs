@@ -6,6 +6,7 @@ use clap::{Parser, Subcommand};
 use solana_instruction::Instruction;
 use solana_keypair::Keypair;
 use solana_signer::Signer;
+use varswap_cli::record;
 use varswap_cli::rpc::Cluster;
 use varswap_cli::{
     config_json, create_window_ix, describe, feed_config_json, init_config_ix, parse_address,
@@ -100,6 +101,30 @@ enum Command {
         /// The swap address.
         address: String,
     },
+    /// Prints a window's record as JSON: account bytes, every transaction back to
+    /// `create_window`, the derived fields and the quality label (finalized commitment).
+    ExportWindow {
+        /// The window address.
+        address: String,
+        /// The cluster's name, written into the record.
+        #[arg(long, default_value = "devnet")]
+        cluster: String,
+    },
+    /// Verifies a window record: offline, its consistency with itself (no chain
+    /// authentication); with --rpc, also against the cluster.
+    VerifyWindow {
+        /// The record file.
+        file: String,
+        /// Also fetch the account and every transaction again and compare.
+        #[arg(long)]
+        rpc: bool,
+    },
+    /// Prints the markdown table rows of verified records (docs/windows/README.md).
+    WindowTable {
+        /// Record files.
+        #[arg(required = true)]
+        files: Vec<String>,
+    },
 }
 
 /// The terms that name a window.
@@ -158,7 +183,37 @@ fn finish(
     Ok(())
 }
 
+fn read_record(file: &str) -> Result<serde_json::Value, CliError> {
+    let text =
+        std::fs::read_to_string(file).map_err(|e| CliError::Usage(format!("{file}: {e}")))?;
+    serde_json::from_str(&text).map_err(|e| CliError::Usage(format!("{file}: {e}")))
+}
+
 fn run(cli: Cli) -> Result<(), CliError> {
+    // Offline commands: no cluster, no program id.
+    match &cli.command {
+        Command::VerifyWindow { file, rpc: false } => {
+            let derived = record::verify_offline(&read_record(file)?)?;
+            println!(
+                "offline: consistent (the account bytes, the events and the derived fields agree; not authenticated against the chain): label {}",
+                derived.get("label").and_then(serde_json::Value::as_str).unwrap_or("?")
+            );
+            return Ok(());
+        }
+        Command::WindowTable { files } => {
+            println!("| Window | State | Coverage | Realized variance | Label | Compressed runs |");
+            println!("| --- | --- | ---: | ---: | --- | ---: |");
+            for f in files {
+                let name = std::path::Path::new(f)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(f);
+                println!("{}", record::table_row(&read_record(f)?, name)?);
+            }
+            return Ok(());
+        }
+        _ => {}
+    }
     let program_id = parse_address(required(&cli.program_id, "--program-id")?)?;
     if let Command::WindowAddress { key } = &cli.command {
         println!("{}", pda::window(&program_id, &key.key()?).0);
@@ -185,6 +240,30 @@ fn run(cli: Cli) -> Result<(), CliError> {
             let s = read_swap(&mut rpc, &program_id, &address)?;
             print_json(&swap_json(&address, &s))
         }
+        Command::ExportWindow { address, cluster } => {
+            let address = parse_address(address)?;
+            print_json(&record::export(&mut rpc, &program_id, &address, cluster)?)
+        }
+        Command::VerifyWindow { file, .. } => {
+            let b = read_record(file)?;
+            if b.get("program_id").and_then(serde_json::Value::as_str)
+                != Some(program_id.to_string().as_str())
+            {
+                return Err(CliError::Usage(
+                    "the record is for another program id".to_owned(),
+                ));
+            }
+            let derived = record::verify_rpc(&mut rpc, &b)?;
+            println!(
+                "rpc: consistent and equal to the cluster at finalized commitment: label {}",
+                derived
+                    .get("label")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("?")
+            );
+            Ok(())
+        }
+        Command::WindowTable { .. } => Ok(()),
         Command::InitConfig { collateral_mint } => {
             let signer = signer()?;
             let instruction = init_config_ix(
