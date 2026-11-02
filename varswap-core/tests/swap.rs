@@ -101,7 +101,7 @@ fn test_unwind_returns_each_collateral() {
     let t = SwapTerms::try_new(1_000_000, ONE / 25, ONE, H).unwrap();
     assert_eq!(
         t.payouts(Settlement::Unwind).unwrap(),
-        (t.long_collateral(), t.short_collateral())
+        (t.short_collateral(), t.long_collateral())
     );
 }
 
