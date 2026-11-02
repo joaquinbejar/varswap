@@ -9,7 +9,7 @@ needs a nightly toolchain and `cargo install --locked cargo-fuzz`.
 | `pyth_update` | `pyth_lite::PriceUpdate::{load, decode, verify}` on real mainnet accounts with byte edits, and on raw bytes | no panic; an accepted account re-encodes to its bytes; a wrong owner or any changed discriminator byte is rejected; `verify` agrees with a reference predicate |
 | `window_sample` | `varswap_core::Window::{sample, finalize}` with `LnKernel` on arbitrary windows and prints | a rejected print writes nothing; filled buckets never change; the missing count; `sum_sq` equals the sum of the returns over consecutive filled buckets; `Finalized` exactly when full, `Degraded` only after the deadline |
 | `swap_conservation` | `varswap_core::SwapTerms` | collateral is the exact ceiling; `long + short == total` for every settlement; `Unwind` returns each collateral; the long payout is monotone, equal to its collateral at the strike, flat above the cap |
-| `sample_ix` | the program's `sample` in LiteSVM, with arbitrary price update accounts and times | the transaction succeeds exactly when the off chain path (`pyth-lite`, `accept_print`, `Window::sample_accepted`) accepts, and the window account then equals the off chain one byte for byte; on failure it is unchanged |
+| `sample_ix` | the program's `sample` in LiteSVM, with arbitrary price update accounts and times | the transaction succeeds exactly when the off chain path (`pyth-lite`, `accept_print`, `Window::sample_accepted`) accepts, and the window account then equals the off chain one byte for byte; on failure the error is exactly `InstructionError(0, Custom(code))` with the code the program maps the off chain error to, and the window is unchanged (an abort, a runtime or resource failure, or another code is a crash) |
 
 ```bash
 make program                          # sample_ix loads target/deploy/varswap_program.so
@@ -34,6 +34,7 @@ Running one input executes it once, without mutation, so the controls are determ
 | `swap_long_collateral_rounds_down` | `swap_conservation` | the long collateral rounds down instead of up |
 | `window_writes_before_refill_check` | `window_sample` | `fill` writes the first bucket before rejecting a refill |
 | `program_skips_confidence` | `sample_ix` | the program skips the confidence bound |
+| `program_aborts_on_forged_owner` | `sample_ix` | the program aborts (panics) on a price update not owned by the receiver, instead of returning `WrongOwner` |
 
 CI (`.github/workflows/ci.yml`, job `fuzz`) runs every target 120 s on pull requests and
 30 minutes each on a weekly schedule, then the controls, on a pinned nightly and cargo-fuzz.

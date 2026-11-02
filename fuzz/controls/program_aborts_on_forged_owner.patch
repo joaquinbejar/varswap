@@ -1,0 +1,14 @@
+diff --git a/program/src/processor.rs b/program/src/processor.rs
+index 5833db9..bd5a7c0 100644
+--- a/program/src/processor.rs
++++ b/program/src/processor.rs
+@@ -263,6 +263,9 @@ pub fn sample(program_id: &Address, accounts: &mut [AccountView], payload: &[u8]
+     let spec = *w.spec();
+ 
+     let raw = price_update.try_borrow()?;
++    if price_update.owner().as_array() != &spec.receiver_program() {
++        panic!("planted abort");
++    }
+     let update = PriceUpdate::load(
+         price_update.owner().as_array(),
+         &raw,

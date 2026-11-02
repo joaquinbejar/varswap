@@ -5,8 +5,11 @@
 //! intervals) is built once per process and cloned per input. Each input posts a few price
 //! update accounts (structured fields or raw bytes, owned by the receiver or not) at chosen
 //! times. Invariants: the transaction succeeds exactly when the off-chain path accepts the
-//! print, and the window account afterwards equals the off-chain window byte for byte (on
-//! failure: unchanged).
+//! print, and the window account afterwards equals the off-chain window byte for byte. On
+//! failure the transaction error must be exactly `InstructionError(0, Custom(code))` with the
+//! code the program maps the off-chain error to (`varswap_program::error::{pyth, core}`), and
+//! the window is unchanged: an abort, a runtime or resource failure, or another code is a
+//! crash, never an accepted rejection.
 
 #![no_main]
 #![allow(dead_code, clippy::result_large_err)]
@@ -24,7 +27,11 @@ use solana_address::Address;
 use solana_keypair::Keypair;
 use solana_signer::Signer;
 use solana_transaction::Transaction;
+use pinocchio::error::ProgramError;
+use solana_instruction_error::InstructionError;
+use solana_transaction_error::TransactionError;
 use varswap_core::{accept_print, LnKernel, RawPrint, UnixTimestamp, Window};
+use varswap_program::error::{core, pyth};
 
 const N: u32 = 24;
 
@@ -141,27 +148,29 @@ fuzz_target!(|steps: Vec<Step<'_>>| {
 
         // Off chain: the program's path on a copy of the window account.
         let mut model = svm.get_account(&window).unwrap().data;
-        let off_chain = (|| {
-            let mut w = Window::load(&mut model).ok()?;
+        let off_chain = (|| -> Result<(), ProgramError> {
+            let now = UnixTimestamp::new(now);
+            let mut w = Window::load(&mut model).map_err(core)?;
             let spec = *w.spec();
             let u = pyth_lite::PriceUpdate::load(owner.as_array(), &data, &spec.receiver_program())
-                .ok()?;
+                .map_err(pyth)?;
             let req = pyth_lite::PriceRequirements::new(spec.feed(), None, spec.max_conf().get());
-            let p = u.verify(&req, UnixTimestamp::new(now)).ok()?;
+            let p = u.verify(&req, now).map_err(pyth)?;
             let accepted = accept_print(
                 &spec,
                 &RawPrint {
                     feed: p.feed_id(),
-                    price: i64::try_from(p.price().get()).ok()?,
+                    price: i64::try_from(p.price().get())
+                        .map_err(|_| core(varswap_core::CoreError::PriceOutOfRange))?,
                     conf: p.conf(),
                     exponent: p.exponent(),
                     publish_time: p.publish_time(),
                     prev_publish_time: p.prev_publish_time(),
                 },
             )
-            .ok()?;
-            w.sample_accepted(&accepted, UnixTimestamp::new(now), &LnKernel)
-                .ok()
+            .map_err(core)?;
+            w.sample_accepted(&accepted, now, &LnKernel).map_err(core)?;
+            Ok(())
         })();
 
         let before = svm.get_account(&window).unwrap().data;
@@ -174,10 +183,26 @@ fuzz_target!(|steps: Vec<Step<'_>>| {
         );
         let on_chain = svm.send_transaction(tx);
         let after = svm.get_account(&window).unwrap().data;
-        match (on_chain.is_ok(), off_chain.is_some()) {
-            (true, true) => assert_eq!(after, model, "window differs from the off-chain path"),
-            (false, false) => assert_eq!(after, before, "a failed sample wrote the window"),
-            (c, o) => panic!("on chain ok = {c}, off chain ok = {o}: {on_chain:?}"),
+        match (on_chain, off_chain) {
+            (Ok(_), Ok(())) => assert_eq!(after, model, "window differs from the off-chain path"),
+            (Err(f), Err(ProgramError::Custom(want))) => {
+                match f.err {
+                    TransactionError::InstructionError(0, InstructionError::Custom(got))
+                        if got == want => {}
+                    other => panic!(
+                        "on chain {other:?}, off chain Custom({want})\n{}",
+                        f.meta.pretty_logs()
+                    ),
+                }
+                assert_eq!(after, before, "a failed sample wrote the window");
+            }
+            (Err(f), Err(e)) => panic!("off chain error is not a custom code: {e:?}; on chain {:?}", f.err),
+            (Ok(_), Err(e)) => panic!("on chain accepted, off chain rejected with {e:?}"),
+            (Err(f), Ok(())) => panic!(
+                "on chain rejected with {:?}, off chain accepted\n{}",
+                f.err,
+                f.meta.pretty_logs()
+            ),
         }
     }
 });

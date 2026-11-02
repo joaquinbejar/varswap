@@ -14,7 +14,8 @@ set -u
 CONTROLS="pyth_partial_accepted:pyth_update
 swap_long_collateral_rounds_down:swap_conservation
 window_writes_before_refill_check:window_sample
-program_skips_confidence:sample_ix"
+program_skips_confidence:sample_ix
+program_aborts_on_forged_owner:sample_ix"
 
 root=$(pwd)
 tc=${FUZZ_TOOLCHAIN:-nightly}

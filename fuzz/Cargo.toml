@@ -31,6 +31,12 @@ solana-keypair = "3.1"
 solana-signer = "3.0"
 solana-transaction = "4.3"
 bytemuck = "1.25"
+# sample_ix compares typed errors: the transaction error (litesvm's, solana-transaction-error
+# 3.4 over solana-instruction-error 2.5, both already in the lock through litesvm) against the
+# program's ProgramError::Custom code.
+solana-transaction-error = "3.4"
+solana-instruction-error = "2.5"
+pinocchio = { version = "0.11", default-features = false }
 
 # Its own workspace, so the repository workspace never builds it on stable.
 [workspace]
