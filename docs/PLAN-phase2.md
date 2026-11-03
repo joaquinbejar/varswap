@@ -90,7 +90,8 @@ Each value carries:
   - `insufficient`: `usable < ceil(k / 2)` (for `1d`: no usable window); no value, only the
     exclusions.
 
-The `ceil(k / 2)` threshold is a proposal for the coordinator (open question 1).
+The `ceil(k / 2)` threshold is decision 1 below; a `partial` value always shows its count of
+usable days.
 
 ### Records for the series
 
@@ -266,8 +267,9 @@ generated JSON validates in CI.
 
 ## P4. Publication
 
-Proposal (open question 2), GitHub Pages from a scheduled workflow, because the repos are
-public, the generator needs no secret, and the coordinator asked for no backend:
+GitHub Pages from a scheduled workflow (decision 2 below): the repos are public, the generator
+needs no secret, and there is no backend. The workflow runs on GitHub hosted runners and adds
+no required check:
 
 - `.github/workflows/dashboard.yml`: daily at 18:30Z (after the roll window's end at 17:00Z,
   plus margin for the last bucket and finality), and on `workflow_dispatch`. It checks out
@@ -295,11 +297,12 @@ P2a is a document and needs a ruling, so it starts first and runs beside P1. P3a
 runs after P1 and does not block P3 or P4 (the index reads version 1 and version 2 windows
 alike).
 
-## Open questions for the coordinator
+## Coordinator decisions (2026-11-03, bus #51643)
 
-1. Index threshold: publish a `k` day value when at least `ceil(k / 2)` days are usable
-   (`partial`), else `insufficient`. Alternative: require all `k` days.
-2. Publication on GitHub Pages from a scheduled workflow (P4), with the local LaunchAgent as
-   fallback; or local only.
-3. Keeper fees: whether a program change is acceptable in principle on devnet before the ADR
-   (it affects P2b's size only, not the ADR).
+1. Index threshold: a `k` day value is published when at least `ceil(k / 2)` days are usable,
+   labeled `partial` with its count of usable days; below that it is `insufficient` (P1).
+2. Publication on GitHub Pages from a scheduled workflow (public devnet reads, no secrets),
+   with the local LaunchAgent as fallback. It runs on GitHub hosted runners, so no required
+   checks are added (P4).
+3. A program change for keeper fees is acceptable on devnet if the ADR justifies it, with a
+   verifiable build, an upgrade drill and codex review (P2).
