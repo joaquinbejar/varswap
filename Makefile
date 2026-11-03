@@ -82,6 +82,11 @@ lint:
 lint-control:
 	@sh lint-control/check.sh
 
+# Offline test of scripts/window-roll.sh: mock admin, agents and launchctl; no RPC.
+.PHONY: roll-test
+roll-test:
+	@sh scripts/tests/window-roll.sh
+
 # Rustdoc with every warning denied
 .PHONY: doc
 doc:
@@ -141,7 +146,7 @@ fuzz-control:
 
 # Pre-push checks: must pass with zero warnings
 .PHONY: pre-push
-pre-push: fmt-check lint lint-control sbf sbf-control test doc
+pre-push: fmt-check lint lint-control roll-test sbf sbf-control test doc
 
 .PHONY: clean
 clean:

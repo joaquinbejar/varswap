@@ -432,6 +432,8 @@ the limiter files in the lock directory, never writes them), and an unreadable c
 again every `--realert` seconds while active, and prints `resolved` when it clears.
 `scripts/keeper-agent.sh` (with `VARSWAP_KEEPER_ARGS="--standby-lag 600"` for a standby) and
 `scripts/watch-agent.sh` run them as macOS LaunchAgents.
+`scripts/window-roll.sh` keeps a daily series of windows going (devnet): an idempotent job that
+creates the next window and points those agents at the open ones.
 
 ### Testing and Benchmarks
 
