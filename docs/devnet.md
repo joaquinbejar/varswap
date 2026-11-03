@@ -314,7 +314,9 @@ so the series needs a new one every day. `scripts/window-roll.sh run` creates th
 starts at the next 17:00Z if `show-window` reports it not found. It then reinstalls the keeper
 and watcher agents with the series' open windows, but only when one of them is missing from
 the agent's plist. The window address is derived from the spec, so every run is idempotent.
-If any read fails, the run stops before it sends anything. `scripts/window-roll.sh install
+It reads all three windows before it sends anything, so a read that fails stops the run with
+nothing changed; `make roll-test` (part of `make pre-push`) checks this offline with a mock
+`varswap-admin`, failing each read in turn. `scripts/window-roll.sh install
 <name>` runs it under launchd at load and every 6 hours.
 
 | Agent | Configuration |

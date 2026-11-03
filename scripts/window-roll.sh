@@ -12,12 +12,14 @@
 # buckets every VARSWAP_ROLL_INTERVAL seconds; its address is derived from that spec, so `run`
 # is idempotent. One run:
 #
-# 1. Creates the window starting at the next anchor (the first VARSWAP_ROLL_HOUR:00 UTC after
-#    now) only if `show-window` reports it not found. Any other read error stops the run
-#    before anything is sent, so a flaky RPC never creates a duplicate spec.
-# 2. Collects the series' windows that exist and are not finalized: the one starting at the
-#    next anchor and the two before it (the running window, and yesterday's while it can
-#    still be backfilled).
+# 1. Reads the state of the series' last three windows: the one starting at the next anchor
+#    (the first VARSWAP_ROLL_HOUR:00 UTC after now) and the two before it (the running window,
+#    and yesterday's while it can still be backfilled). Every read comes before anything is
+#    sent: a read error other than "not found" stops the run with nothing changed, so a flaky
+#    RPC never creates a duplicate spec nor restarts an agent.
+# 2. Creates the window starting at the next anchor only if `show-window` reported it not
+#    found. The open windows are the three that exist and are not finalized, counting the one
+#    just created.
 # 3. If VARSWAP_ROLL_KEEPER names a keeper agent, reinstalls it (scripts/keeper-agent.sh) with
 #    those windows when one of them is missing from its plist or the agent is not loaded. The
 #    same for VARSWAP_ROLL_WATCH and scripts/watch-agent.sh. An agent that already lists every
@@ -50,6 +52,11 @@
 #   VARSWAP_ROLL_WATCH              watcher agent name (optional)
 #   VARSWAP_ROLL_WATCH_ARGS         watcher options, e.g. `--payer <address> --grace 600`
 #   VARSWAP_WATCH_ALERT_CMD         the watcher's alert command (optional)
+#   VARSWAP_ADMIN_BIN               varswap-admin (default target/release/varswap-admin)
+#
+# For the offline test (scripts/tests/window-roll.sh) only, never written into the plist:
+#   VARSWAP_ROLL_SCRIPTS            directory of keeper-agent.sh and watch-agent.sh (default
+#                                   this checkout's scripts/)
 
 set -eu
 
@@ -66,6 +73,11 @@ home=${VARSWAP_KEEPER_HOME:-$HOME/.local/share/varswap-keeper}
 day=86400
 
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
+
+# Unix time $1 as an ISO 8601 UTC timestamp (BSD date, then GNU date).
+iso() {
+	date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ
+}
 
 # Fails unless $1 is a decimal number.
 number() {
@@ -114,6 +126,7 @@ run() {
 	[ "$interval" -gt 0 ] && [ $((day % interval)) -eq 0 ] ||
 		{ echo "VARSWAP_ROLL_INTERVAL must divide 86400" >&2 && exit 2; }
 	admin=${VARSWAP_ADMIN_BIN:-$root/target/release/varswap-admin}
+	scripts=${VARSWAP_ROLL_SCRIPTS:-$root/scripts}
 	[ -x "$admin" ] || { echo "$admin missing: cargo build --release -p varswap-cli" >&2 && exit 1; }
 	dry=${VARSWAP_ROLL_DRY_RUN:-0}
 
@@ -122,25 +135,10 @@ run() {
 	[ "$next" -gt "$now" ] || next=$((next + day))
 
 	addr=$(address "$next")
-	st=$(state "$addr") || exit 1
-	if [ "$st" = missing ]; then
-		if [ "$dry" = 1 ]; then
-			log "dry run: would create $addr starting $(date -u -r "$next" +%Y-%m-%dT%H:%M:%SZ)"
-		else
-			# create-window prints the address and the signature; nothing else is kept.
-			out=$("$admin" create-window --feed "$feed" --start "$next" --end $((next + day)) \
-				--interval "$interval" 2>&1) || {
-				log "create-window $addr failed: $(printf '%s\n' "$out" | grep -E '^(Error|error)' | head -1)" >&2
-				exit 1
-			}
-			log "created $addr starting $(date -u -r "$next" +%Y-%m-%dT%H:%M:%SZ): $(printf '%s\n' "$out" | grep -E '^confirmed ' | head -1)"
-		fi
-	else
-		log "next window $addr exists"
-	fi
-
+	# Every read comes before the first transaction or reinstall.
+	next_st=$(state "$addr") || exit 1
 	open=
-	for start in $((next - 2 * day)) $((next - day)) "$next"; do
+	for start in $((next - 2 * day)) $((next - day)); do
 		w=$(address "$start")
 		st=$(state "$w") || exit 1
 		case $st in
@@ -148,9 +146,24 @@ run() {
 		*) open="$open $w" ;;
 		esac
 	done
-	# The next window counts as open in a dry run even though it was not created.
-	if [ "$dry" = 1 ]; then
-		case $open in *"$addr"*) ;; *) open="$open $addr" ;; esac
+
+	if [ "$next_st" = missing ]; then
+		if [ "$dry" = 1 ]; then
+			log "dry run: would create $addr starting $(iso "$next")"
+		else
+			# create-window prints the address and the signature; nothing else is kept.
+			out=$("$admin" create-window --feed "$feed" --start "$next" --end $((next + day)) \
+				--interval "$interval" 2>&1) || {
+				log "create-window $addr failed: $(printf '%s\n' "$out" | grep -E '^(Error|error)' | head -1)" >&2
+				exit 1
+			}
+			log "created $addr starting $(iso "$next"): $(printf '%s\n' "$out" | grep -E '^confirmed ' | head -1)"
+		fi
+		# Just created (or, in a dry run, would be): open.
+		open="$open $addr"
+	else
+		log "next window $addr exists"
+		[ "$next_st" = finalized ] || open="$open $addr"
 	fi
 	open=${open# }
 	log "open windows: ${open:-none}"
@@ -166,7 +179,7 @@ run() {
 			: "${VARSWAP_ROLL_KEEPER_KEYPAIR:?set VARSWAP_ROLL_KEEPER_KEYPAIR}"
 			# shellcheck disable=SC2086 # every window is a checked base58 address
 			VARSWAP_KEYPAIR=$VARSWAP_ROLL_KEEPER_KEYPAIR VARSWAP_KEEPER_ARGS=${VARSWAP_ROLL_KEEPER_ARGS:-} \
-				sh "$root/scripts/keeper-agent.sh" install "$VARSWAP_ROLL_KEEPER" $open
+				sh "$scripts/keeper-agent.sh" install "$VARSWAP_ROLL_KEEPER" $open
 			log "reinstalled $k"
 		fi
 	fi
@@ -178,7 +191,7 @@ run() {
 			log "dry run: would reinstall $v"
 		else
 			# shellcheck disable=SC2086 # options are word-split on purpose; watch-agent.sh checks them
-			sh "$root/scripts/watch-agent.sh" install "$VARSWAP_ROLL_WATCH" ${VARSWAP_ROLL_WATCH_ARGS:-} $open
+			sh "$scripts/watch-agent.sh" install "$VARSWAP_ROLL_WATCH" ${VARSWAP_ROLL_WATCH_ARGS:-} $open
 			log "reinstalled $v"
 		fi
 	fi
