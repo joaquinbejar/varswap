@@ -38,10 +38,10 @@ solana-commitment-config = "3.1"
 solana-hash = "4.6"
 bytemuck = { version = "1.25", default-features = false, features = ["derive"] }
 proptest = "1.12"
-# optfix 0.2.0 (crates.io; the only breaking change from 0.1 is `PricingError` becoming
-# `#[non_exhaustive]`, which `kernel_err`'s `as u8` conversion does not match on; same `ln`
-# and `wide::mul_shr` results as 0.1.0).
-optfix = "0.2"
+# optfix 0.3 (crates.io). Its breaking changes, `#[non_exhaustive]` `Greeks`/`Priced` and the
+# added rho, are in pricing code varswap does not use; `ln`, `wide::mul_shr` and `U256` are the
+# same source as 0.2.1, so the kernel's results and CU are unchanged.
+optfix = "0.3"
 # Pinocchio 0.11 generation: decided exception to the latest-stable rule (docs/PLAN.md).
 pinocchio = { version = "0.11", default-features = false, features = ["cpi"] }
 pinocchio-system = "0.6"
