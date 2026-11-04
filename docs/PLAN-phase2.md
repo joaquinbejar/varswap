@@ -126,7 +126,8 @@ committed or published files. `varswap-admin series-sync <series.json> --out <di
     `verify-window --rpc` on it, and writes it only if it verifies. Absent transaction history
     is never `missing`, because the account exists: an export that would be labelled `unknown`
     is not written during the first 3 days after `end` (the day stays `open`, in case the node
-    is only lagging), and is written as `unknown` after that;
+    is only lagging), and is written as `unknown` after that. The 3 days is an explicit retry
+    policy, not a claim about how long the RPC retains history;
   - any other state: writes nothing. The day stays `open` and is retried by the next run, since
     it can still fill or degrade;
 - leaves existing records untouched (a final window and a finalized absence past `end` never
@@ -320,10 +321,17 @@ shows a pending section as such.
   URL-encodes the cell into `{}` and makes a link only when the template starts with
   `https://`; anything else renders as plain text. All section content is rendered as text,
   never as HTML, because a section is another repo's data.
+- `links[].href` follows the same allowlist: it is a link only if it is an absolute `https://`
+  URL, or a relative path with no scheme, no leading `/` or `\`, and no `.` or `..` segment
+  (percent-encoded ones included), resolved against the section's own URL. So `javascript:`,
+  `data:` and protocol-relative `//host` hrefs render as plain text. The schema carries the same
+  rule, and the shell enforces it regardless, since it does not validate at run time.
 - The shell has no row limit and scrolls long tables; a section should keep a table to about 100
   rows and link the rest (metalbook caps at about 60).
-- `sections.json` (owned by the shell) lists the sections: `[{ "repo", "url" }]`, each URL
-  the repo's published `section.json`.
+- `sections.json` (owned by the shell) lists the sections:
+  `[{ "repo", "url", "max_age_hours" }]`, each URL the repo's published `section.json`. The
+  deadline lives here and not in the section, so a section cannot extend its own. All three
+  sections publish daily, so each starts at 48 (one missed run is tolerated, two are not).
 - A JSON Schema for version 1 in `docs/dashboard/section-1.schema.json`; each repo validates
   its own output against it in its CI (a test with the `serde_json` already in the workspace,
   no new dependency).
@@ -336,10 +344,24 @@ shows a pending section as such.
   its `generated_at`, its status and an error card when a section cannot be fetched or does
   not parse (one broken section never blanks the page). It reads nothing but those JSON
   files: no RPC from the browser.
+- Freshness is computed by the shell: `status.level` is written by a generator, so if the
+  workflow stops running, the file keeps saying `ok` forever. With the browser's clock, a section
+  whose `generated_at` is older than its `max_age_hours`, or more than 1 h in the future, is
+  shown as `stale` with its age, whatever `status.level` says; otherwise the shell shows the
+  section's own level. An unparsable `generated_at` is an error card.
 - Works from a local directory (`python3 -m http.server` or any static server; a `file://`
   page cannot fetch, which the README says) and from GitHub Pages.
-- Test: `make dashboard-check` validates every fixture section against the schema and checks
-  that `index.html` references only files under `site/`; CI runs it.
+- The link and freshness decisions are pure functions in `site/dashboard.js`, taking the clock
+  as an argument.
+- Test: `make dashboard-check` validates the fixture sections against the schema, checks that
+  `index.html` references only files under `site/`, and runs those functions with `node --test`
+  (no npm package); CI runs it. Fixtures include:
+  - a section with `status.level` `ok` and a `generated_at` past its deadline, shown `stale`, and
+    one just inside it, shown `ok`; a `generated_at` in the future, shown `stale`;
+  - a section with `javascript:`, `data:`, `//host`, `\\host`, `/abs`, `../up` and
+    `%2e%2e/up` in `links[].href` and in `href_columns`: this fixture must fail the schema, and
+    each value renders as plain text, while `https://` (in both) and a plain relative path (in
+    `links` only) become links.
 
 ### P3c. The varswap section
 
