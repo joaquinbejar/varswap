@@ -7,6 +7,7 @@
 //! in-process one.
 
 pub mod error;
+pub mod index;
 pub mod record;
 pub mod rpc;
 

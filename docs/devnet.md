@@ -358,3 +358,37 @@ agents and the standby payer:
   for.
 
 The test agents were then uninstalled; `AGpn…` stays pending and unsampled.
+
+## Realized volatility index (from 2026-11-04)
+
+`docs/index/series/sol-usd-hourly.json` defines the daily series above as an index
+(`docs/PLAN-phase2.md`, P1). Day `d` is the window starting `d` days after 2026-11-02 17:00Z, at
+its derived address: there is no list of windows.
+
+```sh
+varswap-admin --url "$SOLANA_URL" series-sync docs/index/series/sol-usd-hourly.json --out <dir>
+varswap-admin vol-index docs/index/series/sol-usd-hourly.json --records <dir>
+varswap-admin vol-index docs/index/series/sol-usd-hourly.json --records <dir> --history --json
+```
+
+`series-sync` reads the chain only and sends nothing; it needs no keypair and makes no Hermes
+request. It paces itself at `--rate` requests per second (default 1) and retries transport errors
+and HTTP errors such as a 429 up to four times, after 5, 10, 20 and 40 s. When those run out it
+stops with a non zero exit, keeps what it wrote, and a later run resumes. One window costs about
+60 requests. A host shares its public RPC allowance by IP, so on the Studio this competes with the
+keeper and the watcher: do not raise the rate there. Measured on the keeper's own history on
+2026-11-04: 240 of 240 `getTransaction` calls returned at one request every 3 s, while on the same
+day calls about 0.4 s apart returned no result after the first 10.
+
+`<dir>` holds one file per day: an I7 record, or a `missing` stub for a window nobody created. A
+day with no file is `open`. `sync.json` holds `as_of`, the finalized clock of the last run; it
+never moves backwards, and `vol-index` takes its default day from it, so an open last day shows as
+`insufficient` and not as yesterday's value.
+
+The labels are in `docs/PLAN-phase2.md`. Two details the plan leaves open, as implemented:
+
+- A period reaching before the series started counts those days in `before_series`, so `7d` and
+  `30d` are `partial` or `insufficient` until the series is that old.
+- A record labelled `unknown` is written only after 3 days past `end`, and it is checked offline
+  only: what is missing is the history an `--rpc` check would compare against. It enters no value.
+  The 3 days is a retry policy, not a claim about how long an RPC retains history.

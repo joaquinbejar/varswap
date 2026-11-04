@@ -193,3 +193,85 @@ fn test_arguments_checked_before_signing() {
         assert!(parse_feed_id(bad).is_err(), "{bad}");
     }
 }
+
+fn clock_account(owner: &str, unix_timestamp: i64) -> serde_json::Value {
+    let mut data = vec![0u8; 40];
+    data[32..40].copy_from_slice(&unix_timestamp.to_le_bytes());
+    json!({
+        "lamports": 1, "owner": owner, "executable": false, "rentEpoch": 0, "space": 40,
+        "data": [base64::engine::general_purpose::STANDARD.encode(&data), "base64"],
+    })
+}
+
+const SYSVAR: &str = "Sysvar1111111111111111111111111111111111111";
+
+fn snapshot_of(value: serde_json::Value) -> Result<varswap_cli::index::Snapshot, CliError> {
+    use varswap_cli::index::SeriesCluster;
+    let mut mocks = HashMap::new();
+    mocks.insert(
+        RpcRequest::GetMultipleAccounts,
+        json!({"context": {"slot": 77}, "value": value}),
+    );
+    Cluster::with_client(RpcClient::new_mock_with_mocks("succeeds", mocks)).snapshot(&PROGRAM)
+}
+
+#[test]
+fn test_snapshot_reads_an_explicit_null_with_its_clock() {
+    let s = snapshot_of(json!([null, clock_account(SYSVAR, 1_793_725_260)])).unwrap();
+    assert_eq!((s.slot, s.clock), (77, 1_793_725_260));
+    assert_eq!(s.account, None);
+}
+
+#[test]
+fn test_snapshot_reads_an_account_with_its_clock() {
+    let owner = Address::new_from_array([7; 32]);
+    let account = json!({
+        "lamports": 1, "owner": owner.to_string(), "executable": false, "rentEpoch": 0, "space": 4,
+        "data": [base64::engine::general_purpose::STANDARD.encode([1u8, 2, 3, 4]), "base64"],
+    });
+    let s = snapshot_of(json!([account, clock_account(SYSVAR, 5)])).unwrap();
+    assert_eq!(s.clock, 5);
+    assert_eq!(s.account.unwrap().data, [1, 2, 3, 4]);
+}
+
+#[test]
+fn test_snapshot_without_a_real_clock_is_an_error_not_a_null() {
+    for value in [
+        json!([null, null]),
+        json!([null]),
+        json!([null, clock_account("11111111111111111111111111111111", 5)]),
+    ] {
+        let e = snapshot_of(value.clone()).expect_err("a snapshot with no clock");
+        assert!(matches!(e, CliError::Rpc(_)), "{value}: {e}");
+    }
+}
+
+#[test]
+fn test_transport_errors_are_transient_and_a_nodes_answers_are_not() {
+    use solana_rpc_client_api::client_error::{Error, ErrorKind};
+    use solana_rpc_client_api::request::{RpcError, RpcResponseErrorData};
+
+    let io = Error::from(ErrorKind::Io(std::io::Error::other("reset")));
+    assert!(matches!(
+        client_error(&io, "http://x"),
+        CliError::RpcTransient(_)
+    ));
+    let response = |data| {
+        Error::from(ErrorKind::RpcError(RpcError::RpcResponseError {
+            code: -32005,
+            message: "m".to_owned(),
+            data,
+        }))
+    };
+    let behind = response(RpcResponseErrorData::NodeUnhealthy {
+        num_slots_behind: Some(9),
+    });
+    assert!(matches!(
+        client_error(&behind, "http://x"),
+        CliError::RpcTransient(_)
+    ));
+    assert!(matches!(
+        client_error(&response(RpcResponseErrorData::Empty), "http://x"),
+        CliError::Rpc(_)
+    ));
+}

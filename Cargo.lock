@@ -6568,6 +6568,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
  "clap",
+ "optfix",
  "serde_json",
  "solana-address 2.7.0",
  "solana-commitment-config",

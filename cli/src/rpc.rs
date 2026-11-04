@@ -16,6 +16,7 @@ use solana_transaction::Transaction;
 use varswap_sdk::Address;
 
 use crate::error::CliError;
+use crate::index::{SeriesCluster, Snapshot};
 use crate::{AccountInfo, Rpc};
 
 /// What replaces a URL in an error.
@@ -145,7 +146,7 @@ impl crate::record::History for Cluster {
     }
 }
 
-/// An RPC client error as a [`CliError::Rpc`]: its message with the program logs of a failed
+/// An RPC client error as a [`CliError::Rpc`] or [`CliError::RpcTransient`]: its message with the program logs of a failed
 /// preflight simulation, the whole text redacted (a provider may echo its URL or key anywhere,
 /// logs included). `solana-rpc-client` 4.3 already renders the logs in the message
 /// (`; N log messages:` and one line per log); a log line is appended only if the message does
@@ -165,7 +166,25 @@ pub fn client_error(e: &ClientError, url: &str) -> CliError {
             }
         }
     }
-    CliError::Rpc(redact(&message, url))
+    let text = redact(&message, url);
+    if is_transient(e) {
+        CliError::RpcTransient(text)
+    } else {
+        CliError::Rpc(text)
+    }
+}
+
+/// Whether a later attempt can get past `e`: the transport, HTTP status errors such as a 429
+/// (the client has already retried those itself), or a node that says it is behind. A node's
+/// other answers are final.
+fn is_transient(e: &ClientError) -> bool {
+    match e.kind() {
+        ErrorKind::Io(_) | ErrorKind::Reqwest(_) => true,
+        ErrorKind::RpcError(RpcError::RpcResponseError { data, .. }) => {
+            matches!(data, RpcResponseErrorData::NodeUnhealthy { .. })
+        }
+        _ => false,
+    }
 }
 
 /// Shortest URL path segment or query value treated as a possible secret.
@@ -222,4 +241,48 @@ pub fn redact(text: &str, url: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// The `Clock` sysvar.
+const CLOCK_SYSVAR: Address =
+    Address::from_str_const("SysvarC1ock11111111111111111111111111111111");
+/// The sysvar owner.
+const SYSVAR_OWNER: Address =
+    Address::from_str_const("Sysvar1111111111111111111111111111111111111");
+/// `unix_timestamp` in `Clock`: after `slot`, `epoch_start_timestamp`, `epoch` and
+/// `leader_schedule_epoch`, 8 bytes each.
+const CLOCK_UNIX_TIMESTAMP_AT: usize = 32;
+
+impl SeriesCluster for Cluster {
+    fn snapshot(&mut self, address: &Address) -> Result<Snapshot, CliError> {
+        let r = self
+            .client
+            .get_multiple_accounts_with_commitment(
+                &[*address, CLOCK_SYSVAR],
+                CommitmentConfig::finalized(),
+            )
+            .map_err(|e| self.error(&e))?;
+        let [account, clock] = r.value.as_slice() else {
+            return Err(CliError::Rpc(
+                "getMultipleAccounts: not two entries".to_owned(),
+            ));
+        };
+        let clock = clock
+            .as_ref()
+            .filter(|c| c.owner == SYSVAR_OWNER)
+            .and_then(|c| {
+                let end = CLOCK_UNIX_TIMESTAMP_AT.checked_add(8)?;
+                c.data.get(CLOCK_UNIX_TIMESTAMP_AT..end)?.try_into().ok()
+            })
+            .map(i64::from_le_bytes)
+            .ok_or_else(|| CliError::Rpc("getMultipleAccounts: no clock".to_owned()))?;
+        Ok(Snapshot {
+            slot: r.context.slot,
+            clock,
+            account: account.as_ref().map(|a| AccountInfo {
+                owner: a.owner,
+                data: a.data.clone(),
+            }),
+        })
+    }
 }

@@ -128,7 +128,9 @@ fn base58(s: &str) -> Option<Vec<u8>> {
 }
 
 /// Lowercase hex.
-fn hex(bytes: &[u8]) -> String {
+/// Lowercase hex.
+#[must_use]
+pub fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
     let mut s = String::with_capacity(bytes.len().saturating_mul(2));
     for b in bytes {
@@ -630,6 +632,18 @@ pub fn export<H: History>(
     }))
 }
 
+/// A bundle's account bytes.
+///
+/// # Errors
+///
+/// `CliError::Record` if they are missing or not hex.
+pub fn account_bytes(b: &Value) -> Result<Vec<u8>, CliError> {
+    b.pointer("/account/data_hex")
+        .and_then(Value::as_str)
+        .and_then(unhex)
+        .ok_or_else(|| bad("account data is not hex"))
+}
+
 /// The parts of a bundle.
 struct Parsed {
     program_id: Address,
@@ -654,11 +668,7 @@ fn parse_bundle(b: &Value) -> Result<Parsed, CliError> {
     if addr("/account/owner")? != program_id {
         return Err(bad("the account is not owned by the program"));
     }
-    let data = b
-        .pointer("/account/data_hex")
-        .and_then(Value::as_str)
-        .and_then(unhex)
-        .ok_or_else(|| bad("account data is not hex"))?;
+    let data = account_bytes(b)?;
     let records = b
         .pointer("/history/transactions")
         .and_then(Value::as_array)
