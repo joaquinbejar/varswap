@@ -69,9 +69,9 @@ each window's `sum_sq` covers its own 24 returns.
   the direction only needs to be stated and fixed.
 - Usable means: a finalized window whose record verifies (offline, and with `--rpc` when the
   record is first exported), with label `complete` or `compressed`. A `degraded` window has
-  no realized variance (it settles as `Unwind`), an `unknown` one has an unproven history, and
-  a missing day (no window at the derived address, or not final yet) has nothing; none of
-  them enters the sums.
+  no realized variance (it settles as `Unwind`), an `unknown` one has an unproven history, a
+  `missing` day has no window at the derived address, and an `open` day has no final record
+  yet; none of them enters the sums.
 - So `RV_k` is the variance per unit time of the days that are usable, not of the period: a
   missing day is excluded, never interpolated or counted as zero.
 
@@ -107,19 +107,33 @@ usable days.
 The index reads I7 records, not the raw chain, so every value can be recomputed offline from
 committed or published files. `varswap-admin series-sync <series.json> --out <dir>`:
 
-- derives the addresses of days `0` to `D`, the last day whose `end` has passed. It does not
-  wait for `end + backfill_deadline`: a full window finalizes at `end`, and waiting would delay
-  every 1d value by the 24 h deadline;
-- for each day without a record in `<dir>`, reads the account (finalized commitment):
-  - no account: writes a `missing` stub (address, day, the read slot). This is permanent
-    because `create_window` requires `start > now` (`WindowSpec::check_creatable`), and `D`'s
-    start has passed;
+- reads the finalized `Clock` sysvar and takes its `unix_timestamp` as `as_of`; the local clock
+  is never used. It derives the addresses of days `0` to `D`, the last day with
+  `end ≤ as_of`. It does not wait for `end + backfill_deadline`: a full window finalizes at
+  `end`, and waiting would delay every 1d value by the 24 h deadline;
+- for each day without a record in `<dir>`, sends one `getMultipleAccounts([window, Clock])` at
+  finalized commitment, so the account and the clock come from the same snapshot:
+  - the window entry is an explicit `null` and the snapshot's clock is `≥ end` of that day:
+    writes a `missing` stub (address, day, the snapshot's slot and clock). This is permanent:
+    `create_window` requires `start > now` on the chain's clock
+    (`WindowSpec::check_creatable`), that finalized snapshot is already past `end > start`, and
+    no instruction closes a window;
+  - the window entry is `null` and the snapshot's clock is `< end`: a node behind the tip proves
+    nothing, whatever the local time. Writes nothing; the day stays `open`;
+  - an RPC error, a malformed response or a missing clock entry is not a `null`: it goes to the
+    bounded retry below and never produces a stub;
   - a final state (`finalized`, `degraded`): exports the record (`export-window`), runs
-    `verify-window --rpc` on it, and writes it only if it verifies;
-  - any other state: writes nothing. The day is reported as `open` and retried by the next
-    run, since it can still fill or degrade;
-- leaves existing records untouched (a final window and a passed start never change), so a
-  rerun does no RPC beyond the account reads of the days still lacking a record;
+    `verify-window --rpc` on it, and writes it only if it verifies. Absent transaction history
+    is never `missing`, because the account exists: an export that would be labelled `unknown`
+    is not written during the first 3 days after `end` (the day stays `open`, in case the node
+    is only lagging), and is written as `unknown` after that;
+  - any other state: writes nothing. The day stays `open` and is retried by the next run, since
+    it can still fill or degrade;
+- leaves existing records untouched (a final window and a finalized absence past `end` never
+  change), so a rerun does no RPC beyond the reads of the days still lacking a record;
+- rewrites `<dir>/sync.json` (the series, `as_of`, its slot, and the days left `open` with the
+  reason of each). It is state, not a record, and `as_of` never moves backwards: a run answered
+  by a lagging node keeps the larger value already there;
 - paces its RPC calls and retries, see below.
 
 ### RPC budget
@@ -145,14 +159,23 @@ records the actual response). So:
 
 ### CLI and files
 
-- `varswap-admin vol-index <series.json> --records <dir> [--day D] [--json]`: verifies every
-  record offline, then prints the 1d, 7d and 30d values for day `D` (default the last day with
-  a record): `RV`, `σ`, the label and the quality fields.
-- `varswap-admin vol-index … --history --json`: one entry per day, for the dashboard and the
-  published file.
+- `varswap-admin vol-index <series.json> --records <dir> [--as-of T] [--day D] [--json]`:
+  verifies every record offline, then prints the 1d, 7d and 30d values for day `D`: `RV`, `σ`,
+  the label and the quality fields. `D` defaults to the last day with `end ≤ as_of`, never to
+  the last day with a record: otherwise a value for yesterday would hide that today is
+  excluded. `as_of` comes from `--as-of` or `sync.json`; with neither the command fails, and a
+  `--day` later than `as_of` allows is rejected.
+- A day in `0..=D` with no file is reported as excluded with reason `open`, in the values and in
+  the history, with no permanent file behind it. So a last day still open gives a `1d` of
+  `insufficient` with that exclusion, not the previous day's value.
+- `vol-index` rejects a `missing` stub whose recorded clock is before its day's `end`, so the
+  rule above is checked offline too.
+- `varswap-admin vol-index … --history --json`: one entry per day from `0` to `D`, for the
+  dashboard and the published file.
 - Published files: `index/sol-usd-hourly/records/<day>-<address>.json` (the records and
-  stubs) and `index/sol-usd-hourly/index.json` (the history, with the series spec, the
-  generator commit, `generated_at` and the newest slot read). Where they live is P4.
+  stubs), `index/sol-usd-hourly/sync.json`, and `index/sol-usd-hourly/index.json` (the history,
+  with the series spec, the generator commit, `generated_at`, `as_of` and the newest slot read).
+  Where they live is P4.
 
 ### Tests
 
@@ -165,7 +188,17 @@ records the actual response). So:
 - Negative controls: a record that fails offline verify is rejected by `vol-index` (not
   silently excluded: the command fails and names the file); a record of a window outside the
   series spec (wrong address for its day) is rejected; a `missing` stub for a day whose
-  account exists fails `series-sync --check` against a fake cluster.
+  account exists fails `series-sync --check` against a fake cluster; a `missing` stub with a
+  clock before its `end` is rejected offline.
+- Default day: yesterday has a record and the last ended day is open gives `D` = that day, `1d`
+  `insufficient` with reason `open`, and the same in `--history`; the same with a last day
+  `missing`; a directory with no record and an `as_of` past three days reports three `open`
+  days, with no value; no `sync.json` and no `--as-of` fails; a `--day` past `as_of` fails.
+- Snapshot context: a fake cluster answering `null` with a clock before `end` writes no stub and
+  leaves the day `open`, then the next run with a clock past `end` writes it; an RPC error and a
+  response without the clock entry write no stub; an export that would be `unknown` writes
+  nothing within 3 days of `end` and writes `unknown` after them; a lagging run does not move
+  `as_of` back.
 - `series-sync` against the fake cluster used by `cli/tests/record.rs`: a missing day, an open
   day (no record, retried), a window finalized before its deadline (recorded at once), a
   degraded day, an idempotent rerun with zero exports, and a cluster answering 429 until the
