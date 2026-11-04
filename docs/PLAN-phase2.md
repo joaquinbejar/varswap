@@ -252,8 +252,11 @@ change, or adopt "no on chain fee").
 (`joaquin/s-31f741ef51c4`) and quotebook (`joaquin/s-e3613763b15f`) sessions on the bus and
 merged only with both ACKs. Metalbook ACKed on 2026-11-04 (bus #52648), with `href_columns`
 added below; it publishes at `https://joaquinbejar.github.io/metalbook/metalbook/section.json`
-daily at 22:30Z and vendors the schema at a commit varswap gives it once merged. Quotebook's
-ACK is pending.
+daily at 22:30Z and vendors the schema at a commit varswap gives it once merged. Quotebook ACKed
+the same day (bus #52690) with no objections. A section is not yet in quotebook's own phase 2
+scope, so its entry in `sections.json` stays pending until it confirms the URL (expected
+`https://joaquinbejar.github.io/quotebook/quotebook/section.json`, daily at 23:00Z); the shell
+shows a pending section as such.
 
 ```json
 {
