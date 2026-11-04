@@ -1,0 +1,152 @@
+:root {
+  color-scheme: light;
+  --surface-page: #f9f9f7;
+  --surface-1: #fcfcfb;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #6d6c67;
+  --hairline: #e3e2dd;
+  --grid: #e1e0d9;
+  --badge: #f0efec;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #6250d6;
+  --series-8: #e34948;
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-critical: #d03b3b;
+  --status-neutral: #6d6c67;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --surface-page: #0d0d0d;
+    --surface-1: #1a1a19;
+    --text-primary: #f0efec;
+    --text-secondary: #c3c2b7;
+    --text-muted: #9c9b92;
+    --hairline: #33332f;
+    --grid: #2c2c2a;
+    --badge: #2c2c29;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --series-8: #e66767;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-page: #0d0d0d;
+  --surface-1: #1a1a19;
+  --text-primary: #f0efec;
+  --text-secondary: #c3c2b7;
+  --text-muted: #9c9b92;
+  --hairline: #33332f;
+  --grid: #2c2c2a;
+  --badge: #2c2c29;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-8: #e66767;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 24px 16px 48px;
+  background: var(--surface-page);
+  color: var(--text-primary);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.page-head, main { max-width: 1040px; margin-inline: auto; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+.page-head p { margin: 0 0 24px; color: var(--text-secondary); }
+
+.section {
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.section-head { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: baseline; }
+.section-head h2 { font-size: 17px; margin: 0; }
+.section-meta { color: var(--text-muted); font-size: 13px; margin: 4px 0 0; overflow-wrap: anywhere; }
+.status-message { margin: 8px 0 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+
+.status { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+.status-mark {
+  display: inline-grid; place-items: center;
+  width: 16px; height: 16px; border-radius: 50%;
+  color: #fff; font-size: 11px; line-height: 1;
+}
+.status-mark[data-level="ok"] { background: var(--status-good); }
+.status-mark[data-level="warn"] { background: var(--status-warning); color: #0b0b0b; }
+.status-mark[data-level="stale"], .status-mark[data-level="error"] { background: var(--status-critical); }
+.status-mark[data-level="pending"] { background: var(--status-neutral); }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-top: 16px; }
+.tile { border: 1px solid var(--hairline); border-radius: 8px; padding: 12px; min-width: 0; }
+.tile-label { color: var(--text-secondary); font-size: 13px; overflow-wrap: anywhere; }
+.tile-value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.tile-value[data-empty] { color: var(--text-muted); }
+.tile-foot { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; color: var(--text-muted); font-size: 12px; margin-top: 4px; }
+.badge { background: var(--badge); color: var(--text-secondary); border-radius: 4px; padding: 1px 6px; font-size: 12px; overflow-wrap: anywhere; }
+
+.chart { margin-top: 20px; position: relative; min-width: 0; }
+.chart svg { display: block; width: 100%; touch-action: pan-y; }
+.chart svg:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+.chart-title { font-weight: 600; font-size: 14px; margin: 0 0 6px; overflow-wrap: anywhere; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--text-secondary); margin: 0 0 6px; padding: 0; list-style: none; }
+.legend li { display: inline-flex; gap: 6px; align-items: center; min-width: 0; overflow-wrap: anywhere; }
+.key { display: inline-block; flex: none; width: 14px; height: 2px; border-radius: 1px; }
+.axis-text { fill: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.end-label { fill: var(--text-secondary); font-size: 12px; }
+.grid-line { stroke: var(--grid); stroke-width: 1; }
+.crosshair { stroke: var(--text-muted); stroke-width: 1; }
+
+.tooltip {
+  position: absolute; z-index: 1; pointer-events: none; max-width: 280px;
+  background: var(--surface-1); border: 1px solid var(--hairline); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; box-shadow: 0 2px 8px rgb(0 0 0 / 0.15);
+}
+.tooltip-time { color: var(--text-muted); margin-bottom: 4px; }
+.tooltip-row { display: flex; gap: 6px; align-items: center; overflow-wrap: anywhere; }
+.tooltip-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+.tooltip-name { color: var(--text-secondary); }
+
+details { margin-top: 8px; }
+summary { cursor: pointer; color: var(--text-secondary); font-size: 13px; }
+.table-title { font-weight: 600; font-size: 14px; margin: 20px 0 6px; overflow-wrap: anywhere; }
+.table-scroll { overflow: auto; max-height: 420px; border: 1px solid var(--hairline); border-radius: 8px; margin-top: 6px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+thead th { position: sticky; top: 0; background: var(--surface-1); color: var(--text-secondary); font-weight: 600; }
+tbody tr:last-child td { border-bottom: 0; }
+
+.links { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 16px 0 0; padding: 0; list-style: none; font-size: 14px; }
+.links li { min-width: 0; overflow-wrap: anywhere; }
+a { color: var(--series-1); }
+
+.error-text { margin: 8px 0 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+
+@media (forced-colors: active) {
+  .key { background: CanvasText !important; }
+}

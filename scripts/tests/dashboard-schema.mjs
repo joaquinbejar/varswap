@@ -185,6 +185,15 @@ test("links[].href follows the allowlist", () => {
   }
 });
 
+test("the shell's fixtures: valid except the dangerous one", () => {
+  for (const name of ["section-ok.json", "section-old-ok.json", "section-future.json"]) {
+    assert.deepEqual(validate(read(`fixtures/${name}`), schema), [], name);
+  }
+  const errors = validate(read("fixtures/section-dangerous-links.json"), schema);
+  assert.ok(errors.some((e) => e.includes("$.links[")), errors.join("; "));
+  assert.ok(errors.some((e) => e.includes("href_columns")), errors.join("; "));
+});
+
 test("an unknown schema keyword is an error, not a pass", () => {
   assert.notDeepEqual(validate(1, { "not-a-keyword": true }), []);
 });
