@@ -1,24 +1,22 @@
 # ADR 0002: per-sample keeper fees
 
-- Status: proposed (2026-11-04). Reviewed by codex, then ruled on by the SOLANA-PROJECTS
-  coordinator; no code before that ruling.
+- Status: accepted (2026-11-04): **no on-chain fee**. Ruled by the SOLANA-PROJECTS coordinator
+  (bus #53621). The program does not change.
 - Context documents: [`docs/PLAN-phase2.md`](../PLAN-phase2.md) P2a, [`docs/PLAN.md`](../PLAN.md)
   4.1 (canonical prints), [ADR 0001](0001-degraded-unwind.md),
   [`docs/audit-scope.md`](../audit-scope.md).
 
 ## Summary
 
-Recommendation: an optional fee vault, a new program-owned account per (window, funder), paid
-per `sample` call that fills a bucket, to the update's `write_authority`. No window changes
-layout, so there is no `WINDOW_VERSION` 2, and live windows can be funded as they are.
+The operator keeps paying the keeper's costs, recorded off chain, and `sample` stays as it is. The
+reasons, from the ruling: there are no mainnet plans and no third-party keeper to pay, the cost is
+negligible (630,000 lamports a day for the series), and on devnet a fee would prove only mechanics
+while reopening the audit scope pinned at `6731d34`.
 
-Cost does not justify this. The series costs 630,000 lamports a day, which an operator can pay
-indefinitely. The reason is that today a third party has no way to be paid for keeping a window
-alive, and this adds one without touching the settlement path. "No on-chain fee" is the real
-alternative, and it is the right ruling if a second keeper is not a goal before the audit.
-
-This ADR departs from the plan's sketch in two places, both from reading the code: the plan
-assumed `WINDOW_VERSION` 2, and it assumed a copier could take a keeper's posted update.
+This ADR proposed an optional fee vault. It is recorded below as the option to revisit if a
+third-party keeper becomes a goal, because that design is the part worth keeping: it differs from
+the plan's sketch in two places, both from reading the code. The plan assumed `WINDOW_VERSION` 2,
+and it assumed a copier could take a keeper's posted update.
 
 ## Cost to cover
 
@@ -39,7 +37,7 @@ so it costs 25 × 25,000 + 5,000 = **630,000 lamports**, about 0.23 SOL a year f
 keeper also needs 2,367,280 lamports of float while a print is in flight. Priority fees were zero
 on devnet; mainnet would add them. Hermes access is a separate cost that no on-chain fee can see.
 
-## The facts that shape the design
+## The facts that shape any fee design
 
 - `sample` reads no signer: `accounts` is `[window, price_update, ..]` and the rest are ignored
   (`program/src/processor.rs`, `sample`). The SDK sends exactly two accounts.
@@ -60,6 +58,20 @@ on devnet; mainnet would add them. Hermes access is a separate cost that no on-c
   a window takes at most `N + 1` successful `sample` calls: 25 for the series.
 
 ## Decision
+
+**No on-chain fee.** Nothing changes in the program, the SDK or the keeper. The operator's cost is
+the table above, and `docs/PLAN-phase2.md` P2b is dropped.
+
+What this gives up is stated plainly: `sample` stays permissionless, so anyone can keep a window
+alive, but a third party has no way to be paid for it without trusting the operator.
+
+## The option to revisit: a fee vault
+
+Not adopted, and no code exists. If a third-party keeper becomes a goal, start from this design:
+an optional program-owned account per (window, funder), paid per `sample` call that fills a bucket,
+to the update's `write_authority`. No window changes layout, so there is no `WINDOW_VERSION` 2, and
+live windows could be funded as they are. The ruling came while codex was reviewing this design,
+so treat it as a proposal, not as an approved design.
 
 ### Who funds it
 
@@ -109,7 +121,7 @@ vault and returns everything to the funder. Windows keep having no close instruc
 vault closes. A funder who wants a refund from a window nobody finalized can call the
 permissionless `finalize` themselves.
 
-## Abuse and failure
+### Abuse and failure
 
 - **A caller who omits the vault.** The bucket is filled and nobody is paid. The caller paid the
   whole cost and the keeper is spared it, so nothing is lost but the keeper's revenue. A keeper
@@ -133,7 +145,7 @@ permissionless `finalize` themselves.
 - **Draining.** A vault pays only on a call that filled a bucket, so it pays at most
   `(N + 1) × fee_per_call`, and only the funder can take the rest.
 
-## Compatibility
+### Compatibility
 
 - Window, swap and feed layouts, `WINDOW_VERSION`, the bucket bitmap, `sum_sq`, `realized_var` and
   settlement do not change. The index reads every window as today.
@@ -147,34 +159,37 @@ permissionless `finalize` themselves.
 - `sample`'s cost grows by the checks and the transfer. This is unmeasured until P2b, and the
   posting transaction's compute limit is rechecked then.
 
-## Alternatives rejected
+### Alternatives to the vault, if a fee is ever wanted
 
 | Alternative | Why not |
 | --- | --- |
-| **No on-chain fee** | Simplest, and costs 630,000 lamports a day. Rejected only because a third party can never be paid without trusting the operator. It stays the right ruling if that is not a goal. |
 | Pool inside the window (`WINDOW_VERSION` 2) | The fee is not in the seeds, so the first creator of an address fixes it and anyone can squat a canonical window at fee zero. Putting it in the seeds splits one spec into many windows and breaks the series' derivation. It needs a new loader branch in audited core code, a stored creator, and cannot fund live windows. |
 | Swap openers pay at `open_swap` | The series has no swaps, so the index would stay unfunded, and it adds a path to the most sensitive instruction. |
 | Pay per bucket | Pays `m` times for one post, and pays most during an outage. |
 | Pay the transaction's signer | `sample` would need a signer, and whoever copies an open update takes the fee. |
 | Fee decaying with lateness | A late canonical print still rescues the window, and the print is the same. No reason to pay less for it. |
 
-## Consequences
+### What adopting it would take
 
 - Three program changes: `fund_fees`, `reclaim_fees`, and the optional branch in `sample`. The
-  audit scope, pinned at `6731d34`, reopens for them, and the build hash changes. The line count
-  is unknown until written; `docs/audit-scope.md` gets the recount.
-- P2b changes accordingly: no `WINDOW_VERSION` 2; the drill funds a live window's vault and shows
-  fees paid equal to fills, a caller naming the wrong recipient rejected, a sample with an empty
-  vault succeeding, and one reclaim. The "copier gets no fee" test becomes the wrong recipient
-  test, because a copier cannot reach an update this keeper closes in the same transaction.
+  audit scope, pinned at `6731d34`, reopens for them, and the build hash changes.
+- A verifiable build, a devnet upgrade and an upgrade drill: funding a live window's vault, fees
+  paid equal to fills, a caller naming the wrong recipient rejected, a sample with an empty vault
+  succeeding, and one reclaim.
 - `keeper` gains an optional vault argument, and `varswap-watch` an alert for a vault that cannot
-  cover the remaining prints. The roll job funds each new window only if the ruling asks for it.
-- **What devnet cannot show.** SOL is free there, so the drill proves the mechanics and not that
-  a fee attracts a second keeper. Nothing here is evidence of demand.
+  cover the remaining prints.
+- **What devnet cannot show.** SOL is free there, so a drill proves the mechanics and not that a
+  fee attracts a second keeper. Nothing here is evidence of demand.
+
+## Consequences
+
+- No program change, no new build hash, and the audit scope stays at `6731d34`.
+- The keeper's payer keeps bearing the cost above, and the watcher's balance alert stays the
+  control on it.
 
 ## What would reopen this
 
-- A second keeper operator appears, or nobody does by the mainnet readiness review. In the second
-  case the instructions stay dormant or are removed before the audit is pinned.
-- Measured `sample` cost pushes the posting transaction near its compute limit.
-- Mainnet priority fees make the fee model per call inadequate.
+- A third-party keeper becomes a goal, or mainnet plans appear. Then the vault above is the starting
+  point, and its added `sample` cost has to be measured first: it is unmeasured, and the posting
+  transaction's compute limit has to be rechecked.
+- Mainnet priority fees, if mainnet happens, would change the cost table.

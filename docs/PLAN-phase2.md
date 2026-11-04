@@ -252,7 +252,10 @@ code. It must answer, with numbers:
 *Done when* codex approves the ADR and the coordinator rules on it (adopt with a program
 change, or adopt "no on chain fee").
 
-### P2b. Implementation (only if P2a adopts a program change)
+### P2b. Implementation: dropped
+
+The coordinator ruled "no on-chain fee" (decision 4 below, `docs/adr/0002-keeper-fees.md`), so this
+milestone does not run. What it would have taken, kept for if the ruling is ever reopened:
 
 - `varswap-core` and `program`: the fee fields and the transfer in `sample` (and the funding
   and refund paths the ADR picks), checked arithmetic, explicit rounding, a negative test per
@@ -404,9 +407,7 @@ no required check:
 ## Order and dependencies
 
 P2a is a document and needs a ruling, so it starts first and runs beside P1. P3a starts with P1
-(the format does not depend on the numbers). P3b and P3c need P1. P4 needs P3. P2b, if adopted,
-runs after P1 and does not block P3 or P4 (the index reads version 1 and version 2 windows
-alike).
+(the format does not depend on the numbers). P3b and P3c need P1. P4 needs P3. P2b is dropped.
 
 ## Coordinator decisions (2026-11-03, bus #51643)
 
@@ -417,3 +418,6 @@ alike).
    checks are added (P4).
 3. A program change for keeper fees is acceptable on devnet if the ADR justifies it, with a
    verifiable build, an upgrade drill and codex review (P2).
+4. No on-chain keeper fee (2026-11-04, bus #53621): no mainnet plans, no third-party keeper to pay,
+   a negligible cost, and a devnet fee would prove only mechanics while reopening the audit scope
+   pinned at `6731d34`. The fee vault design stays in ADR 0002 as the option to revisit (P2).
