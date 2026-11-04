@@ -250,7 +250,10 @@ change, or adopt "no on chain fee").
 
 `docs/dashboard.md` defines `section.json`, version 1, proposed to the metalbook
 (`joaquin/s-31f741ef51c4`) and quotebook (`joaquin/s-e3613763b15f`) sessions on the bus and
-merged only with both ACKs:
+merged only with both ACKs. Metalbook ACKed on 2026-11-04 (bus #52648), with `href_columns`
+added below; it publishes at `https://joaquinbejar.github.io/metalbook/metalbook/section.json`
+daily at 22:30Z and vendors the schema at a commit varswap gives it once merged. Quotebook's
+ACK is pending.
 
 ```json
 {
@@ -276,6 +279,13 @@ merged only with both ACKs:
   `status.level` is `ok`, `warn` or `stale`; `quality` is free text per repo, shown as a
   badge. Unknown fields are ignored, so a repo can add fields without breaking the shell; a
   breaking change bumps the version and the shell renders each version it knows.
+- A table may carry `href_columns`, a map from column name to a URL template with `{}`, for
+  example `{ "address": "https://explorer.solana.com/address/{}?cluster=devnet" }`. The shell
+  URL-encodes the cell into `{}` and makes a link only when the template starts with
+  `https://`; anything else renders as plain text. All section content is rendered as text,
+  never as HTML, because a section is another repo's data.
+- The shell has no row limit and scrolls long tables; a section should keep a table to about 100
+  rows and link the rest (metalbook caps at about 60).
 - `sections.json` (owned by the shell) lists the sections: `[{ "repo", "url" }]`, each URL
   the repo's published `section.json`.
 - A JSON Schema for version 1 in `docs/dashboard/section-1.schema.json`; each repo validates
