@@ -49,10 +49,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/toolchains
       - name: pre-push without test
-        run: make $MAKE_PINS fmt-check lint lint-control roll-test sbf sbf-control doc
+        run: make $MAKE_PINS fmt-check lint lint-control roll-test dashboard-check sbf sbf-control doc
       - name: the CI jobs cover make pre-push
         run: |
-          want="fmt-check lint lint-control roll-test sbf sbf-control test doc"
+          want="fmt-check lint lint-control roll-test dashboard-check sbf sbf-control test doc"
           got=$(sed -n 's/^pre-push: //p' Makefile)
           [ "$got" = "$want" ] || { echo "pre-push is '$got'; update this workflow's jobs"; exit 1; }
 
