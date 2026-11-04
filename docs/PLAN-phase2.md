@@ -64,7 +64,9 @@ each window's `sum_sq` covers its own 24 returns.
   `varswap-core`'s `LnKernel::annualize` on the summed raw `sum_sq` (checked `u128`
   addition), so `RV_1` of a finalized window equals the `realized_var` stored in its account
   byte for byte. The volatility is `σ_k = sqrt(RV_k)`, an integer square root in the kernel's
-  Q64.64 units rounded down, printed with 12 decimals; no floating point anywhere.
+  Q64.64 units, printed with 12 decimals; no floating point anywhere. Both roundings are down
+  (`annualize`, then the root), and the published value is an index with no payoff attached, so
+  the direction only needs to be stated and fixed.
 - Usable means: a finalized window whose record verifies (offline, and with `--rpc` when the
   record is first exported), with label `complete` or `compressed`. A `degraded` window has
   no realized variance (it settles as `Unwind`), an `unknown` one has an unproven history, and
@@ -79,9 +81,16 @@ Each value carries:
 
 - `days`: `k`; `usable`: the number of usable windows; `excluded`: per excluded day, its
   window address and reason (`degraded`, `unknown`, `missing`, `open`);
-- `missed_samples`: the buckets the series did not sample on time, summed over the usable
-  windows: in each compressed run of `m` buckets, `m − 1` of them (the print that filled
-  them came after their boundaries), plus the count and longest of the compressed runs;
+- `missed_samples`: the buckets of the period with no print of their own:
+  `compressed_buckets + empty_buckets`, each also reported apart. `compressed_buckets` sums
+  `m − 1` over the compressed runs of `m` buckets of the usable windows, with the count and the
+  longest run. A compressed run is an oracle gap, not a keeper failure: samples are canonical
+  (`docs/PLAN.md` 4.1), so one print crossing `m` boundaries fills all of them however promptly
+  it is posted. `empty_buckets` sums the unfilled buckets of the `degraded` days, which are
+  excluded from the value but counted here;
+- `late_samples`: the keeper's own record, separate because a late canonical sample changes
+  no price and no run. The `sample` events of the usable windows whose transaction block time
+  is more than 600 s (the watcher's `--grace`) after the boundary of their first bucket;
 - `label`:
   - `complete`: every day usable, every window `complete`;
   - `compressed`: every day usable, at least one compressed run;
@@ -98,14 +107,41 @@ usable days.
 The index reads I7 records, not the raw chain, so every value can be recomputed offline from
 committed or published files. `varswap-admin series-sync <series.json> --out <dir>`:
 
-- derives the addresses of days `0` to `D` (the last day whose `end + backfill_deadline` has
-  passed, so the window can no longer change);
-- for each day without a record in `<dir>`: reads the account (finalized commitment). Missing
-  account: writes a `missing` stub (address, day, the read slot). Otherwise exports the
-  record (`export-window`), runs `verify-window --rpc` on it, and writes it only if it
-  verifies;
-- leaves existing records untouched (a record of a final window never changes), so a rerun
-  does no RPC beyond the account reads of the days still lacking a record.
+- derives the addresses of days `0` to `D`, the last day whose `end` has passed. It does not
+  wait for `end + backfill_deadline`: a full window finalizes at `end`, and waiting would delay
+  every 1d value by the 24 h deadline;
+- for each day without a record in `<dir>`, reads the account (finalized commitment):
+  - no account: writes a `missing` stub (address, day, the read slot). This is permanent
+    because `create_window` requires `start > now` (`WindowSpec::check_creatable`), and `D`'s
+    start has passed;
+  - a final state (`finalized`, `degraded`): exports the record (`export-window`), runs
+    `verify-window --rpc` on it, and writes it only if it verifies;
+  - any other state: writes nothing. The day is reported as `open` and retried by the next
+    run, since it can still fill or degrade;
+- leaves existing records untouched (a final window and a passed start never change), so a
+  rerun does no RPC beyond the account reads of the days still lacking a record;
+- paces its RPC calls and retries, see below.
+
+### RPC budget
+
+`cli/src/rpc.rs` has no pacing and no retry today. One daily window is about 26 `getTransaction`
+calls to export and as many to verify with `--rpc`, and a first run or a catch up multiplies
+that by the days pending. A read-only measurement on 2026-11-04 sent 40 `getTransaction` calls
+to the public devnet RPC about 0.4 s apart: the first 10 returned, the other 30 returned no
+result (the error body was not kept, so a rate limit is the likely cause, not a proven one; P1
+records the actual response). So:
+
+- the record commands get a fixed pace (default 1 request per second, configurable) and a
+  bounded retry with backoff on HTTP 429 and transport errors. An exhausted retry fails the
+  command with nothing written for that day, and a later run resumes; it never downgrades a
+  record to `unknown` because of throttling;
+- a host shares its public RPC allowance by IP, so a generator on the Studio competes with the
+  live keeper and watcher. This is one more reason the generator runs on a GitHub hosted runner
+  (P4); the LaunchAgent fallback uses the same pace and is not started during a catch up
+  without checking the watcher's `rpc` alerts;
+- transaction history on the public devnet RPC is not retained forever. A record exported after
+  its history is gone gets the honest label `unknown`, so `series-sync` runs daily from the
+  series' start and the records are kept once written (P4).
 
 ### CLI and files
 
@@ -123,14 +159,17 @@ committed or published files. `varswap-admin series-sync <series.json> --out <di
 - Exactness: `RV_1` of each committed record equals its account's `realized_var`; `RV_k` over
   synthetic records equals a direct recomputation of `Σ sum_sq × YEAR / Σ span`.
 - Labels: one test per label and per exclusion reason, the threshold edges (`k = 7`: 4 usable
-  is `partial`, 3 is `insufficient`), and `missed_samples` on a record with runs of 1, 3 and 5
-  buckets (expected 0 + 2 + 4).
+  is `partial`, 3 is `insufficient`), `missed_samples` on a record with runs of 1, 3 and 5
+  buckets (expected 0 + 2 + 4) plus a degraded day's empty buckets, and `late_samples` either
+  side of the 600 s grace.
 - Negative controls: a record that fails offline verify is rejected by `vol-index` (not
   silently excluded: the command fails and names the file); a record of a window outside the
   series spec (wrong address for its day) is rejected; a `missing` stub for a day whose
   account exists fails `series-sync --check` against a fake cluster.
 - `series-sync` against the fake cluster used by `cli/tests/record.rs`: a missing day, an open
-  day, a degraded day, an idempotent rerun with zero exports.
+  day (no record, retried), a window finalized before its deadline (recorded at once), a
+  degraded day, an idempotent rerun with zero exports, and a cluster answering 429 until the
+  retries run out (nothing written, exit non zero, the next run succeeds).
 
 *Done when* the tests pass, `series-sync` has produced the records of the series' finalized
 days on devnet, each verifies with `--rpc`, and `vol-index` prints the values for the latest
@@ -145,8 +184,10 @@ day with the expected labels (in the first days, `7d` and `30d` are `partial` or
 code. It must answer, with numbers:
 
 - **Cost to cover**: the measured cost of one sample on devnet from the keeper's logs and
-  `5MTV…`'s balance history: transaction fees of the post, sample and close transactions,
-  the encoded VAA and price update rent (reclaimed or not), per bucket and per day.
+  `5MTV…`'s balance history. First measurement (2026-11-04, 3 full cycles, to repeat on a
+  larger sample): 3 transactions per bucket, 25,000 lamports of fees (10,000 + 5,000 + 10,000),
+  about 600,000 per day for 24 buckets, plus 2,367,280 lamports of rent locked during the cycle
+  and returned at its end (net of the fees above).
 - **Who funds it**. Options: the window creator prepays at `create_window` (a fee per bucket
   times the bucket count, held in the window account above its rent or in a vault PDA);
   swap openers pay into the window's pool at `open_swap`; no on chain fee (the operator
@@ -161,8 +202,10 @@ code. It must answer, with numbers:
   may call `sample` with a `PriceUpdateV2` account somebody else posted, so a copier who only
   watches the mempool could take the fee of the keeper who paid for the post. Candidate rule:
   the fee goes to the update's `write_authority` (`pyth-lite` already decodes it,
-  `pyth-lite/src/update.rs`), so only the poster can be paid; the ADR checks this against the
-  receiver's rules (who may be write authority, whether it can be set to another key).
+  `pyth-lite/src/update.rs`), so only the poster can be paid. With this rule `sample` still
+  needs no signer: the recipient account is checked against the update, and a copier who sends
+  the transaction pays its fee and earns the poster the bucket fee. The ADR checks this against
+  the receiver's rules (who may be write authority, whether it can be set to another key).
 - **Layout and compatibility**: new fields mean `WINDOW_VERSION` 2; the loader must keep
   reading version 1 windows (the live series) with no fee; the bucket bitmap, `sum_sq` and
   settlement are unchanged. Account sizes and the 10,240 byte creation cap rechecked.
