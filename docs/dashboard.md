@@ -91,18 +91,36 @@ with `pending` is shown as such and not fetched, until its repo publishes and th
 
 ## The varswap section
 
-`scripts/dashboard.sh <out-dir>` writes the shell and this repo's section (`SOLANA_URL` defaults to
-devnet's public RPC; `cargo build --release -p varswap-cli` first). It holds no key, signs nothing
-and makes no Hermes request. A run from an empty directory took 2 min 13 s for two days at
-`series-sync`'s default rate, measured on 2026-11-04.
+`scripts/dashboard.sh <out-dir>` publishes the shell and this repo's section (`SOLANA_URL` defaults
+to devnet's public RPC; `cargo build --release -p varswap-cli` first). It holds no key, signs nothing
+and makes no Hermes request.
 
 ```text
-<out-dir>/index.html, dashboard.mjs, dashboard.css, sections.json
-<out-dir>/varswap/section.json
-<out-dir>/varswap/index/sol-usd-hourly/index.json     every day, the generator's commit and the time
-<out-dir>/varswap/index/sol-usd-hourly/sync.json
-<out-dir>/varswap/index/sol-usd-hourly/records/       the records, and sync.json as series-sync's state
+<out-dir>/current                   symlink to the published generation: serve or deploy this
+<out-dir>/generations/gen.XXXXXX/   the live generation, the one before it, and any being built
+<out-dir>/records/                  series-sync's state; a rerun resumes from what is here
+
+and in a generation:
+index.html, dashboard.mjs, dashboard.css, sections.json
+varswap/section.json
+varswap/index/sol-usd-hourly/index.json     every day, the generator's commit and the time
+varswap/index/sol-usd-hourly/sync.json
+varswap/index/sol-usd-hourly/records/       the records, and sync.json as series-sync's state
 ```
+
+**Publication** is one step. A generation is built and checked apart, and goes live when
+`scripts/dashboard-publish.mjs` renames the `current` symlink, which is atomic: a reader of `current`
+gets a whole generation, the new one or the old one, and never an index from one run with a section
+from another. It checks first that the shell, the section, each of the section's local links and each
+record the index lists are all there. A page fetched across that rename can still mix two generations
+over its separate requests; the next load corrects it.
+
+**One run at a time.** A run holds `<out-dir>/.lock` from before the sync to the end, and a second one
+exits non zero without touching anything. A lock whose process is gone (`kill -9`, a reboot) is taken
+over, and the next publication removes what that run left in `generations/`. If two runs take over
+the same dead lock at the same instant both can proceed; each still publishes a whole generation, and
+the later rename wins. A lock with no pid, or with a pid that is alive, is left alone: the error names
+it, so remove it by hand if no run is active.
 
 `scripts/dashboard-section.mjs` builds the section from `vol-index --history --json`:
 
@@ -115,9 +133,10 @@ and makes no Hermes request. A run from an empty directory took 2 min 13 s for t
   finished, including a `degraded` or `unknown` one; an `open` or `missing` day is not. Otherwise
   `warn` when the latest 7d value excludes a day, and the message names it. A day before the series
   started is not an exclusion: it makes the value `partial` or `insufficient` and leaves `ok`.
-- **Failure**: any failed step exits non zero and leaves the existing section and index as they
-  were, so the shell shows an old section as stale and not a partial one as fresh. So does a field
-  missing from the CLI's output, and a section the schema rejects.
+- **Failure**: any failure before the rename exits non zero and leaves `current` as it was, so the
+  shell shows an old section as stale and not a partial one as fresh. So does a field missing from
+  the CLI's output, and a section the schema rejects. Failing to remove an old generation after the
+  rename is only a warning: the new one is live.
 
 Exporting a window twice gives the same record except for `account.slot`, the slot of the read: on
 2026-11-04 a second export of days 0 and 1 differed in that line alone. Comparing a published record
@@ -134,7 +153,8 @@ with a new export has to ignore that field.
   that the page loads only its own files and puts nothing in as HTML.
 - `scripts/tests/dashboard-section.mjs`: the section generated from a real `vol-index` output of the
   first two devnet days (`docs/dashboard/fixtures/vol-index/`), each status, and
-  `scripts/dashboard.sh` end to end with a mock `varswap-admin`. `cli/tests/index.rs` keeps that
+  `scripts/dashboard.sh` end to end with a mock `varswap-admin`: a failure at each step, two writers
+  at once, a run killed mid way. `cli/tests/index.rs` keeps that
   output equal to what the CLI prints for those records, so the two cannot drift apart unseen.
 
 A sibling repo can vendor the schema at a commit and validate with whatever its CI already has.

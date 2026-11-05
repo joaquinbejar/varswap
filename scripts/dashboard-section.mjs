@@ -6,8 +6,9 @@
 //     --generated-at <time> --section <section.json> --index <index.json> --records <dir>
 //
 // It fails, and writes nothing, on an input with a field it needs missing or on a section the
-// schema rejects, so a change in the CLI's output cannot publish a section with holes in it.
-import { readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+// schema rejects, so a change in the CLI's output cannot publish a section with holes in it. It
+// writes into the generation being built; scripts/dashboard-publish.mjs is what makes it live.
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
@@ -142,9 +143,7 @@ export function buildIndex(history, { commit, generatedAt, records }) {
 }
 
 function writeJson(path, value) {
-  const tmp = `${path}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`);
-  renameSync(tmp, path);
+  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 function main() {
