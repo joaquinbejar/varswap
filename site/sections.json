@@ -1,0 +1,5 @@
+[
+  { "repo": "varswap", "url": "varswap/section.json", "max_age_hours": 48 },
+  { "repo": "metalbook", "url": "https://joaquinbejar.github.io/metalbook/metalbook/section.json", "max_age_hours": 48, "pending": true },
+  { "repo": "quotebook", "url": "https://joaquinbejar.github.io/quotebook/quotebook/section.json", "max_age_hours": 48, "pending": true }
+]

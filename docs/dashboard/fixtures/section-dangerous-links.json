@@ -1,0 +1,128 @@
+{
+  "schema": "solana-projects-dashboard/section/1",
+  "repo": "fixture-links",
+  "title": "fixture: dangerous links, this one must fail the schema",
+  "cluster": "devnet",
+  "generated_at": "2026-11-04T18:05:00Z",
+  "source": {
+    "commit": "0000000",
+    "slot": 1,
+    "program_ids": [
+      "BWqsaXvASrbErApP1ovz7vSvBLYqXGaMaZANEYf1xrB9"
+    ]
+  },
+  "status": {
+    "level": "ok",
+    "message": "<i>not italic</i>"
+  },
+  "tiles": [
+    {
+      "id": "rv-7d",
+      "label": "<script>alert(1)</script>",
+      "value": "0.512345678901",
+      "unit": "annualized",
+      "quality": "partial",
+      "note": "6/7 days"
+    },
+    {
+      "id": "rv-30d",
+      "label": "SOL/USD σ 30d",
+      "value": null,
+      "quality": "insufficient"
+    }
+  ],
+  "series": [
+    {
+      "id": "sigma-1d",
+      "label": "σ 1d",
+      "unit": "annualized",
+      "points": [
+        [
+          "2026-11-03T17:00:00Z",
+          "0.498765432109"
+        ],
+        [
+          "2026-11-04T17:00:00Z",
+          null
+        ]
+      ],
+      "quality": [
+        "complete",
+        "insufficient"
+      ]
+    }
+  ],
+  "tables": [
+    {
+      "id": "windows",
+      "columns": [
+        "day",
+        "address",
+        "label"
+      ],
+      "rows": [
+        [
+          "<img src=x onerror=alert(1)>",
+          "<b>bold</b>",
+          "a b/c?d=<e>"
+        ]
+      ],
+      "href_columns": {
+        "day": "javascript:alert(\"{}\")",
+        "address": "//example.com/{}",
+        "label": "https://example.com/{}"
+      }
+    }
+  ],
+  "links": [
+    {
+      "label": "javascript:alert(1)",
+      "href": "javascript:alert(1)"
+    },
+    {
+      "label": "JaVaScRiPt:alert(1)",
+      "href": "JaVaScRiPt:alert(1)"
+    },
+    {
+      "label": "data:text/html,<script>alert(1)</script>",
+      "href": "data:text/html,<script>alert(1)</script>"
+    },
+    {
+      "label": "http://example.com/",
+      "href": "http://example.com/"
+    },
+    {
+      "label": "//example.com/x",
+      "href": "//example.com/x"
+    },
+    {
+      "label": "/abs",
+      "href": "/abs"
+    },
+    {
+      "label": "\\\\example.com\\x",
+      "href": "\\\\example.com\\x"
+    },
+    {
+      "label": "../up",
+      "href": "../up"
+    },
+    {
+      "label": "%2e%2e/up",
+      "href": "%2e%2e/up"
+    },
+    {
+      "label": "a%2fb",
+      "href": "a%2fb"
+    },
+    {
+      "label": "https stays a link",
+      "href": "https://github.com/joaquinbejar/varswap"
+    },
+    {
+      "label": "relative stays a link",
+      "href": "records/"
+    }
+  ],
+  "a_field_the_shell_does_not_know": "ignored"
+}

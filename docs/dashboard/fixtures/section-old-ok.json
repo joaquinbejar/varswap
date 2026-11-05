@@ -1,0 +1,91 @@
+{
+  "schema": "solana-projects-dashboard/section/1",
+  "repo": "fixture-old",
+  "title": "fixture: old, its status still says ok",
+  "cluster": "devnet",
+  "generated_at": "2026-10-30T18:05:00Z",
+  "source": {
+    "commit": "0000000",
+    "slot": 1,
+    "program_ids": [
+      "BWqsaXvASrbErApP1ovz7vSvBLYqXGaMaZANEYf1xrB9"
+    ]
+  },
+  "status": {
+    "level": "ok",
+    "message": ""
+  },
+  "tiles": [
+    {
+      "id": "rv-7d",
+      "label": "SOL/USD σ 7d",
+      "value": "0.512345678901",
+      "unit": "annualized",
+      "quality": "partial",
+      "note": "6/7 days"
+    },
+    {
+      "id": "rv-30d",
+      "label": "SOL/USD σ 30d",
+      "value": null,
+      "quality": "insufficient"
+    }
+  ],
+  "series": [
+    {
+      "id": "sigma-1d",
+      "label": "σ 1d",
+      "unit": "annualized",
+      "points": [
+        [
+          "2026-11-03T17:00:00Z",
+          "0.498765432109"
+        ],
+        [
+          "2026-11-04T17:00:00Z",
+          null
+        ]
+      ],
+      "quality": [
+        "complete",
+        "insufficient"
+      ]
+    }
+  ],
+  "tables": [
+    {
+      "id": "windows",
+      "columns": [
+        "day",
+        "address",
+        "label"
+      ],
+      "rows": [
+        [
+          "2026-11-02",
+          "7ywXkV5Sa3fGHKhTAcdXqR5jkNg5J7pqvGQg1Hh6XjG1",
+          "complete"
+        ],
+        [
+          "2026-11-03",
+          null,
+          "open"
+        ]
+      ],
+      "href_columns": {
+        "address": "https://explorer.solana.com/address/{}?cluster=devnet"
+      }
+    }
+  ],
+  "links": [
+    {
+      "label": "records",
+      "href": "index/sol-usd-hourly/"
+    },
+    {
+      "label": "source",
+      "href": "https://github.com/joaquinbejar/varswap"
+    }
+  ],
+  "a_field_the_shell_does_not_know": "ignored"
+}

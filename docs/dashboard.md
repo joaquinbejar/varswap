@@ -67,28 +67,54 @@ validate at run time, so it enforces them itself.
 - a section whose `generated_at` is older than its `max_age_hours`, or more than 1 h in the
   future, is shown as `stale` with its age, whatever `status.level` says;
 - otherwise the shell shows the section's own level;
-- a `generated_at` that does not parse gives an error card.
+- a `generated_at` that does not parse, or is not a date in the calendar (`2026-02-31`), gives an
+  error card.
 
 ## `sections.json`
 
 The shell's list, owned by varswap:
 
 ```json
-[ { "repo": "varswap", "url": "varswap/section.json", "max_age_hours": 48 } ]
+[ { "repo": "varswap", "url": "varswap/section.json", "max_age_hours": 48 },
+  { "repo": "quotebook", "url": "https://…/section.json", "max_age_hours": 48, "pending": true } ]
 ```
 
 The deadline lives here and not in the section, so a section cannot extend its own. All three
-sections publish daily, so each starts at 48: one missed run is tolerated, two are not.
+sections publish daily, so each starts at 48: one missed run is tolerated, two are not. An entry
+with `pending` is shown as such and not fetched, until its repo publishes and the flag is removed.
 
 | Repo | Published at | Runs |
 | --- | --- | --- |
 | varswap | same site as the shell | 18:30Z |
-| metalbook | `https://joaquinbejar.github.io/metalbook/metalbook/section.json` | 22:30Z |
+| metalbook | pending its first run (from about November 16); `https://joaquinbejar.github.io/metalbook/metalbook/section.json` | 22:30Z |
 | quotebook | pending its confirmation; expected `https://joaquinbejar.github.io/quotebook/quotebook/section.json` | expected 23:00Z |
 
 ## Checking
 
-`make dashboard-check` runs `scripts/tests/dashboard-schema.mjs` with `node --test` and no npm
-package: the fixture is valid, each required field is required, wrong values fail, and every
-accepted and rejected form of `href` is tested. A sibling repo can vendor the schema at a commit
-and validate with whatever its CI already has.
+`make dashboard-check` runs two files with `node --test` and no npm package:
+
+- `scripts/tests/dashboard-schema.mjs`: the fixtures are valid, each required field is required,
+  wrong values fail, and every accepted and rejected form of `href` is tested.
+- `scripts/tests/dashboard-shell.mjs`: the shell's link and freshness decisions, against fixtures
+  with an old section that still says `ok`, a `generated_at` in the future, and dangerous links; and
+  that the page loads only its own files and puts nothing in as HTML.
+
+A sibling repo can vendor the schema at a commit and validate with whatever its CI already has.
+
+## The shell
+
+`site/`: `index.html`, `dashboard.mjs`, `dashboard.css` and `sections.json`, hand written, with no
+framework, build step, CDN, external font or analytics. The browser reads those files and the
+sections, and nothing else: no RPC. `dashboard.mjs` is a module so the same file loads in the page
+and in `node --test`. It needs a static server (`python3 -m http.server` in the site's directory, or
+GitHub Pages): a `file://` page cannot fetch. One section that fails to load or parse shows an error
+card, and the others are unaffected.
+
+A chart's values are checked before anything is drawn: a time that does not parse, a value that is
+not a finite decimal, or values too far apart or too small for an axis give the section's error card.
+A relative link must resolve to the section's own directory, on the protocol the section was served
+with: `https`, or `http` for a local server.
+
+Series with the same `unit` share one chart and one axis, up to 8 per chart; a section with more
+gets another chart, never a generated color. Each chart has a table view, so every value can be read
+without hovering. `status.level` is shown with its icon and label, never by color alone.
