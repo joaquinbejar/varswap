@@ -6,7 +6,6 @@ use clap::{Parser, Subcommand};
 use solana_instruction::Instruction;
 use solana_keypair::Keypair;
 use solana_signer::Signer;
-use varswap_cli::record;
 use varswap_cli::rpc::Cluster;
 use varswap_cli::{
     claim_ix, close_swap_ix, config_json, create_window_ix, describe, feed_config_json,
@@ -14,6 +13,7 @@ use varswap_cli::{
     read_swap, read_window, set_feed_config_ix, settle_swap_ix, submit, swap_json, window_json,
     CliError, Side,
 };
+use varswap_cli::{index, record};
 use varswap_sdk::ix::FeedParams;
 use varswap_sdk::pda::{self, WindowKey};
 use varswap_sdk::PYTH_RECEIVER;
@@ -158,6 +158,42 @@ enum Command {
         #[arg(required = true)]
         files: Vec<String>,
     },
+    /// Brings a directory of records up to date with a series (docs/PLAN-phase2.md, P1): one
+    /// file per ended, final day, and `sync.json`. Reads only; paced, with bounded retries.
+    SeriesSync {
+        /// The series file (docs/index/series/).
+        series: String,
+        /// The records directory.
+        #[arg(long)]
+        out: String,
+        /// Requests per second.
+        #[arg(long, default_value_t = 1)]
+        rate: u32,
+        /// Writes nothing: re-reads every `missing` stub and fails if its account exists.
+        #[arg(long)]
+        check: bool,
+    },
+    /// Prints the realized volatility index of a series from its records. Offline: every record
+    /// is verified against itself; nothing is read from a cluster.
+    VolIndex {
+        /// The series file (docs/index/series/).
+        series: String,
+        /// The records directory.
+        #[arg(long)]
+        records: String,
+        /// The chain time to read at, like 2026-11-04T18:00:00Z (default: sync.json's).
+        #[arg(long)]
+        as_of: Option<String>,
+        /// The day (default: the last day ended at as_of, not the last with a record).
+        #[arg(long, conflicts_with = "history")]
+        day: Option<u32>,
+        /// One entry per day instead of one day's values.
+        #[arg(long)]
+        history: bool,
+        /// JSON output.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// The terms that name a window.
@@ -222,6 +258,77 @@ fn read_record(file: &str) -> Result<serde_json::Value, CliError> {
     serde_json::from_str(&text).map_err(|e| CliError::Usage(format!("{file}: {e}")))
 }
 
+fn read_series(file: &str) -> Result<index::Series, CliError> {
+    index::Series::parse(&read_record(file)?)
+}
+
+/// One period of a day, in one line.
+fn value_line(v: &serde_json::Value) -> String {
+    let text = |k: &str| v.get(k).and_then(serde_json::Value::as_str).unwrap_or("-");
+    let number = |k: &str| v.get(k).and_then(serde_json::Value::as_u64).unwrap_or(0);
+    let line = format!(
+        "{:>3}d  sigma {:<20} rv {:<20} {:<12} usable {}/{}  missed {}  late {}",
+        number("days"),
+        text("sigma"),
+        text("rv"),
+        text("label"),
+        number("usable"),
+        number("days"),
+        number("missed_samples"),
+        number("late_samples"),
+    );
+    match number("late_unknown") {
+        0 => line,
+        unknown => format!("{line} (and {unknown} with no block time)"),
+    }
+}
+
+fn vol_index(
+    series: &str,
+    records: &str,
+    as_of: Option<&str>,
+    day: Option<u32>,
+    history: bool,
+    as_json: bool,
+) -> Result<(), CliError> {
+    let series = read_series(series)?;
+    let dir = std::path::Path::new(records);
+    let as_of = index::resolve_as_of(dir, as_of.map(index::parse_time).transpose()?)?;
+    if history {
+        return print_json(&index::history(&series, dir, as_of)?);
+    }
+    let out = index::index_at(&series, dir, as_of, day)?;
+    if as_json {
+        return print_json(&out);
+    }
+    match out.get("day").and_then(serde_json::Value::as_u64) {
+        None => println!("{}: no day has ended at as_of {as_of}", series.id),
+        Some(d) => {
+            let start = out.get("start").and_then(serde_json::Value::as_str);
+            println!("{} day {d} (from {})", series.id, start.unwrap_or("?"));
+            let values = out.get("values").and_then(serde_json::Value::as_array);
+            for v in values.into_iter().flatten() {
+                println!("{}", value_line(v));
+                let excluded = v.get("excluded").and_then(serde_json::Value::as_array);
+                for e in excluded.into_iter().flatten() {
+                    println!(
+                        "      excluded: day {} {}",
+                        e.get("day").unwrap_or(&serde_json::Value::Null),
+                        e.get("reason")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("?"),
+                    );
+                }
+                let before = v.get("before_series").and_then(serde_json::Value::as_u64);
+                if let Some(n) = before.filter(|n| *n > 0) {
+                    println!("      {n} days before the series started");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn run(cli: Cli) -> Result<(), CliError> {
     // Offline commands: no cluster, no program id.
     match &cli.command {
@@ -244,6 +351,32 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 println!("{}", record::table_row(&read_record(f)?, name)?);
             }
             return Ok(());
+        }
+        Command::VolIndex {
+            series,
+            records,
+            as_of,
+            day,
+            history,
+            json,
+        } => return vol_index(series, records, as_of.as_deref(), *day, *history, *json),
+        Command::SeriesSync {
+            series,
+            out,
+            rate,
+            check,
+        } => {
+            let series = read_series(series)?;
+            let pace = index::Pace::per_second(*rate)?;
+            let cluster = Cluster::new(required(&cli.url, "--url")?);
+            let mut paced = index::Paced::new(cluster, pace, std::thread::sleep);
+            let dir = std::path::Path::new(out);
+            if *check {
+                let checked = index::check_stubs(&mut paced, &series, dir)?;
+                println!("{checked} missing stubs checked: each account is still absent");
+                return Ok(());
+            }
+            return print_json(&index::series_sync(&mut paced, &series, dir)?);
         }
         _ => {}
     }
@@ -325,7 +458,9 @@ fn run(cli: Cli) -> Result<(), CliError> {
             );
             Ok(())
         }
-        Command::WindowTable { .. } => Ok(()),
+        Command::WindowTable { .. } | Command::VolIndex { .. } | Command::SeriesSync { .. } => {
+            Ok(())
+        }
         Command::InitConfig { collateral_mint } => {
             let signer = signer()?;
             let instruction = init_config_ix(

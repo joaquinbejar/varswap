@@ -18,6 +18,10 @@ pub enum CliError {
     /// the program logs. Everything from the node is untrusted text, redacted as a whole.
     #[error("RPC: {0}")]
     Rpc(String),
+    /// As [`CliError::Rpc`], for a failure a later attempt can get past: a transport error, an
+    /// HTTP error such as a 429 after the client's own retries, or a node reporting it is behind.
+    #[error("RPC: {0}")]
+    RpcTransient(String),
     /// A required account does not exist.
     #[error("account {0} not found")]
     AccountNotFound(String),
