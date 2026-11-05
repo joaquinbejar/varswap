@@ -451,6 +451,41 @@ fn write_json(path: &Path, v: &Value) -> Result<(), CliError> {
         .map_err(|e| bad(format!("{}: {e}", path.display())))
 }
 
+/// Writes a file that must not exist: the record of a day is never rewritten. A hard link either
+/// creates the name or fails, so two writers cannot both succeed, whatever `series_sync`'s lock
+/// did or did not exclude.
+fn write_new_json(path: &Path, v: &Value) -> Result<(), CliError> {
+    let tmp = path.with_extension("json.tmp");
+    let text = serde_json::to_string_pretty(v).map_err(|e| bad(e.to_string()))?;
+    std::fs::write(&tmp, format!("{text}\n"))
+        .map_err(|e| bad(format!("{}: {e}", path.display())))?;
+    let linked = std::fs::hard_link(&tmp, path);
+    let removed = std::fs::remove_file(&tmp);
+    match linked {
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(bad(format!(
+            "{}: already exists, not overwritten",
+            path.display()
+        ))),
+        Err(e) => Err(bad(format!("{}: {e}", path.display()))),
+        Ok(()) => removed.map_err(|e| bad(format!("{}: {e}", path.display()))),
+    }
+}
+
+/// One `series_sync` per directory, for the whole run, so `sync.json` cannot move backwards and a
+/// day cannot be written twice. The lock is on the directory, so no file is left to publish, and
+/// the system drops it when the process ends, however it ends.
+fn lock_dir(dir: &Path) -> Result<std::fs::File, CliError> {
+    let handle = std::fs::File::open(dir).map_err(|e| bad(format!("{}: {e}", dir.display())))?;
+    match handle.try_lock() {
+        Ok(()) => Ok(handle),
+        Err(std::fs::TryLockError::WouldBlock) => Err(bad(format!(
+            "{}: another series-sync is running",
+            dir.display()
+        ))),
+        Err(std::fs::TryLockError::Error(e)) => Err(bad(format!("{}: {e}", dir.display()))),
+    }
+}
+
 /// Why a day has no file yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OpenReason {
@@ -460,6 +495,8 @@ enum OpenReason {
     SnapshotBeforeEnd,
     /// The export would be `unknown` and the retry period has not passed.
     HistoryUnproven,
+    /// The export's read of the account came from behind the snapshot that proved it final.
+    StaleRead,
 }
 
 impl OpenReason {
@@ -468,6 +505,7 @@ impl OpenReason {
             Self::NotFinal => "not_final",
             Self::SnapshotBeforeEnd => "snapshot_before_end",
             Self::HistoryUnproven => "history_unproven",
+            Self::StaleRead => "stale_read",
         }
     }
 }
@@ -484,23 +522,18 @@ fn window_final(data: &[u8]) -> Result<bool, CliError> {
         .map_err(|e| bad(format!("not a valid window: {e:?}")))
 }
 
-fn stub(
-    series: &Series,
-    day: u32,
-    address: &Address,
-    snapshot: &Snapshot,
-) -> Result<Value, CliError> {
+fn stub(series: &Series, day: u32, slot: u64, clock: i64) -> Result<Value, CliError> {
     Ok(json!({
         "version": STUB_VERSION,
         "kind": "missing",
         "cluster": series.cluster,
         "program_id": series.program_id.to_string(),
-        "window": address.to_string(),
+        "window": series.address(day)?.to_string(),
         "day": day,
         "start": series.start(day)?,
         "end": series.end(day)?,
-        "slot": snapshot.slot,
-        "clock": snapshot.clock,
+        "slot": slot,
+        "clock": clock,
     }))
 }
 
@@ -519,13 +552,24 @@ fn sync_day<C: SeriesCluster>(
         if snapshot.clock < end {
             return Ok(Outcome::Open(OpenReason::SnapshotBeforeEnd));
         }
-        write_json(path, &stub(series, day, &address, &snapshot)?)?;
+        write_new_json(path, &stub(series, day, snapshot.slot, snapshot.clock)?)?;
         return Ok(Outcome::Written("missing".to_owned()));
     };
     if !window_final(&account.data)? {
         return Ok(Outcome::Open(OpenReason::NotFinal));
     }
     let bundle = record::export(c, &series.program_id, &address, &series.cluster)?;
+    // The export read the account again, maybe from another node, so everything that was true of
+    // the snapshot is checked once more on the bytes that would be written. A file is permanent
+    // (`series_sync` skips a day that has one), so a stale read must leave none.
+    let read_slot = bundle
+        .pointer("/account/slot")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| bad("the export has no slot"))?;
+    if read_slot < snapshot.slot || !window_final(&record::account_bytes(&bundle)?)? {
+        return Ok(Outcome::Open(OpenReason::StaleRead));
+    }
+    load_record(series, day, &bundle, &series.file_name(day)?)?;
     let label = bundle
         .pointer("/derived/label")
         .and_then(Value::as_str)
@@ -538,13 +582,12 @@ fn sync_day<C: SeriesCluster>(
         if snapshot.clock < retry_until {
             return Ok(Outcome::Open(OpenReason::HistoryUnproven));
         }
-        // The history is what is missing, so it cannot be checked against the cluster. The
-        // record enters no value, and its label says so.
-        record::verify_offline(&bundle)?;
+        // The history is what is missing, so it cannot be checked against the cluster: this
+        // record has had the offline checks above only. It enters no value, and its label says so.
     } else {
         record::verify_rpc(c, &bundle)?;
     }
-    write_json(path, &bundle)?;
+    write_new_json(path, &bundle)?;
     Ok(Outcome::Written(label))
 }
 
@@ -555,14 +598,15 @@ fn sync_day<C: SeriesCluster>(
 ///
 /// # Errors
 ///
-/// The cluster cannot answer after the pace's retries, a record does not verify, or a file
-/// cannot be written.
+/// The cluster cannot answer after the pace's retries, a record does not verify, a file cannot
+/// be written, or another run holds the directory.
 pub fn series_sync<C: SeriesCluster>(
     c: &mut C,
     series: &Series,
     dir: &Path,
 ) -> Result<Value, CliError> {
     std::fs::create_dir_all(dir).map_err(|e| bad(format!("{}: {e}", dir.display())))?;
+    let _lock = lock_dir(dir)?;
     let first = c.snapshot(&series.address(0)?)?;
     let state = match read_sync(dir)? {
         Some(previous) if previous.as_of > first.clock => previous,
@@ -621,6 +665,11 @@ pub fn check_stubs<C: SeriesCluster>(
         if v.get("kind").and_then(Value::as_str) != Some("missing") {
             continue;
         }
+        let name = file
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        load_stub(series, day, &v, name)?;
         let snapshot = c.snapshot(&series.address(day)?)?;
         if snapshot.account.is_some() {
             return Err(bad(format!(
@@ -698,6 +747,8 @@ struct Usable {
     compressed_runs: u32,
     longest_run: u32,
     late_samples: u32,
+    /// Samples whose transaction has no block time: not known to be late or on time.
+    late_unknown: u32,
 }
 
 fn str_field<'a>(v: &'a Value, pointer: &str, name: &str) -> Result<&'a str, CliError> {
@@ -713,34 +764,51 @@ fn u32_field(v: &Value, pointer: &str, name: &str) -> Result<u32, CliError> {
         .ok_or_else(|| bad(format!("{name}: {pointer} is missing")))
 }
 
+/// A stub is what [`stub`] writes for this day and nothing else: only its slot and clock are not
+/// determined by the series, and they must have the right types.
 fn load_stub(series: &Series, day: u32, v: &Value, name: &str) -> Result<Day, CliError> {
     let end = series.end(day)?;
     let clock = v
         .get("clock")
         .and_then(Value::as_i64)
         .ok_or_else(|| bad(format!("{name}: a stub with no clock")))?;
-    if v.get("day").and_then(Value::as_u64) != Some(u64::from(day)) {
-        return Err(bad(format!("{name}: a stub for another day")));
-    }
+    let slot = v
+        .get("slot")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| bad(format!("{name}: a stub with no slot")))?;
     if clock < end {
         return Err(bad(format!(
             "{name}: a missing stub read at clock {clock}, before its end {end}"
         )));
     }
+    let want = stub(series, day, slot, clock)?;
+    let (Some(got), Some(want)) = (v.as_object(), want.as_object()) else {
+        return Err(bad(format!("{name}: a stub that is not an object")));
+    };
+    for (field, expected) in want {
+        if got.get(field) != Some(expected) {
+            return Err(bad(format!(
+                "{name}: a stub whose {field} is not this day's"
+            )));
+        }
+    }
+    if got.len() != want.len() {
+        return Err(bad(format!("{name}: a stub with extra fields")));
+    }
     Ok(Day::Missing)
 }
 
-fn late_samples(series: &Series, day: u32, v: &Value, name: &str) -> Result<u32, CliError> {
+/// How many samples came after their boundary plus the grace, and how many cannot be told
+/// because their transaction has no block time.
+fn late_samples(series: &Series, day: u32, v: &Value, name: &str) -> Result<(u32, u32), CliError> {
     let start = series.start(day)?;
-    let mut late = 0u32;
+    let (mut late, mut unknown) = (0u32, 0u32);
     let transactions = v
         .pointer("/history/transactions")
         .and_then(Value::as_array)
         .ok_or_else(|| bad(format!("{name}: no transaction list")))?;
     for t in transactions {
-        let Some(block_time) = t.get("block_time").and_then(Value::as_i64) else {
-            continue;
-        };
+        let block_time = t.get("block_time").and_then(Value::as_i64);
         for e in t
             .get("samples")
             .and_then(Value::as_array)
@@ -753,12 +821,14 @@ fn late_samples(series: &Series, day: u32, v: &Value, name: &str) -> Result<u32,
                 .and_then(|o| o.checked_add(start))
                 .and_then(|b| b.checked_add(LATE_GRACE_SECONDS))
                 .ok_or_else(overflow)?;
-            if block_time > boundary {
-                late = late.saturating_add(1);
+            match block_time {
+                None => unknown = unknown.saturating_add(1),
+                Some(time) if time > boundary => late = late.saturating_add(1),
+                Some(_) => {}
             }
         }
     }
-    Ok(late)
+    Ok((late, unknown))
 }
 
 fn load_record(series: &Series, day: u32, v: &Value, name: &str) -> Result<Day, CliError> {
@@ -783,6 +853,12 @@ fn load_record(series: &Series, day: u32, v: &Value, name: &str) -> Result<Day, 
     {
         return Err(bad(format!("{name}: the account's spec is not this day's")));
     }
+    if !info.state.is_final() {
+        return Err(bad(format!(
+            "{name}: a record of a window that is not final: {:?}",
+            info.state
+        )));
+    }
     let label = derived.get("label").and_then(Value::as_str).unwrap_or("?");
     Ok(match (info.state, label) {
         (_, "unknown") => Day::Unknown,
@@ -796,6 +872,7 @@ fn load_record(series: &Series, day: u32, v: &Value, name: &str) -> Result<Day, 
             }
         }
         (WindowState::Finalized, "complete" | "compressed") => {
+            let (late_samples, late_unknown) = late_samples(series, day, v, name)?;
             let mut usable = Usable {
                 sum_sq: str_field(&derived, "/sum_sq_raw", name)?
                     .parse()
@@ -805,7 +882,8 @@ fn load_record(series: &Series, day: u32, v: &Value, name: &str) -> Result<Day, 
                 compressed_buckets: 0,
                 compressed_runs: 0,
                 longest_run: 1,
-                late_samples: late_samples(series, day, v, name)?,
+                late_samples,
+                late_unknown,
             };
             let runs = derived
                 .get("runs")
@@ -891,7 +969,7 @@ fn value(series: &Series, days: &[Day], last: u32, k: u32) -> Result<Value, CliE
     let (mut sum_sq, mut span) = (0u128, 0u64);
     let (mut usable, mut any_compressed) = (0u32, false);
     let (mut compressed_buckets, mut compressed_runs, mut longest_run) = (0u32, 0u32, 0u32);
-    let (mut empty_buckets, mut late) = (0u32, 0u32);
+    let (mut empty_buckets, mut late, mut late_unknown) = (0u32, 0u32, 0u32);
     for day in u32::try_from(first.max(0)).map_err(|_| overflow())?..=last {
         let entry = usize::try_from(day).ok().and_then(|d| days.get(d));
         let reason = match entry {
@@ -911,6 +989,7 @@ fn value(series: &Series, days: &[Day], last: u32, k: u32) -> Result<Value, CliE
                 compressed_runs = compressed_runs.saturating_add(u.compressed_runs);
                 longest_run = longest_run.max(u.longest_run);
                 late = late.saturating_add(u.late_samples);
+                late_unknown = late_unknown.saturating_add(u.late_unknown);
                 continue;
             }
         };
@@ -959,6 +1038,7 @@ fn value(series: &Series, days: &[Day], last: u32, k: u32) -> Result<Value, CliE
         "longest_run": longest_run,
         "empty_buckets": empty_buckets,
         "late_samples": late,
+        "late_unknown": late_unknown,
     }))
 }
 

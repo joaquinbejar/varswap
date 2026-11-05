@@ -385,10 +385,21 @@ day with no file is `open`. `sync.json` holds `as_of`, the finalized clock of th
 never moves backwards, and `vol-index` takes its default day from it, so an open last day shows as
 `insufficient` and not as yesterday's value.
 
-The labels are in `docs/PLAN-phase2.md`. Two details the plan leaves open, as implemented:
+The labels are in `docs/PLAN-phase2.md`. Details the plan leaves open, as implemented:
 
 - A period reaching before the series started counts those days in `before_series`, so `7d` and
   `30d` are `partial` or `insufficient` until the series is that old.
 - A record labelled `unknown` is written only after 3 days past `end`, and it is checked offline
   only: what is missing is the history an `--rpc` check would compare against. It enters no value.
   The 3 days is a retry policy, not a claim about how long an RPC retains history.
+- `late_unknown` counts samples whose transaction has no block time. They are not in `late_samples`,
+  which counts only samples known to be late, so `late_samples` 0 with `late_unknown` above 0 does
+  not mean the keeper was on time.
+- The export reads the account again after the snapshot, perhaps from another node. A read from
+  behind the snapshot, or of a window that is not final, writes no file and leaves the day `open`
+  with the reason `stale_read` in `sync.json`, because a file is never rewritten.
+- One `series-sync` per directory: a second one fails at once, with nothing changed. A day's file is
+  never replaced, not even by a run that lost a race; delete it by hand to rewrite it.
+- A `missing` stub must be exactly what `series-sync` writes for that day: any other version,
+  program, cluster, window, day, start or end, a wrong type, or an extra field fails, in `vol-index`
+  and in `series-sync --check`.

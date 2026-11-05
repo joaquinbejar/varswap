@@ -266,7 +266,7 @@ fn read_series(file: &str) -> Result<index::Series, CliError> {
 fn value_line(v: &serde_json::Value) -> String {
     let text = |k: &str| v.get(k).and_then(serde_json::Value::as_str).unwrap_or("-");
     let number = |k: &str| v.get(k).and_then(serde_json::Value::as_u64).unwrap_or(0);
-    format!(
+    let line = format!(
         "{:>3}d  sigma {:<20} rv {:<20} {:<12} usable {}/{}  missed {}  late {}",
         number("days"),
         text("sigma"),
@@ -276,7 +276,11 @@ fn value_line(v: &serde_json::Value) -> String {
         number("days"),
         number("missed_samples"),
         number("late_samples"),
-    )
+    );
+    match number("late_unknown") {
+        0 => line,
+        unknown => format!("{line} (and {unknown} with no block time)"),
+    }
 }
 
 fn vol_index(

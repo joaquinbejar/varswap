@@ -13,7 +13,7 @@
     missing_docs
 )]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -244,6 +244,10 @@ struct Fake {
     unavailable: Vec<String>,
     calls: u32,
     exports: u32,
+    /// What `account_at` answers instead of the truth, one per call: `None` is the truth.
+    stale_reads: VecDeque<Option<(u64, Vec<u8>)>>,
+    /// A file another writer creates during the next `account_at`.
+    race: Option<(PathBuf, String)>,
 }
 
 impl Fake {
@@ -309,7 +313,15 @@ impl History for Fake {
 
     fn account_at(&mut self, a: &Address) -> Result<(u64, Option<AccountInfo>), CliError> {
         self.gate()?;
-        Ok((1_000, self.account(a)))
+        if let Some((path, text)) = self.race.take() {
+            std::fs::write(path, text).unwrap();
+        }
+        let current = u64::try_from(self.clock).unwrap();
+        if let Some(Some((slot, data))) = self.stale_reads.pop_front() {
+            let owner = self.owner.unwrap();
+            return Ok((slot, Some(AccountInfo { owner, data })));
+        }
+        Ok((current, self.account(a)))
     }
 }
 
@@ -954,6 +966,256 @@ fn test_a_record_whose_bytes_are_another_days_is_rejected() {
     std::fs::write(file_of(&s, &dir, 0), forged.to_string()).unwrap();
     let e = index_at(&s, &dir, after(2), None).unwrap_err().to_string();
     assert!(e.contains("spec is not this day's"), "{e}");
+}
+
+/// The bytes of day `day`'s window while it was still open.
+fn open_bytes(s: &Series, day: u32) -> Vec<u8> {
+    build(s, day, &Fill::open(5)).data
+}
+
+#[test]
+fn test_a_final_snapshot_then_an_export_read_of_a_non_final_window_writes_no_file() {
+    let s = series();
+    let dir = scratch("stale-state");
+    let slot = u64::try_from(after(1)).unwrap();
+    let mut f = Fake::new(after(1)).put(0, &Fill::full());
+    f.stale_reads.push_back(Some((slot, open_bytes(&s, 0))));
+    let out = series_sync(&mut f, &s, &dir).unwrap();
+    assert!(!file_of(&s, &dir, 0).exists());
+    assert_eq!(out["sync"]["open"][0]["reason"], "stale_read");
+    // The node catches up: the next run writes the record.
+    let out = series_sync(&mut f, &s, &dir).unwrap();
+    assert_eq!(out["written"][0]["label"], "complete");
+    assert_eq!(
+        value(&index_at(&s, &dir, after(1), None).unwrap(), 1)["label"],
+        "complete"
+    );
+}
+
+#[test]
+fn test_an_export_read_from_behind_the_snapshot_writes_no_file() {
+    let s = series();
+    let dir = scratch("stale-slot");
+    let mut f = Fake::new(after(1)).put(0, &Fill::full());
+    let data = f.account(&s.address(0).unwrap()).unwrap().data;
+    let behind = u64::try_from(after(1)).unwrap() - 1;
+    f.stale_reads.push_back(Some((behind, data)));
+    let out = series_sync(&mut f, &s, &dir).unwrap();
+    assert!(!file_of(&s, &dir, 0).exists());
+    assert_eq!(out["sync"]["open"][0]["reason"], "stale_read");
+}
+
+#[test]
+fn test_a_stale_read_with_its_history_missing_is_not_taken_for_unknown() {
+    let s = series();
+    let dir = scratch("stale-unknown");
+    // Past the retry period, so an `unknown` record would be written if it got that far.
+    let later = after(1) + 4 * DAY;
+    let slot = u64::try_from(later).unwrap();
+    let mut f = Fake::new(later).put(0, &Fill::full());
+    let signature = f.windows[&s.address(0).unwrap().to_string()].signatures[0].clone();
+    f.unavailable.push(signature);
+    f.stale_reads.push_back(Some((slot, open_bytes(&s, 0))));
+    let out = series_sync(&mut f, &s, &dir).unwrap();
+    assert!(!file_of(&s, &dir, 0).exists());
+    assert_eq!(out["sync"]["open"][0]["reason"], "stale_read");
+}
+
+#[test]
+fn test_a_stale_read_at_the_verify_step_stops_the_run_with_no_file() {
+    let s = series();
+    let dir = scratch("stale-verify");
+    let slot = u64::try_from(after(1)).unwrap();
+    let mut f = Fake::new(after(1)).put(0, &Fill::full());
+    f.stale_reads.push_back(None);
+    f.stale_reads.push_back(Some((slot, open_bytes(&s, 0))));
+    let e = series_sync(&mut f, &s, &dir).unwrap_err().to_string();
+    assert!(e.contains("differs from the bundle"), "{e}");
+    assert!(!file_of(&s, &dir, 0).exists());
+}
+
+#[test]
+fn test_an_account_at_this_address_with_another_days_spec_is_never_written() {
+    let s = series();
+    let dir = scratch("wrong-spec");
+    let (day0, day1) = (
+        s.address(0).unwrap().to_string(),
+        s.address(1).unwrap().to_string(),
+    );
+    // A node answering with day 1's window, consistent with itself, under day 0's address.
+    let mut built = build(&s, 1, &Fill::full());
+    for tx in built.transactions.values_mut() {
+        *tx = serde_json::from_str(&tx.to_string().replace(&day1, &day0)).unwrap();
+    }
+    let mut f = Fake::new(after(1));
+    f.windows.insert(day0, built);
+    let e = series_sync(&mut f, &s, &dir).unwrap_err().to_string();
+    assert!(e.contains("spec is not this day's"), "{e}");
+    assert!(!file_of(&s, &dir, 0).exists());
+}
+
+#[test]
+fn test_a_record_of_a_non_final_window_is_rejected_whatever_its_label() {
+    let s = series();
+    let dir = scratch("active-unknown");
+    std::fs::create_dir_all(&dir).unwrap();
+    let address = s.address(0).unwrap();
+    let mut f = Fake::new(after(1)).put(0, &Fill::open(5));
+    let signature = f.windows[&address.to_string()].signatures[0].clone();
+    f.unavailable.push(signature);
+    let bundle = record::export(&mut f, &s.program_id, &address, &s.cluster).unwrap();
+    assert_eq!(bundle["derived"]["label"], "unknown");
+    std::fs::write(file_of(&s, &dir, 0), bundle.to_string()).unwrap();
+    let e = index_at(&s, &dir, after(1), None).unwrap_err().to_string();
+    assert!(e.contains("not final"), "{e}");
+}
+
+#[test]
+fn test_a_sample_with_no_block_time_is_counted_as_unknown_not_on_time() {
+    let s = series();
+    let dir = scratch("no-block-time");
+    let fill = Fill {
+        delay: 601,
+        ..Fill::full()
+    };
+    let mut f = Fake::new(after(1)).put(0, &fill);
+    let built = f
+        .windows
+        .get_mut(&s.address(0).unwrap().to_string())
+        .unwrap();
+    // The bucket 0 sample's transaction; the create and finalize transactions have no samples.
+    let first_sample = built
+        .transactions
+        .values_mut()
+        .filter(|tx| tx["blockTime"].as_i64() == Some(FIRST + 601))
+        .collect::<Vec<_>>();
+    assert_eq!(first_sample.len(), 1);
+    for tx in first_sample {
+        tx["blockTime"] = Value::Null;
+    }
+    series_sync(&mut f, &s, &dir).unwrap();
+    let out = index_at(&s, &dir, after(1), None).unwrap();
+    assert_eq!(value(&out, 1)["late_samples"], 24);
+    assert_eq!(value(&out, 1)["late_unknown"], 1);
+    // It changes no price and no run.
+    assert_eq!(value(&out, 1)["label"], "complete");
+}
+
+fn stub_file(name: &str) -> (Series, PathBuf, PathBuf, Value) {
+    let (s, dir) = synced(name, &[], 1);
+    let path = file_of(&s, &dir, 0);
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(v["kind"], "missing");
+    (s, dir, path, v)
+}
+
+#[test]
+fn test_a_stub_with_any_field_altered_is_rejected_offline_and_by_check() {
+    let (s, dir, path, good) = stub_file("stub-fields");
+    assert_eq!(
+        value(&index_at(&s, &dir, after(1), None).unwrap(), 1)["excluded"][0]["reason"],
+        "missing"
+    );
+    let other = Address::new_from_array([9; 32]).to_string();
+    let end = good["end"].as_i64().unwrap();
+    let cases = [
+        ("version", json!(99), "version"),
+        ("version", json!("1"), "version"),
+        ("cluster", json!("mainnet"), "cluster"),
+        ("program_id", json!(other), "program_id"),
+        ("window", json!(other), "window"),
+        ("day", json!(1), "day"),
+        ("day", json!(0.0), "day"),
+        ("start", json!(1), "start"),
+        ("end", json!(end + 1), "end"),
+        ("end", json!(end.to_string()), "end"),
+        ("slot", json!("7"), "no slot"),
+        ("slot", json!(-1), "no slot"),
+        ("clock", json!("7"), "no clock"),
+        ("extra", json!(1), "extra fields"),
+    ];
+    for (field, wrong, want) in cases {
+        let mut v = good.clone();
+        v[field] = wrong.clone();
+        std::fs::write(&path, v.to_string()).unwrap();
+        let label = format!("{field} = {wrong}");
+        let e = index_at(&s, &dir, after(1), None).unwrap_err().to_string();
+        assert!(e.contains(want), "{label}: {e}");
+        let mut absent = Fake::new(after(1));
+        let e = check_stubs(&mut absent, &s, &dir).unwrap_err().to_string();
+        assert!(e.contains(want), "check, {label}: {e}");
+        assert_eq!(
+            absent.calls, 0,
+            "check read the chain for a bad stub: {label}"
+        );
+    }
+    for field in [
+        "version",
+        "cluster",
+        "program_id",
+        "window",
+        "day",
+        "start",
+        "end",
+        "slot",
+        "clock",
+    ] {
+        let mut v = good.clone();
+        v.as_object_mut().unwrap().remove(field);
+        std::fs::write(&path, v.to_string()).unwrap();
+        assert!(index_at(&s, &dir, after(1), None).is_err(), "no {field}");
+    }
+}
+
+#[test]
+fn test_a_second_writer_on_the_directory_fails_and_changes_nothing() {
+    let s = series();
+    let dir = scratch("two-writers");
+    let mut f = Fake::new(after(1)).put(0, &Fill::full());
+    std::fs::create_dir_all(&dir).unwrap();
+    let held = std::fs::File::open(&dir).unwrap();
+    held.try_lock().unwrap();
+    let e = series_sync(&mut f, &s, &dir).unwrap_err().to_string();
+    assert!(e.contains("another series-sync"), "{e}");
+    assert_eq!(f.calls, 0, "it read the chain without the lock");
+    assert!(files(&dir).is_empty(), "{:?}", files(&dir));
+    drop(held);
+    series_sync(&mut f, &s, &dir).unwrap();
+    assert!(file_of(&s, &dir, 0).exists());
+}
+
+#[test]
+fn test_a_file_appearing_during_the_export_is_not_overwritten() {
+    let s = series();
+    let dir = scratch("race");
+    let path = file_of(&s, &dir, 0);
+    let mut f = Fake::new(after(1)).put(0, &Fill::full());
+    f.race = Some((path.clone(), "{\"other\": \"writer\"}".to_owned()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let e = series_sync(&mut f, &s, &dir).unwrap_err().to_string();
+    assert!(e.contains("not overwritten"), "{e}");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "{\"other\": \"writer\"}"
+    );
+    assert!(!dir
+        .join(s.file_name(0).unwrap().replace(".json", ".json.tmp"))
+        .exists());
+}
+
+#[test]
+fn test_an_existing_conflicting_file_is_kept_and_named_by_the_index() {
+    let (s, dir) = synced("conflict", &[(0, Fill::full())], 1);
+    let path = file_of(&s, &dir, 0);
+    std::fs::write(&path, "{\"other\": \"writer\"}").unwrap();
+    let mut f = Fake::new(after(1)).put(0, &Fill::full());
+    series_sync(&mut f, &s, &dir).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "{\"other\": \"writer\"}"
+    );
+    let e = index_at(&s, &dir, after(1), None).unwrap_err().to_string();
+    assert!(e.contains(&s.file_name(0).unwrap()), "{e}");
 }
 
 #[test]
