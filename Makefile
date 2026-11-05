@@ -87,6 +87,11 @@ lint-control:
 roll-test:
 	@sh scripts/tests/window-roll.sh
 
+# The dashboard's section schema against its fixtures; no npm package.
+.PHONY: dashboard-check
+dashboard-check:
+	@node --test scripts/tests/dashboard-schema.mjs
+
 # Rustdoc with every warning denied
 .PHONY: doc
 doc:
@@ -146,7 +151,7 @@ fuzz-control:
 
 # Pre-push checks: must pass with zero warnings
 .PHONY: pre-push
-pre-push: fmt-check lint lint-control roll-test sbf sbf-control test doc
+pre-push: fmt-check lint lint-control roll-test dashboard-check sbf sbf-control test doc
 
 .PHONY: clean
 clean:
