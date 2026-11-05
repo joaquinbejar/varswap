@@ -67,7 +67,8 @@ validate at run time, so it enforces them itself.
 - a section whose `generated_at` is older than its `max_age_hours`, or more than 1 h in the
   future, is shown as `stale` with its age, whatever `status.level` says;
 - otherwise the shell shows the section's own level;
-- a `generated_at` that does not parse gives an error card.
+- a `generated_at` that does not parse, or is not a date in the calendar (`2026-02-31`), gives an
+  error card.
 
 ## `sections.json`
 
@@ -108,6 +109,11 @@ sections, and nothing else: no RPC. `dashboard.mjs` is a module so the same file
 and in `node --test`. It needs a static server (`python3 -m http.server` in the site's directory, or
 GitHub Pages): a `file://` page cannot fetch. One section that fails to load or parse shows an error
 card, and the others are unaffected.
+
+A chart's values are checked before anything is drawn: a time that does not parse, a value that is
+not a finite decimal, or values too far apart or too small for an axis give the section's error card.
+A relative link must resolve to the section's own directory, on the protocol the section was served
+with: `https`, or `http` for a local server.
 
 Series with the same `unit` share one chart and one axis, up to 8 per chart; a section with more
 gets another chart, never a generated color. Each chart has a table view, so every value can be read

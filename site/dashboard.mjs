@@ -5,20 +5,37 @@ const SCHEMA = "solana-projects-dashboard/section/1";
 const HOUR_MS = 3_600_000;
 const FUTURE_TOLERANCE_MS = HOUR_MS;
 const TIME = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$/;
+const DECIMAL = /^-?[0-9]+(\.[0-9]+)?$/;
 const SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/;
-const DOT_SEGMENT = /^(?:\.|%2e){1,2}$/i;
+// A URL parser strips some of these before it looks at the scheme.
+const CONTROL = /[\u0000-\u001f\u007f]/;
+const DOT_SEGMENT = /(?:^|\/)(?:\.|%2e){1,2}(?:[/?#]|$)/i;
+/** Values closer than this, relative to their size, are drawn as one flat value. */
+const CLOSEST_RANGE = 1e-12;
+/** `toFixed` takes no more digits than this. */
+const MAX_DECIMALS = 100;
 /** Lines sharing one chart: past this they go to another chart, never to a generated hue. */
 const MAX_SERIES_PER_CHART = 8;
 /** Direct labels at the line ends up to this many series; the legend is always there. */
 const MAX_DIRECT_LABELS = 4;
 
 /**
+ * Whether a resolved URL is in the directory of the section's URL, on its origin. The string
+ * checks in `linkTarget` already imply it; this is the check on what the browser will open.
+ */
+export function staysWithSection(target, base) {
+  const directory = base.pathname.slice(0, base.pathname.lastIndexOf("/") + 1);
+  return ["https:", "http:"].includes(base.protocol) && target.origin === base.origin && target.pathname.startsWith(directory);
+}
+
+/**
  * Where a `links[].href` may go, or null to render it as text: absolute https, or a relative path
- * with no scheme, leading slash, backslash, encoded slash or dot segment, resolved against the
- * section's own URL. Mirrors `$defs.href` in docs/dashboard/section-1.schema.json.
+ * with no scheme, leading slash, backslash, encoded slash or dot segment, which must resolve to
+ * the section's own directory, on the protocol the section itself was served with. No form may
+ * hold a control character. Mirrors `$defs.href` in docs/dashboard/section-1.schema.json.
  */
 export function linkTarget(href, sectionUrl) {
-  if (typeof href !== "string" || href === "" || /\s/.test(href) || href.includes("\\")) {
+  if (typeof href !== "string" || href === "" || /\s/.test(href) || CONTROL.test(href) || href.includes("\\")) {
     return null;
   }
   if (SCHEME.test(href)) {
@@ -29,10 +46,11 @@ export function linkTarget(href, sectionUrl) {
       return null;
     }
   }
-  if (href.startsWith("/") || /%(?:2f|5c)/i.test(href)) return null;
-  if (href.split("/").some((segment) => DOT_SEGMENT.test(segment))) return null;
+  if (href.startsWith("/") || /%(?:2f|5c)/i.test(href) || DOT_SEGMENT.test(href)) return null;
   try {
-    return new URL(href, sectionUrl).href;
+    const base = new URL(sectionUrl);
+    const target = new URL(href, base);
+    return staysWithSection(target, base) ? target.href : null;
   } catch {
     return null;
   }
@@ -51,12 +69,23 @@ export function cellTarget(template, cell) {
 }
 
 /**
+ * A time as its millisecond count, NaN if it is not one. Engines disagree on `2026-02-31`, and some
+ * roll it into March: a date must come back from the parser as it went in.
+ */
+function parseTime(text) {
+  if (typeof text !== "string" || !TIME.test(text)) return NaN;
+  const ms = Date.parse(text);
+  if (Number.isNaN(ms)) return NaN;
+  return new Date(ms).toISOString().slice(0, 19) === text.slice(0, 19) ? ms : NaN;
+}
+
+/**
  * What the shell shows for a section's age. `status.level` is written by a generator, so a stopped
  * workflow keeps saying `ok` forever: age is computed here, with the browser's clock.
  * Returns { level, stale, ageMs }, or { error } if `generated_at` does not parse.
  */
 export function freshness(generatedAt, level, maxAgeHours, nowMs) {
-  const at = typeof generatedAt === "string" && TIME.test(generatedAt) ? Date.parse(generatedAt) : NaN;
+  const at = parseTime(generatedAt);
   if (Number.isNaN(at)) return { error: "generated_at does not parse" };
   if (typeof maxAgeHours !== "number" || !(maxAgeHours > 0)) return { error: "no max_age_hours" };
   const ageMs = nowMs - at;
@@ -93,21 +122,60 @@ export function chartGroups(series) {
   return groups;
 }
 
-/** Round axis ticks covering [min, max]. */
+/**
+ * Round axis ticks covering [min, max], rising. Values too far apart or too small to draw are an
+ * error, which the caller turns into the section's error card, never a blank or a hung page.
+ */
 export function ticks(min, max, count = 4) {
-  if (!(max > min)) {
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max < min) throw new Error("the values cannot be drawn");
+  let [low, high] = [min, max];
+  if (!(high - low > Math.max(Math.abs(low), Math.abs(high)) * CLOSEST_RANGE)) {
     // One flat value. A value at or above zero keeps a floor of zero: a count is never negative.
-    const pad = Math.abs(min) * 0.1 || 1;
-    return ticks(min >= 0 ? Math.max(0, min - pad) : min - pad, max + pad, count);
+    const pad = Math.abs(low) * 0.1 || 1;
+    low = low >= 0 ? Math.max(0, low - pad) : low - pad;
+    high += pad;
   }
-  const rough = (max - min) / count;
+  const rough = (high - low) / count;
   const base = 10 ** Math.floor(Math.log10(rough));
   const step = [1, 2, 2.5, 5, 10].map((m) => m * base).find((s) => s >= rough);
-  const out = [];
-  for (let k = Math.floor(min / step); k * step < max + step; k += 1) {
-    out.push(Number((k * step).toFixed(10)));
+  if (!Number.isFinite(rough) || !(rough > 0) || !Number.isFinite(step) || !(step > 0)) {
+    throw new Error("the values cannot be drawn");
   }
+  // Enough digits for this step and not a fixed number, so small values do not round to zero.
+  const decimals = Math.min(MAX_DECIMALS, Math.max(0, Math.ceil(-Math.log10(step)) + 1));
+  const out = [];
+  // At most `count + 3` turns, as step >= rough; the flat case above keeps `k` far below 2^53.
+  for (let k = Math.floor(low / step); k * step < high + step; k += 1) {
+    out.push(Number((k * step).toFixed(decimals)));
+  }
+  if (!(out[out.length - 1] > out[0])) throw new Error("the values cannot be drawn");
   return out;
+}
+
+/**
+ * One series' points for a chart. A malformed time or value throws: `Number()` alone would give
+ * NaN or Infinity, and with them a broken axis. A value keeps its text for the tooltip.
+ */
+export function chartPoints(series) {
+  if (!Array.isArray(series.points)) throw new Error(`${series.id}: points is not a list`);
+  return series.points.map((point) => {
+    if (!Array.isArray(point) || point.length !== 2) throw new Error(`${series.id}: a malformed point`);
+    const [at, raw] = point;
+    const t = parseTime(at);
+    if (Number.isNaN(t)) throw new Error(`${series.id}: a point's time does not parse`);
+    if (raw === null) return { t, v: null, raw, at };
+    const v = typeof raw === "string" && DECIMAL.test(raw) ? Number(raw) : NaN;
+    if (!Number.isFinite(v)) throw new Error(`${series.id}: a point's value is not a finite decimal`);
+    return { t, v, raw, at };
+  });
+}
+
+/** The points and axis of one chart, checked before anything is drawn. */
+export function chartData(group) {
+  const parsed = group.series.map(chartPoints);
+  const values = parsed.flat().filter((p) => p.v !== null).map((p) => p.v);
+  const axis = values.length ? ticks(values.reduce((a, b) => Math.min(a, b)), values.reduce((a, b) => Math.max(a, b))) : [0, 1];
+  return { parsed, axis };
 }
 
 // --- the page ---
@@ -195,12 +263,9 @@ function paint(box, group) {
   const height = 220;
   const labelled = group.series.length >= 2 && group.series.length <= MAX_DIRECT_LABELS && width >= 480;
   const m = { top: 10, right: labelled ? 96 : 14, bottom: 24, left: 52 };
-  const parsed = group.series.map((s) => s.points.map(([t, v]) => ({ t: Date.parse(t), v: v === null ? null : Number(v), raw: v, at: t })));
-  const all = parsed.flat();
-  const values = all.filter((p) => p.v !== null).map((p) => p.v);
-  const times = [...new Set(all.map((p) => p.t))].sort((a, b) => a - b);
+  const { parsed, axis } = group.data;
+  const times = [...new Set(parsed.flat().map((p) => p.t))].sort((a, b) => a - b);
   if (times.length === 0) return;
-  const axis = values.length ? ticks(Math.min(...values), Math.max(...values)) : [0, 1];
   const [y0, y1] = [axis[0], axis[axis.length - 1]];
   const [t0, t1] = [times[0], times[times.length - 1]];
   const xOf = (t) => (t1 === t0 ? m.left + (width - m.left - m.right) / 2 : m.left + ((t - t0) / (t1 - t0)) * (width - m.left - m.right));
@@ -312,7 +377,9 @@ function paintCharts(section) {
   }
 }
 
-function renderChart(group) {
+function renderChart(chart) {
+  // Checked here, in the section's own try: it fails as its error card and draws nothing.
+  const group = { ...chart, data: chartData(chart) };
   const box = el("div", "chart");
   if (group.series.length === 1) {
     box.append(el("p", "chart-title", group.unit ? `${group.series[0].label} (${group.unit})` : group.series[0].label));
@@ -446,7 +513,11 @@ async function main() {
     entries.map(async (entry, i) => {
       const section = await loadSection(entry, Date.now());
       slots[i].replaceChildren(section);
-      paintCharts(section);
+      try {
+        paintCharts(section);
+      } catch (e) {
+        slots[i].replaceChildren(errorCard(entry.repo, entry.url, e.message));
+      }
     }),
   );
 }
