@@ -262,8 +262,10 @@ function paint(box, group) {
   const width = Math.max(box.clientWidth, 280);
   const height = 220;
   const labelled = group.series.length >= 2 && group.series.length <= MAX_DIRECT_LABELS && width >= 480;
-  const m = { top: 10, right: labelled ? 96 : 14, bottom: 24, left: 52 };
   const { parsed, axis } = group.data;
+  // Room for the longest axis label: `1.75e-12` does not fit the usual margin.
+  const longest = Math.max(...axis.map((v) => String(v).length));
+  const m = { top: 10, right: labelled ? 96 : 14, bottom: 24, left: Math.max(52, 14 + longest * 7) };
   const times = [...new Set(parsed.flat().map((p) => p.t))].sort((a, b) => a - b);
   if (times.length === 0) return;
   const [y0, y1] = [axis[0], axis[axis.length - 1]];
