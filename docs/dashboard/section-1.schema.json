@@ -103,8 +103,8 @@
     "decimal": { "type": "string", "pattern": "^-?[0-9]+(\\.[0-9]+)?$" },
     "href": {
       "type": "string",
-      "description": "Absolute https, or a relative path with no scheme, no leading slash or backslash, no backslash at all, no . or .. segment, percent-encoded forms included.",
-      "pattern": "^(https://[^\\s\\\\]+|(?![A-Za-z][A-Za-z0-9+.-]*:)(?![/\\\\])(?![^\\s]*\\\\)(?![^\\s]*%(?:2[fF]|5[cC]))(?!(?:[^\\s]*/)?(?:\\.|%2[eE]){1,2}(?:/|$))[^\\s]+)$"
+      "description": "Absolute https, or a relative path with no scheme, no leading slash or backslash, no backslash at all, no . or .. segment (before a query or fragment too), percent-encoded forms included. No control character anywhere: a URL parser strips some of them, which can turn a harmless looking string into another scheme.",
+      "pattern": "^(?![\\s\\S]*[\\u0000-\\u001f\\u007f])(https://[^\\s\\\\]+|(?![A-Za-z][A-Za-z0-9+.-]*:)(?![/\\\\])(?![^\\s]*\\\\)(?![^\\s]*%(?:2[fF]|5[cC]))(?!(?:[^\\s]*/)?(?:\\.|%2[eE]){1,2}(?:[/?#]|$))[^\\s]+)$"
     }
   }
 }

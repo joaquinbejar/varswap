@@ -129,6 +129,8 @@ const accepted = [
   "index/sol-usd-hourly/",
   "records.json",
   "a.b/c..d/e.json",
+  "a..?x",
+  "a?x=1#y",
 ];
 const rejected = [
   "javascript:alert(1)",
@@ -154,6 +156,20 @@ const rejected = [
   "a%5cb",
   "with space",
   "",
+  "\u0000javascript:alert(1)",
+  "\u0001javascript:alert(1)",
+  "\u001fjavascript:alert(1)",
+  "java\u0001script:alert(1)",
+  "\u007fjavascript:alert(1)",
+  "https://example.com/\u0000",
+  "a\u0001b",
+  "..?x",
+  "..#x",
+  ".?x",
+  "%2e%2e?x",
+  "%2E.#x",
+  "a/..?x",
+  "a/.#x",
 ];
 
 test("links[].href follows the allowlist", () => {

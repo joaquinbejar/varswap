@@ -51,9 +51,10 @@ validate at run time, so it enforces them itself.
 ### Links
 
 - `links[].href` is a link only if it is an absolute `https://` URL, or a relative path with no
-  scheme, no leading `/` or `\`, no `\` anywhere, no `.` or `..` segment and no encoded slash
-  (percent-encoded forms included), resolved against the section's own URL. So `javascript:`,
-  `data:`, `http:` and protocol-relative `//host` values render as plain text.
+  scheme, no leading `/` or `\`, no `\` anywhere, no `.` or `..` segment, also right before a `?`
+  or `#`, and no encoded slash (percent-encoded forms included). No form may hold a control
+  character: a URL parser strips some of them, so `\u0000javascript:` would become `javascript:`.
+  So `javascript:`, `data:`, `http:` and protocol-relative `//host` values render as plain text.
 - A table's `href_columns` maps a column name to a URL template with `{}`. The shell URL-encodes
   the cell into `{}` and makes a link only when the template starts with `https://`; anything else
   renders as plain text.
