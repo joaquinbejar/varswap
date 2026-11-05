@@ -89,15 +89,53 @@ with `pending` is shown as such and not fetched, until its repo publishes and th
 | metalbook | pending its first run (from about November 16); `https://joaquinbejar.github.io/metalbook/metalbook/section.json` | 22:30Z |
 | quotebook | pending its confirmation; expected `https://joaquinbejar.github.io/quotebook/quotebook/section.json` | expected 23:00Z |
 
+## The varswap section
+
+`scripts/dashboard.sh <out-dir>` writes the shell and this repo's section (`SOLANA_URL` defaults to
+devnet's public RPC; `cargo build --release -p varswap-cli` first). It holds no key, signs nothing
+and makes no Hermes request. A run from an empty directory took 2 min 13 s for two days at
+`series-sync`'s default rate, measured on 2026-11-04.
+
+```text
+<out-dir>/index.html, dashboard.mjs, dashboard.css, sections.json
+<out-dir>/varswap/section.json
+<out-dir>/varswap/index/sol-usd-hourly/index.json     every day, the generator's commit and the time
+<out-dir>/varswap/index/sol-usd-hourly/sync.json
+<out-dir>/varswap/index/sol-usd-hourly/records/       the records, and sync.json as series-sync's state
+```
+
+`scripts/dashboard-section.mjs` builds the section from `vol-index --history --json`:
+
+- **Tiles and series**: σ 1d, 7d and 30d, with the labels of `docs/devnet.md`. A value that is
+  `insufficient` is `null`, shown as no value or as a gap, never as a number.
+- **Windows table**: one row per day, newest first. `late` counts only samples known to be late, and
+  `no time` the samples with no block time, so `late` 0 proves nothing while the other is above 0.
+- **`status.level`**, computed from the data at generation; the shell applies its own deadline on
+  top. `stale` when the newest final day ended more than 48 h ago. A day is final if its window
+  finished, including a `degraded` or `unknown` one; an `open` or `missing` day is not. Otherwise
+  `warn` when the latest 7d value excludes a day, and the message names it. A day before the series
+  started is not an exclusion: it makes the value `partial` or `insufficient` and leaves `ok`.
+- **Failure**: any failed step exits non zero and leaves the existing section and index as they
+  were, so the shell shows an old section as stale and not a partial one as fresh. So does a field
+  missing from the CLI's output, and a section the schema rejects.
+
+Exporting a window twice gives the same record except for `account.slot`, the slot of the read: on
+2026-11-04 a second export of days 0 and 1 differed in that line alone. Comparing a published record
+with a new export has to ignore that field.
+
 ## Checking
 
-`make dashboard-check` runs two files with `node --test` and no npm package:
+`make dashboard-check` runs three files with `node --test` and no npm package:
 
 - `scripts/tests/dashboard-schema.mjs`: the fixtures are valid, each required field is required,
   wrong values fail, and every accepted and rejected form of `href` is tested.
 - `scripts/tests/dashboard-shell.mjs`: the shell's link and freshness decisions, against fixtures
   with an old section that still says `ok`, a `generated_at` in the future, and dangerous links; and
   that the page loads only its own files and puts nothing in as HTML.
+- `scripts/tests/dashboard-section.mjs`: the section generated from a real `vol-index` output of the
+  first two devnet days (`docs/dashboard/fixtures/vol-index/`), each status, and
+  `scripts/dashboard.sh` end to end with a mock `varswap-admin`. `cli/tests/index.rs` keeps that
+  output equal to what the CLI prints for those records, so the two cannot drift apart unseen.
 
 A sibling repo can vendor the schema at a commit and validate with whatever its CI already has.
 

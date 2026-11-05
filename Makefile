@@ -90,7 +90,7 @@ roll-test:
 # The dashboard's section schema and its shell's decisions; no npm package.
 .PHONY: dashboard-check
 dashboard-check:
-	@node --test scripts/tests/dashboard-schema.mjs scripts/tests/dashboard-shell.mjs
+	@node --test scripts/tests/dashboard-schema.mjs scripts/tests/dashboard-shell.mjs scripts/tests/dashboard-section.mjs
 
 # Rustdoc with every warning denied
 .PHONY: doc

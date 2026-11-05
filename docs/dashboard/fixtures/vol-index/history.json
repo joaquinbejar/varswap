@@ -1,0 +1,140 @@
+{
+  "as_of": 1793811972,
+  "as_of_utc": "2026-11-04T17:06:12Z",
+  "history": [
+    {
+      "day": 0,
+      "end": "2026-11-03T17:00:00Z",
+      "start": "2026-11-02T17:00:00Z",
+      "values": [
+        {
+          "before_series": 0,
+          "compressed_buckets": 0,
+          "compressed_runs": 0,
+          "days": 1,
+          "empty_buckets": 0,
+          "excluded": [],
+          "label": "complete",
+          "late_samples": 0,
+          "late_unknown": 0,
+          "longest_run": 1,
+          "missed_samples": 0,
+          "rv": "0.189510259206",
+          "rv_raw": "3495847250931590043",
+          "sigma": "0.435327760666",
+          "sigma_raw": "8030379789195286647",
+          "usable": 1
+        },
+        {
+          "before_series": 6,
+          "compressed_buckets": 0,
+          "compressed_runs": 0,
+          "days": 7,
+          "empty_buckets": 0,
+          "excluded": [],
+          "label": "insufficient",
+          "late_samples": 0,
+          "late_unknown": 0,
+          "longest_run": 1,
+          "missed_samples": 0,
+          "rv": null,
+          "rv_raw": null,
+          "sigma": null,
+          "sigma_raw": null,
+          "usable": 1
+        },
+        {
+          "before_series": 29,
+          "compressed_buckets": 0,
+          "compressed_runs": 0,
+          "days": 30,
+          "empty_buckets": 0,
+          "excluded": [],
+          "label": "insufficient",
+          "late_samples": 0,
+          "late_unknown": 0,
+          "longest_run": 1,
+          "missed_samples": 0,
+          "rv": null,
+          "rv_raw": null,
+          "sigma": null,
+          "sigma_raw": null,
+          "usable": 1
+        }
+      ],
+      "window": "7ywXkV5Sa3fGHKhTAcdXqR5jkNg5J7pqvGQg1Hh6XjG1"
+    },
+    {
+      "day": 1,
+      "end": "2026-11-04T17:00:00Z",
+      "start": "2026-11-03T17:00:00Z",
+      "values": [
+        {
+          "before_series": 0,
+          "compressed_buckets": 0,
+          "compressed_runs": 0,
+          "days": 1,
+          "empty_buckets": 0,
+          "excluded": [],
+          "label": "complete",
+          "late_samples": 0,
+          "late_unknown": 0,
+          "longest_run": 1,
+          "missed_samples": 0,
+          "rv": "0.543168029937",
+          "rv_raw": "10019681637274935936",
+          "sigma": "0.736999341883",
+          "sigma_raw": "13595238242225026990",
+          "usable": 1
+        },
+        {
+          "before_series": 5,
+          "compressed_buckets": 0,
+          "compressed_runs": 0,
+          "days": 7,
+          "empty_buckets": 0,
+          "excluded": [],
+          "label": "insufficient",
+          "late_samples": 0,
+          "late_unknown": 0,
+          "longest_run": 1,
+          "missed_samples": 0,
+          "rv": null,
+          "rv_raw": null,
+          "sigma": null,
+          "sigma_raw": null,
+          "usable": 2
+        },
+        {
+          "before_series": 28,
+          "compressed_buckets": 0,
+          "compressed_runs": 0,
+          "days": 30,
+          "empty_buckets": 0,
+          "excluded": [],
+          "label": "insufficient",
+          "late_samples": 0,
+          "late_unknown": 0,
+          "longest_run": 1,
+          "missed_samples": 0,
+          "rv": null,
+          "rv_raw": null,
+          "sigma": null,
+          "sigma_raw": null,
+          "usable": 2
+        }
+      ],
+      "window": "CjtkCZY1BEzN8MFgrbViGtW9KEUqP6vMKu7CCPRqiATG"
+    }
+  ],
+  "last_day": 1,
+  "series": {
+    "cluster": "devnet",
+    "feed": "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d",
+    "first_start": "2026-11-02T17:00:00Z",
+    "id": "sol-usd-hourly",
+    "interval": 3600,
+    "program_id": "BWqsaXvASrbErApP1ovz7vSvBLYqXGaMaZANEYf1xrB9"
+  },
+  "slot": 518646301
+}
