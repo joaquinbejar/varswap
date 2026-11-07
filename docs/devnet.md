@@ -329,8 +329,9 @@ nothing changed; `make roll-test` (part of `make pre-push`) checks this offline 
 | `7ywXkV5Sa3fGHKhTAcdXqR5jkNg5J7pqvGQg1Hh6XjG1` | 2026-11-02 17:00Z | `3UuXz2DFxSpCYPeLmxDCWSdi4Qafnko8MiFi9GPH899KwjgCVZf9AqENDKKzNegyzK23zbzMBfxdSeE2oJcVMWNq` (by hand) |
 | `CjtkCZY1BEzN8MFgrbViGtW9KEUqP6vMKu7CCPRqiATG` | 2026-11-03 17:00Z | `3eJVefeKHPb4Gk5K4QdDt7PNquK81T1VRaNwwvwcEYq8VvXrgx7SKbk8R8d9rXRvAPje8UBZVNtnj7wBjtBwjRfP` (by hand) |
 
-The roll job is installed once its PR has been reviewed. Until then, the windows above are
-created by hand. The roll job's configuration, written into its plist (no secret):
+The two windows above were created by hand. Since 2026-11-03 14:29Z the roll job, installed
+from `main` at f5d5c7c, creates every later window. Its configuration, written into its plist
+(no secret):
 
 ```shell
 SOLANA_URL=https://api.devnet.solana.com \

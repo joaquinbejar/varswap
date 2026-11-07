@@ -53,15 +53,19 @@ the devnet run. On **devnet** (program `BWqsaXvASrbErApP1ovz7vSvBLYqXGaMaZANEYf1
 [`docs/devnet.md`](docs/devnet.md)) `varswap-keeper` has sampled live Hermes prints through
 Wormhole and the Pyth receiver and finalized the hourly 2026-10-31 SOL/USD window (25 of 25
 buckets) and two ten-minute demo windows; 24 real canonical prints replay through the real
-programs to the same `sum_sq` as `varswap-core`. `pyth-lite` 0.1.0, `varswap-core` 0.2.0,
-`varswap-sdk` 0.2.0 and `pyth-post` 0.1.1 are on crates.io ([Install](#install)).
+programs to the same `sum_sq` as `varswap-core`. Since 2026-11-02 it samples a daily series of
+hourly SOL/USD windows, and `varswap-admin vol-index` turns that series into a 1, 7 and 30 day
+realized volatility index ([On Devnet](#on-devnet)). `pyth-lite` 0.1.0, `varswap-core` 0.3.0,
+`varswap-sdk` 0.3.0 and `pyth-post` 0.1.1 are on crates.io ([Install](#install)).
 
-It is **not on mainnet** and has not been audited. The hardening and the next steps (CI on
-every pull request, verifiable builds, a separate upgrade authority, fuzzing, runbooks, an
-audit scope, the [`Degraded` policy ADR](docs/adr/0001-degraded-unwind.md), the
-[mainnet readiness checklist](docs/mainnet-readiness.md), a standby keeper with alerts and
-reproducible window records) are tracked in
-[`docs/PLAN-improvements.md`](docs/PLAN-improvements.md).
+It is **not on mainnet** and has not been audited. The hardening plan
+([`docs/PLAN-improvements.md`](docs/PLAN-improvements.md)) is done: CI on every pull request,
+a verifiable build ([`docs/verifiable.md`](docs/verifiable.md)), a dedicated upgrade authority
+([`docs/governance.md`](docs/governance.md)), fuzzing, runbooks, an
+[audit scope](docs/audit-scope.md), the [`Degraded` policy ADR](docs/adr/0001-degraded-unwind.md),
+the [mainnet readiness checklist](docs/mainnet-readiness.md), a standby keeper with alerts and
+reproducible window records. The work in progress, the volatility index and a public dashboard,
+is in [`docs/PLAN-phase2.md`](docs/PLAN-phase2.md).
 
 ### Features
 
@@ -99,14 +103,14 @@ reproducible window records) are tracked in
 
 ### Install
 
-`pyth-lite` (0.1.0), `varswap-core` (0.2.0), `varswap-sdk` (0.2.0) and `pyth-post` (0.1.1) are
+`pyth-lite` (0.1.0), `varswap-core` (0.3.0), `varswap-sdk` (0.3.0) and `pyth-post` (0.1.1) are
 on crates.io. The program, the keeper and the CLI are built from this repository.
 
 ```toml
 [dependencies]
 pyth-lite = "0.1"      # no_std PriceUpdateV2 reader, no Anchor
-varswap-core = "0.2"   # window grid, canonical prints, kernel, swap terms, account layouts
-varswap-sdk = "0.2"    # instruction builders, PDAs and decoders for clients
+varswap-core = "0.3"   # window grid, canonical prints, kernel, swap terms, account layouts
+varswap-sdk = "0.3"    # instruction builders, PDAs and decoders for clients
 pyth-post = "0.1"      # post Hermes prices through Wormhole and the Pyth receiver (off chain)
 ```
 
@@ -139,6 +143,11 @@ ten 60 s intervals) was sampled live by `varswap-keeper` and finalized: one
 The hourly 2026-10-31 window filled 25 of 25 buckets and was
 [finalized](https://explorer.solana.com/tx/3QfLstG15JfgiJaiE7RB9LHuZCcbegEgLsKkQ24k4MdM4Q1L3NxAftaLuNrCfgQHEQnwHMP7i71DBbynLTfHcb1B?cluster=devnet)
 with an annualized realized variance of `0.068149838107`.
+
+Since 2026-11-02 a keeper samples one hourly SOL/USD window per day, 17:00Z to 17:00Z, and a
+roll job creates the next window; a read-only watcher alerts on gaps. The series and its
+realized volatility index are in [`docs/devnet.md`](docs/devnet.md#daily-hourly-series-from-2026-11-02),
+and the finalized windows' records in [`docs/windows/`](docs/windows/README.md).
 
 To reproduce against `api.devnet.solana.com` (a funded keypair; the program id keypair is
 yours):
@@ -242,7 +251,7 @@ updates by timestamp), so there is no hindsight to exploit.
 
 ### Manipulation and Outage Study
 
-### Why canonical prints
+#### Why canonical prints
 
 The sample for each grid boundary is the unique Pyth print with `prev_publish_time < b <=
 publish_time`, so the pusher has no choice. Without that rule a pusher accepting any print
@@ -259,7 +268,7 @@ column, a fixed shift of every print by `w`, is zero as it should be; `docs/stud
 (vp: variance points, variance × 10,000; USDC per 1,000,000 USDC of notional per unit of
 variance; the latent variance is about 6,400 vp.)
 
-### Outages
+#### Outages
 
 A Pyth halt makes the first print after it canonical for every boundary it crossed, so the
 halt's move settles as one return (the contract's payoff), which differs from the variance the
@@ -320,6 +329,11 @@ record (the account bytes, every transaction back to `create_window` with its `s
 events, the realized variance and a quality label), `verify-window <file>` checks it offline
 (consistency only) or with `--rpc` against the cluster, and `window-table` prints the
 `docs/windows/README.md` rows.
+
+Volatility index ([`docs/devnet.md`](docs/devnet.md#realized-volatility-index-from-2026-11-04)):
+`series-sync <series> --out <dir>` brings a directory of window records up to date with a daily
+series (read only, paced), and `vol-index <series> --records <dir>` prints the 1, 7 and 30 day
+realized volatility from them offline, with a quality label for each period.
 
 ```shell
 cargo run -p varswap-cli --bin varswap-admin -- --help
@@ -438,7 +452,7 @@ creates the next window and points those agents at the open ones.
 ### Testing and Benchmarks
 
 ```shell
-make pre-push   # fmt-check, lint, lint-control, sbf, sbf-control, test, doc: zero warnings
+make pre-push   # fmt-check, lint, lint-control, roll-test, dashboard-check, sbf, sbf-control, test, doc
 make bench      # runs the program in LiteSVM and regenerates docs/benchmarks.md
 make study      # regenerates docs/study.md (fixed seeds)
 ```
