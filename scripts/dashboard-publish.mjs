@@ -53,10 +53,13 @@ export function publish(out, generation, fs = REAL) {
   fs.symlink(after, link);
   fs.rename(link, current);
   // It is live from here on: an old generation left behind is worth a warning, not a failure.
+  // dashboard.sh's lock keeps a second publisher out. Should one get in anyway, `current` is read
+  // again before each removal, so whatever another run has made live since is never removed.
   try {
     const keep = new Set([after, before]);
     for (const name of fs.list(join(out, "generations"))) {
-      if (!keep.has(join("generations", name))) fs.remove(join(out, "generations", name), { recursive: true });
+      const path = join("generations", name);
+      if (!keep.has(path) && path !== target(current, fs)) fs.remove(join(out, path), { recursive: true });
     }
   } catch (e) {
     console.error(`dashboard-publish: published, but could not remove an old generation: ${e.message}`);

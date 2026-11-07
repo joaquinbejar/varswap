@@ -472,7 +472,7 @@ test("two writers at once: one publishes, the other fails, and what is live is w
   }
 });
 
-test("a live or unknown holder keeps the lock; a run that is gone loses it, and its build is removed", async () => {
+test("a lock is never taken over: a live, unknown or dead holder fails the run until it is removed by hand", async () => {
   const out = mkdtempSync(join(tmpdir(), "dashboard-out-"));
   try {
     assert.equal(run(out).status, 0);
@@ -480,21 +480,30 @@ test("a live or unknown holder keeps the lock; a run that is gone loses it, and 
     mkdirSync(join(out, ".lock"));
     let r = run(out);
     assert.equal(r.status, 1, "a lock with no pid yet");
-    assert.match(r.stderr, /pid unknown/);
+    assert.match(r.stderr, /held by pid unknown, which is not running: .* remove .* by hand/);
     writeFileSync(join(out, ".lock/pid"), `${process.pid}\n`);
     r = run(out);
     assert.equal(r.status, 1, "a live pid");
+    assert.match(r.stderr, new RegExp(`another dashboard\\.sh holds .*\\(pid ${process.pid}, running\\)`));
     assert.deepEqual(published(out), before);
     rmSync(join(out, ".lock"), { recursive: true });
 
     const killed = start(out, { MOCK_SLEEP: "1" });
     await until(() => existsSync(join(out, ".lock/pid")) && generationsIn(out).length === 2);
+    const pid = readFileSync(join(out, ".lock/pid"), "utf8").trim();
     killed.child.kill("SIGKILL");
     assert.equal((await killed.ended).signal, "SIGKILL");
     assert.ok(existsSync(join(out, ".lock")), "kill -9 leaves the lock");
     assert.equal(generationsIn(out).length, 2, "and the build");
-    assert.deepEqual(published(out), before);
 
+    r = run(out);
+    assert.equal(r.status, 1, "a dead pid is not taken over");
+    assert.match(r.stderr, new RegExp(`held by pid ${pid}, which is not running`));
+    assert.ok(existsSync(join(out, ".lock/pid")), "the dead run's lock stays");
+    assert.deepEqual(published(out), before);
+    assert.equal(generationsIn(out).length, 2, "nothing pruned");
+
+    rmSync(join(out, ".lock"), { recursive: true });
     r = run(out);
     assert.equal(r.status, 0, r.stderr);
     assert.notEqual(published(out).target, before.target);
@@ -502,6 +511,38 @@ test("a live or unknown holder keeps the lock; a run that is gone loses it, and 
   } finally {
     rmSync(out, { recursive: true });
   }
+});
+
+test("two publishers that got past the lock: the pruning of one never removes what the other made live", () => {
+  // The interleaving of the review: B reads `current` (gen.old), A makes gen.a live, B makes gen.b
+  // live and prunes gen.a, then A prunes with gen.a and gen.old to keep. Before each removal is
+  // checked against `current`, A removed gen.b and `current` pointed at nothing.
+  const real = { readlink: readlinkSync, remove: rmSync, symlink: symlinkSync, rename: renameSync, list: readdirSync };
+  scratch((out) => {
+    publish(out, generation(out, "gen.old"));
+    const a = generation(out, "gen.a");
+    const b = generation(out, "gen.b");
+    let stale = true;
+    const fsB = { ...real, readlink: (path) => (stale ? ((stale = false), "generations/gen.old") : readlinkSync(path)) };
+    let once = true;
+    const fsA = {
+      ...real,
+      list: (path) => {
+        if (once) {
+          once = false;
+          assert.equal(readlinkSync(join(out, "current")), "generations/gen.a");
+          publish(out, b, fsB);
+          assert.ok(!existsSync(a), "B pruned A's generation");
+        }
+        return readdirSync(path);
+      },
+    };
+    publish(out, a, fsA);
+    assert.equal(readlinkSync(join(out, "current")), "generations/gen.b");
+    assert.ok(existsSync(join(out, "current/varswap/section.json")), "current resolves");
+    assert.doesNotThrow(() => checkGeneration(join(out, "current")));
+    assert.deepEqual(generationsIn(out), ["gen.b", "gen.old"]);
+  });
 });
 
 test("SIGTERM removes the build and the lock and publishes nothing", async () => {

@@ -116,11 +116,14 @@ record the index lists are all there. A page fetched across that rename can stil
 over its separate requests; the next load corrects it.
 
 **One run at a time.** A run holds `<out-dir>/.lock` from before the sync to the end, and a second one
-exits non zero without touching anything. A lock whose process is gone (`kill -9`, a reboot) is taken
-over, and the next publication removes what that run left in `generations/`. If two runs take over
-the same dead lock at the same instant both can proceed; each still publishes a whole generation, and
-the later rename wins. A lock with no pid, or with a pid that is alive, is left alone: the error names
-it, so remove it by hand if no run is active.
+exits non zero without touching anything. A lock is never taken over, even when its process is gone:
+two runs taking over the same dead lock at once would both publish and prune, and one could remove the
+generation the other had just made live. So a run killed with `kill -9`, or cut by a reboot, leaves the
+lock, and every later run exits 1 with an error that names the pid and says whether it is running.
+Remove the lock by hand once no run is active; the next publication then removes what the dead run left
+in `generations/`. SIGINT and SIGTERM remove the lock and the build. As a second guard, the pruning
+after a publication reads `current` again before each removal, so it never removes the generation that
+is live at that moment.
 
 `scripts/dashboard-section.mjs` builds the section from `vol-index --history --json`:
 

@@ -41,16 +41,19 @@ export SOLANA_URL
 spec=$root/docs/index/series/sol-usd-hourly.json
 mkdir -p "$out/records" "$out/generations"
 
-# mkdir is the one atomic test and set a shell has. A lock whose run is gone (kill -9, a reboot) is
-# taken over; one with no pid, or a live pid, is not.
+# mkdir is the one atomic test and set a shell has. A lock is never taken over, even when its pid
+# is gone: two runs that took over the same dead lock at once would both publish and prune, and
+# one could remove the generation the other made live. A run killed with SIGKILL, or a reboot,
+# leaves the lock, and the next run fails until it is removed by hand.
 lock=$out/.lock
-acquire() { mkdir "$lock" 2>/dev/null && echo $$ >"$lock/pid"; }
-if ! acquire; then
+if ! { mkdir "$lock" 2>/dev/null && echo $$ >"$lock/pid"; }; then
 	holder=$(cat "$lock/pid" 2>/dev/null || true)
-	if [ -z "$holder" ] || kill -0 "$holder" 2>/dev/null || ! { rm -rf "$lock" && acquire; }; then
-		echo "another dashboard.sh holds $lock (pid ${holder:-unknown}); remove it if no run is active" >&2
-		exit 1
+	if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
+		echo "another dashboard.sh holds $lock (pid $holder, running)" >&2
+	else
+		echo "$lock is held by pid ${holder:-unknown}, which is not running: if no dashboard.sh is active, remove $lock by hand" >&2
 	fi
+	exit 1
 fi
 
 work=
