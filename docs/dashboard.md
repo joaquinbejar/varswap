@@ -85,7 +85,7 @@ with `pending` is shown as such and not fetched, until its repo publishes and th
 
 | Repo | Published at | Runs |
 | --- | --- | --- |
-| varswap | same site as the shell | 18:30Z |
+| varswap | same site as the shell: `https://joaquinbejar.github.io/varswap/varswap/section.json` | 18:30Z |
 | metalbook | pending its first run (from about November 16); `https://joaquinbejar.github.io/metalbook/metalbook/section.json` | 22:30Z |
 | quotebook | pending its confirmation; expected `https://joaquinbejar.github.io/quotebook/quotebook/section.json` | expected 23:00Z |
 
@@ -145,9 +145,46 @@ Exporting a window twice gives the same record except for `account.slot`, the sl
 2026-11-04 a second export of days 0 and 1 differed in that line alone. Comparing a published record
 with a new export has to ignore that field.
 
+## On GitHub Pages
+
+`.github/workflows/dashboard.yml` publishes the shell and the varswap section at
+`https://joaquinbejar.github.io/varswap/`, daily at 18:30Z (after the 17:00Z end of each window,
+with margin for its last bucket and finality) and by hand. It runs on a GitHub hosted runner from
+`main`, reads devnet's public RPC, holds no secret, signs nothing and makes no Hermes request. Its
+token can read the repo in the build job and write Pages in the deploy job, nothing else. It adds no
+required check: a failed run leaves the site as it was, and the shell shows the section as stale
+once it is older than its 48 h deadline.
+
+A runner starts empty, so each run:
+
+1. restores the records: `scripts/dashboard-restore.mjs restore` fetches the site's `index.json`,
+   every record it lists and `records/sync.json` into `<out>/records/`, together with the copy the
+   repo keeps in `docs/windows/sol-usd-hourly/`. A day in both places must be the same record except
+   for `account.slot`. `series-sync` never rewrites a day that has a file, so those records pass
+   through unchanged and only later days are read from the chain. A site with no `index.json` fails
+   the run, unless the run was started by hand with `first_deploy`: otherwise a broken site would make
+   the run read every day again, and a day whose history the RPC no longer serves would come back
+   `unknown`. Any other error of the site fails the run too;
+2. runs `scripts/dashboard.sh <out>`;
+3. checks that records are append only: `scripts/dashboard-restore.mjs check` fails unless every
+   restored record is in the new generation and its `index.json`, unchanged except for `account.slot`;
+4. deploys `<out>/current` with the official Pages actions, pinned by SHA.
+
+The repo's copy, `docs/windows/sol-usd-hourly/`, is brought up to date monthly by a normal PR (its
+README has the commands), so the records stay reviewable and survive whatever happens to the site.
+
+### Without Pages
+
+`scripts/dashboard-agent.sh install <name>` runs the same `scripts/dashboard.sh` under a LaunchAgent,
+every hour, into `~/.local/share/varswap-keeper/<name>/out/`; serve its `current` with
+`python3 -m http.server -d <dir>/out/current`. It uses the checkout it was installed from and that
+checkout's `varswap-admin`, and keeps its records between runs, so it needs no restore. On the Studio
+it shares the public RPC allowance with the keeper and the watcher: before a first run that has to
+catch up on many days, check the watcher's `rpc` alerts.
+
 ## Checking
 
-`make dashboard-check` runs three files with `node --test` and no npm package:
+`make dashboard-check` runs four files with `node --test` and no npm package:
 
 - `scripts/tests/dashboard-schema.mjs`: the fixtures are valid, each required field is required,
   wrong values fail, and every accepted and rejected form of `href` is tested.
@@ -159,6 +196,13 @@ with a new export has to ignore that field.
   `scripts/dashboard.sh` end to end with a mock `varswap-admin`: a failure at each step, two writers
   at once, a run killed mid way. `cli/tests/index.rs` keeps that
   output equal to what the CLI prints for those records, so the two cannot drift apart unseen.
+- `scripts/tests/dashboard-pages.mjs`: the restore and the append only check, against a fake site
+  serving the same two days: a site with no index, a listed record missing, an error that stays, a
+  name that is not a record's, the repo's copy disagreeing with the site's, and a published record
+  that changed, went or is no longer listed.
+
+`cli/tests/index.rs` also checks the repo's copy of the series: the days from 0 with no gap, each
+record verified offline, and every file read by the series as its own.
 
 A sibling repo can vendor the schema at a commit and validate with whatever its CI already has.
 

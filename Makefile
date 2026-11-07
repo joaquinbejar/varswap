@@ -87,10 +87,10 @@ lint-control:
 roll-test:
 	@sh scripts/tests/window-roll.sh
 
-# The dashboard's section schema and its shell's decisions; no npm package.
+# The dashboard's section schema, its shell's decisions, its generator and the Pages restore; no npm package.
 .PHONY: dashboard-check
 dashboard-check:
-	@node --test scripts/tests/dashboard-schema.mjs scripts/tests/dashboard-shell.mjs scripts/tests/dashboard-section.mjs
+	@node --test scripts/tests/dashboard-schema.mjs scripts/tests/dashboard-shell.mjs scripts/tests/dashboard-section.mjs scripts/tests/dashboard-pages.mjs
 
 # Rustdoc with every warning denied
 .PHONY: doc

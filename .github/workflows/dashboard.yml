@@ -1,0 +1,106 @@
+# The shared dashboard on GitHub Pages (docs/PLAN-phase2.md, P4; docs/dashboard.md, "On GitHub
+# Pages"). Daily at 18:30Z, after the 17:00Z end of each devnet window with margin for its last
+# bucket and finality, and by hand.
+#
+# It reads devnet's public RPC, holds no secret, signs nothing and makes no Hermes request. It
+# adds no required check: a failure leaves the site as it was, and the shell shows the section
+# as stale once it is older than its deadline.
+#
+# Records are append only. The run restores what the site serves, and the records the repo keeps
+# in docs/windows/sol-usd-hourly/, before scripts/dashboard.sh, and deploys nothing unless every
+# one of them is still in the new generation, unchanged except for `account.slot`.
+#
+# Run it by hand with first_deploy only for the first deployment, when the site has no index
+# yet; any later run without the site's index fails rather than read every day again.
+
+name: Dashboard
+
+on:
+  schedule:
+    - cron: "30 18 * * *"
+  workflow_dispatch:
+    inputs:
+      first_deploy:
+        description: "First deployment: the site serves no index yet"
+        type: boolean
+        default: false
+
+permissions: {}
+
+# One deployment at a time, and a queued one is not cancelled: each run restores from the site.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  RUST_PIN: "1.99.1"
+  RUSTUP_TOOLCHAIN: "1.99.1"
+  CARGO_TERM_COLOR: never
+  SITE: https://joaquinbejar.github.io/varswap
+  SOLANA_URL: https://api.devnet.solana.com
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-dashboard-${{ env.RUST_PIN }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+
+      - name: varswap-admin
+        run: |
+          rustup toolchain install "$RUST_PIN" --profile minimal
+          cargo build --release --locked -p varswap-cli
+          node --version
+
+      - name: Restore the published records
+        env:
+          FIRST_DEPLOY: ${{ inputs.first_deploy && 'true' || 'false' }}
+        run: |
+          set -eu
+          first=
+          [ "$FIRST_DEPLOY" != true ] || first=--allow-unpublished
+          node scripts/dashboard-restore.mjs restore "$RUNNER_TEMP/dashboard" \
+            --site "$SITE" --seed docs/windows/sol-usd-hourly $first
+
+      - name: Generate
+        run: scripts/dashboard.sh "$RUNNER_TEMP/dashboard"
+
+      - name: No published record changed
+        run: node scripts/dashboard-restore.mjs check "$RUNNER_TEMP/dashboard"
+
+      - name: The generation to deploy
+        id: site
+        run: echo "path=$(readlink -f "$RUNNER_TEMP/dashboard/current")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: ${{ steps.site.outputs.path }}
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
