@@ -6,14 +6,27 @@ All notable changes to the published crates are recorded here. The format follow
 
 ## [Unreleased]
 
-### varswap-core
+## [0.3.0] - 2026-11-07
+
+`varswap-core` 0.3.0 and `varswap-sdk` 0.3.0. `pyth-lite` stays at 0.1.0 (unchanged) and
+`pyth-post` at 0.1.1 (only a new example, no library change). The program is unchanged since
+the audit scope (6731d34), so devnet keeps its deployed build. The keeper, the CLI and the
+program are not published. The README is brought up to date: status, the daily devnet series,
+the volatility index commands and these versions.
+
+### varswap-core 0.3.0
 
 - optfix 0.2 to 0.3. The breaking changes in optfix 0.3 (rho, `#[non_exhaustive]` `Greeks` and
   `Priced`) are in its pricing API, which varswap does not use; no code changed. `explog.rs`
   (`ln`), `wide.rs` (`mul_shr`) and `u256.rs` are identical between optfix 0.2.1 and 0.3.0, so
   `ln` and `wide::mul_shr` results and every row of `docs/benchmarks.md` are unchanged.
-- Semver: optfix types are part of varswap-core's public API (see 0.2.0), so the next
-  varswap-core release with this change is 0.3.0.
+- Semver: optfix types are part of varswap-core's public API (see 0.2.0), so this release is
+  0.3.0, not 0.2.1. No other change to varswap-core since 0.2.0.
+
+### varswap-sdk 0.3.0
+
+- It re-exports varswap-core, so it takes the same breaking bump. Requires
+  `varswap-core = "0.3"`. No other change since 0.2.0.
 
 ## [0.2.0] - 2026-11-01
 
