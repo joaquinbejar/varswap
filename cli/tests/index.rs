@@ -1295,3 +1295,23 @@ fn test_a_record_whose_bytes_are_another_feeds_is_rejected() {
     let e = index_at(&s, &dir, after(1), None).unwrap_err().to_string();
     assert!(e.contains("spec is not this day's"), "{e}");
 }
+
+/// The two real devnet days the dashboard's generator is tested on (`scripts/tests/
+/// dashboard-section.mjs`). If this fails because the output changed on purpose, regenerate
+/// `history.json` with `vol-index --history --json`, and the generator's tests then say whether
+/// it still reads what it needs.
+#[test]
+fn test_the_dashboard_fixture_is_what_the_cli_prints_for_its_records() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    let read = |path: PathBuf| -> Value {
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    };
+    let series = Series::parse(&read(repo.join("docs/index/series/sol-usd-hourly.json"))).unwrap();
+    let fixture = repo.join("docs/dashboard/fixtures/vol-index");
+    let records = fixture.join("records");
+    let as_of = resolve_as_of(&records, None).unwrap();
+    assert_eq!(
+        history(&series, &records, as_of).unwrap(),
+        read(fixture.join("history.json"))
+    );
+}

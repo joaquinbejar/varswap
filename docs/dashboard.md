@@ -89,15 +89,76 @@ with `pending` is shown as such and not fetched, until its repo publishes and th
 | metalbook | pending its first run (from about November 16); `https://joaquinbejar.github.io/metalbook/metalbook/section.json` | 22:30Z |
 | quotebook | pending its confirmation; expected `https://joaquinbejar.github.io/quotebook/quotebook/section.json` | expected 23:00Z |
 
+## The varswap section
+
+`scripts/dashboard.sh <out-dir>` publishes the shell and this repo's section (`SOLANA_URL` defaults
+to devnet's public RPC; `cargo build --release -p varswap-cli` first). It holds no key, signs nothing
+and makes no Hermes request.
+
+```text
+<out-dir>/current                   symlink to the published generation: serve or deploy this
+<out-dir>/generations/gen.XXXXXX/   the live generation, the one before it, and any being built
+<out-dir>/records/                  series-sync's state; a rerun resumes from what is here
+
+and in a generation:
+index.html, dashboard.mjs, dashboard.css, sections.json
+varswap/section.json
+varswap/index/sol-usd-hourly/index.json     every day, the generator's commit and the time
+varswap/index/sol-usd-hourly/sync.json
+varswap/index/sol-usd-hourly/records/       the records, and sync.json as series-sync's state
+```
+
+**Publication** is one step. A generation is built and checked apart, and goes live when
+`scripts/dashboard-publish.mjs` renames the `current` symlink, which is atomic: a reader of `current`
+gets a whole generation, the new one or the old one, and never an index from one run with a section
+from another. It checks first that the shell, the section, each of the section's local links and each
+record the index lists are all there. A page fetched across that rename can still mix two generations
+over its separate requests; the next load corrects it.
+
+**One run at a time.** A run holds `<out-dir>/.lock` from before the sync to the end, and a second one
+exits non zero without touching anything. A lock is never taken over, even when its process is gone:
+two runs taking over the same dead lock at once would both publish and prune, and one could remove the
+generation the other had just made live. So a run killed with `kill -9`, or cut by a reboot, leaves the
+lock, and every later run exits 1 with an error that names the pid and says whether it is running.
+Remove the lock by hand once no run is active; the next publication then removes what the dead run left
+in `generations/`. SIGINT and SIGTERM remove the lock and the build. As a second guard, the pruning
+after a publication reads `current` again before each removal, so it never removes the generation that
+is live at that moment.
+
+`scripts/dashboard-section.mjs` builds the section from `vol-index --history --json`:
+
+- **Tiles and series**: σ 1d, 7d and 30d, with the labels of `docs/devnet.md`. A value that is
+  `insufficient` is `null`, shown as no value or as a gap, never as a number.
+- **Windows table**: one row per day, newest first. `late` counts only samples known to be late, and
+  `no time` the samples with no block time, so `late` 0 proves nothing while the other is above 0.
+- **`status.level`**, computed from the data at generation; the shell applies its own deadline on
+  top. `stale` when the newest final day ended more than 48 h ago. A day is final if its window
+  finished, including a `degraded` or `unknown` one; an `open` or `missing` day is not. Otherwise
+  `warn` when the latest 7d value excludes a day, and the message names it. A day before the series
+  started is not an exclusion: it makes the value `partial` or `insufficient` and leaves `ok`.
+- **Failure**: any failure before the rename exits non zero and leaves `current` as it was, so the
+  shell shows an old section as stale and not a partial one as fresh. So does a field missing from
+  the CLI's output, and a section the schema rejects. Failing to remove an old generation after the
+  rename is only a warning: the new one is live.
+
+Exporting a window twice gives the same record except for `account.slot`, the slot of the read: on
+2026-11-04 a second export of days 0 and 1 differed in that line alone. Comparing a published record
+with a new export has to ignore that field.
+
 ## Checking
 
-`make dashboard-check` runs two files with `node --test` and no npm package:
+`make dashboard-check` runs three files with `node --test` and no npm package:
 
 - `scripts/tests/dashboard-schema.mjs`: the fixtures are valid, each required field is required,
   wrong values fail, and every accepted and rejected form of `href` is tested.
 - `scripts/tests/dashboard-shell.mjs`: the shell's link and freshness decisions, against fixtures
   with an old section that still says `ok`, a `generated_at` in the future, and dangerous links; and
   that the page loads only its own files and puts nothing in as HTML.
+- `scripts/tests/dashboard-section.mjs`: the section generated from a real `vol-index` output of the
+  first two devnet days (`docs/dashboard/fixtures/vol-index/`), each status, and
+  `scripts/dashboard.sh` end to end with a mock `varswap-admin`: a failure at each step, two writers
+  at once, a run killed mid way. `cli/tests/index.rs` keeps that
+  output equal to what the CLI prints for those records, so the two cannot drift apart unseen.
 
 A sibling repo can vendor the schema at a commit and validate with whatever its CI already has.
 
