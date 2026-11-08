@@ -1315,3 +1315,34 @@ fn test_the_dashboard_fixture_is_what_the_cli_prints_for_its_records() {
         read(fixture.join("history.json"))
     );
 }
+
+/// The series' records the repo keeps (`docs/windows/sol-usd-hourly/`), which the Pages workflow
+/// restores before each run (`scripts/dashboard-restore.mjs`). They are the days from 0 with no
+/// gap, each record verifies offline, and the series reads every file as its own.
+#[test]
+fn test_the_committed_series_records_are_the_series_days_from_zero() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    let read = |path: &std::path::Path| -> Value {
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    };
+    let series = Series::parse(&read(&repo.join("docs/index/series/sol-usd-hourly.json"))).unwrap();
+    let dir = repo.join("docs/windows/sol-usd-hourly");
+    let names: Vec<String> = files(&dir)
+        .into_iter()
+        .filter(|n| n.ends_with(".json"))
+        .collect();
+    assert!(!names.is_empty(), "{} has no record", dir.display());
+    for (day, name) in names.iter().enumerate() {
+        let day = u32::try_from(day).unwrap();
+        assert_eq!(*name, series.file_name(day).unwrap(), "day {day}");
+        let v = read(&dir.join(name));
+        // A day nobody created is a `missing` stub, which `history` checks below.
+        if v.get("kind").is_none() {
+            record::verify_offline(&v).unwrap_or_else(|e| panic!("{name}: {e}"));
+        }
+    }
+    let last = u32::try_from(names.len() - 1).unwrap();
+    let as_of = series.end(last).unwrap();
+    let h = history(&series, &dir, as_of).unwrap();
+    assert_eq!(h["history"].as_array().unwrap().len(), names.len());
+}

@@ -1,0 +1,599 @@
+{
+  "account": {
+    "data_hex": "0101ff0000000000ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d1013ea6a000000009064eb6a000000000cb7fabb52f7a648bb5b317d9a018b9057cb024774fafe01e6c4df98cc385881100e00006054000080510100e803f8000200000019000000633b01d0b8679f81b48661000000000080e246d05c0f0d8b0000000000000000ffffff01000000006d07d62c02000000b408e82b02000000c07c4a2c02000000e95e712b0200000027022f2d02000000b1ecdb2d02000000cb30d52c020000003fc39d2802000000d02bab2602000000a6c58c23020000000f4ce21c0200000074ab091e02000000a43f942502000000e58607280200000049cfa62902000000b113c22902000000a075542b02000000fd9f3b2a020000003f0f292d02000000fe93312d02000000fd4f402702000000eea55c2902000000081cb736020000004a06d03f0200000097b8c73f02000000f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8",
+    "owner": "BWqsaXvASrbErApP1ovz7vSvBLYqXGaMaZANEYf1xrB9",
+    "slot": 519733344
+  },
+  "cluster": "devnet",
+  "derived": {
+    "buckets": 25,
+    "compressed_runs": 0,
+    "coverage": "25/25",
+    "filled": 25,
+    "label": "complete",
+    "longest_run": 1,
+    "realized_var": "0.543168029937",
+    "realized_var_raw": "10019681637274935936",
+    "runs": [
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        1
+      ],
+      [
+        2,
+        2
+      ],
+      [
+        3,
+        3
+      ],
+      [
+        4,
+        4
+      ],
+      [
+        5,
+        5
+      ],
+      [
+        6,
+        6
+      ],
+      [
+        7,
+        7
+      ],
+      [
+        8,
+        8
+      ],
+      [
+        9,
+        9
+      ],
+      [
+        10,
+        10
+      ],
+      [
+        11,
+        11
+      ],
+      [
+        12,
+        12
+      ],
+      [
+        13,
+        13
+      ],
+      [
+        14,
+        14
+      ],
+      [
+        15,
+        15
+      ],
+      [
+        16,
+        16
+      ],
+      [
+        17,
+        17
+      ],
+      [
+        18,
+        18
+      ],
+      [
+        19,
+        19
+      ],
+      [
+        20,
+        20
+      ],
+      [
+        21,
+        21
+      ],
+      [
+        22,
+        22
+      ],
+      [
+        23,
+        23
+      ],
+      [
+        24,
+        24
+      ]
+    ],
+    "state": "finalized",
+    "sum_sq_raw": "117901931365555025775508323",
+    "unproven": null
+  },
+  "history": {
+    "reaches_create_window": true,
+    "transactions": [
+      {
+        "block_time": 1793634620,
+        "creates_window": true,
+        "events_complete": true,
+        "samples": [],
+        "signature": "3eJVefeKHPb4Gk5K4QdDt7PNquK81T1VRaNwwvwcEYq8VvXrgx7SKbk8R8d9rXRvAPje8UBZVNtnj7wBjtBwjRfP",
+        "slot": 517905547,
+        "success": true
+      },
+      {
+        "block_time": 1793725482,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [
+          {
+            "expo": -8,
+            "first": 0,
+            "instruction": 1,
+            "last": 0,
+            "price": "9342158701",
+            "publish_time": 1793725200
+          }
+        ],
+        "signature": "4ZFYnfnAXm85cMjd8rLxLfpTxjuFB7EoNR3tQ3mng5iTXf2Ab51aBopTeV83ayPKg4cXKpxtpoF2bkK5WmhicpNf",
+        "slot": 518284923,
+        "success": true
+      },
+      {
+        "block_time": 1793729100,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [
+          {
+            "expo": -8,
+            "first": 1,
+            "instruction": 1,
+            "last": 1,
+            "price": "9326561460",
+            "publish_time": 1793728800
+          }
+        ],
+        "signature": "4x8NKKmgiQihkztn3gr6zqWuodyq9ZDyVGphGVgtfSa93KQ8LLGTKBQkQHsXWKxuALPbVJoearfS7tYkL3BZqciQ",
+        "slot": 518300013,
+        "success": true
+      },
+      {
+        "block_time": 1793732407,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [
+          {
+            "expo": -8,
+            "first": 2,
+            "instruction": 1,
+            "last": 2,
+            "price": "9333013696",
+            "publish_time": 1793732400
+          }
+        ],
+        "signature": "5VhTVJz8PmnB9JUF4JrZMQwvWfFPLybR1YZBUj97hQa8rws9WnAz1xkgBohvr2uMAzwmzj1cVGYCWDiTEmMRszHP",
+        "slot": 518313816,
+        "success": true
+      },
+      {
+        "block_time": 1793736014,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [
+          {
+            "expo": -8,
+            "first": 3,
+            "instruction": 1,
+            "last": 3,
+            "price": "9318784745",
+            "publish_time": 1793736000
+          }
+        ],
+        "signature": "2g2ha1ddMR3xvttQNUHwnHQb2mbo1r5syW9Ry9UAnFs3nuzf5KZ3eXFNnBcGXpjMSLo8cVMN2iyqri1QztuQaHny",
+        "slot": 518328846,
+        "success": true
+      },
+      {
+        "block_time": 1793739889,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [
+          {
+            "expo": -8,
+            "first": 4,
+            "instruction": 1,
+            "last": 4,
+            "price": "9347990055",
+            "publish_time": 1793739600
+          }
+        ],
+        "signature": "4rrHTDDmhmxcHRi1bMKf9io3JizaubsSLdRwETB1pYCNcLHHb7emHnuPzBCx57qCYb9YYHnqV8LXkTToBqmuGzDt",
+        "slot": 518345025,
+        "success": true
+      },
+      {
+        "block_time": 1793743496,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [
+          {
+            "expo": -8,
+            "first": 5,
+            "instruction": 1,
+            "last": 5,
+            "price": "9359322289",
+            "publish_time": 1793743200
+          }
+        ],
+        "signature": "aHVMssw79GGCJYyJdJ2Agu7LguVLZ4kagem1M5m817Mt8SdquCH5gvgstVKN5pu42wGFiVhxyCHTRk9tPUuEygm",
+        "slot": 518360106,
+        "success": true
+      },
+      {
+        "block_time": 1793746804,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [
+          {
+            "expo": -8,
+            "first": 6,
+            "instruction": 1,
+            "last": 6,
+            "price": "9342103755",
+            "publish_time": 1793746800
+          }
+        ],
+        "signature": "4e8ykdYM8qbGrps1bbJpkvFBX25KDzSJwixnTbBTALRTKEuKApbyHQjh32brw3thG5WAgv1ojqrLaVQk1y9SUpaq",
+        "slot": 518373883,
+        "success": true
+      },
+      {
+        "block_time": 1793750413,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [
+          {
+            "expo": -8,
+            "first": 7,
+            "instruction": 1,
+            "last": 7,
+            "price": "9271362367",
+            "publish_time": 1793750400
+          }
+        ],
+        "signature": "3zLAB9KVLgXZxv4kCFuwhPp5wTQTjPTmxmGGrUXKgAruGo1FX8AdSt72SxcinFz6dLbseuEcZjhM8FJGCJdkfNAc",
+        "slot": 518388948,
+        "success": true
+      },
+      {
+        "block_time": 1793754021,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [
+          {
+            "expo": -8,
+            "first": 8,
+            "instruction": 1,
+            "last": 8,
+            "price": "9238686672",
+            "publish_time": 1793754000
+          }
+        ],
+        "signature": "3jjyKnodNeUeCGFzod4hrGzWMu8wWy28naoFaBK44krQF5Nd2t1VL8RQHWGEiUNPHFnHBB4zmBT88Bxu9gtg7qrq",
+        "slot": 518404021,
+        "success": true
+      },
+      {
+        "block_time": 1793757629,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [
+          {
+            "expo": -8,
+            "first": 9,
+            "instruction": 1,
+            "last": 9,
+            "price": "9186362790",
+            "publish_time": 1793757600
+          }
+        ],
+        "signature": "4scAMXcfXWZRrUqbdvDbtK9D8SgBy4BzAaZduP3kxvqt77X2MFgbPdV61FGZSSHiGTLEUByhHaCGrWux4NZv6zrD",
+        "slot": 518419119,
+        "success": true
+      },
+      {
+        "block_time": 1793761237,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [
+          {
+            "expo": -8,
+            "first": 10,
+            "instruction": 1,
+            "last": 10,
+            "price": "9074527247",
+            "publish_time": 1793761200
+          }
+        ],
+        "signature": "5SKaZeRmTGDNqGKQsbSMpRGTRd7JA31rV7i4RWWvz3s46jsMfk4ncYP5GyTAbb6GsaGd9FrFxsQApn2p1FnhA2ZY",
+        "slot": 518434187,
+        "success": true
+      },
+      {
+        "block_time": 1793764845,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [
+          {
+            "expo": -8,
+            "first": 11,
+            "instruction": 1,
+            "last": 11,
+            "price": "9093884788",
+            "publish_time": 1793764800
+          }
+        ],
+        "signature": "2XhU5fXpijt8ccKqZZBm6FDDdezueqA1kv5GJm9vgqGK3Ui8hx94Y9kNQQsFDUJ5FnmWMNirke8avtUnoKZQr4gt",
+        "slot": 518449281,
+        "success": true
+      },
+      {
+        "block_time": 1793768454,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [
+          {
+            "expo": -8,
+            "first": 12,
+            "instruction": 1,
+            "last": 12,
+            "price": "9220407204",
+            "publish_time": 1793768400
+          }
+        ],
+        "signature": "5yufJKR3pyV3sKKmoMiWYhN7EaPWzyWf65n3QXyPMBbhwR23GGipydVuKpNGvksBBpjhtMtnA76uTuipaZSim1sf",
+        "slot": 518464364,
+        "success": true
+      },
+      {
+        "block_time": 1793772062,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [
+          {
+            "expo": -8,
+            "first": 13,
+            "instruction": 1,
+            "last": 13,
+            "price": "9261516517",
+            "publish_time": 1793772000
+          }
+        ],
+        "signature": "dvsi1TjSCb3UVcmbx1ozaxebweW8A4pjPrhHmvYtkDzz51EMgtqKjoGArcLUfDMQY5mG7roFAbUbfVJcq8Reont",
+        "slot": 518479470,
+        "success": true
+      },
+      {
+        "block_time": 1793775670,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [
+          {
+            "expo": -8,
+            "first": 14,
+            "instruction": 1,
+            "last": 14,
+            "price": "9288732489",
+            "publish_time": 1793775600
+          }
+        ],
+        "signature": "2EQ4TJdNB2ViaeQGiMUBu6HNsPGriqnsTwWMsNAJSmWzi6cT7bLKibCKAqCD9zdVhQ6LjgjwP9RoU8ewPG7QwiDe",
+        "slot": 518494540,
+        "success": true
+      },
+      {
+        "block_time": 1793779279,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [
+          {
+            "expo": -8,
+            "first": 15,
+            "instruction": 1,
+            "last": 15,
+            "price": "9290519473",
+            "publish_time": 1793779200
+          }
+        ],
+        "signature": "3q1LB3sBHk8ibNjRPU6KwDvW9rGnzR8zopTfDK1cX9x4TzPjRHNd588pDavW6HortE2LNBhTJ4ZAwva2T9VW6n3d",
+        "slot": 518509619,
+        "success": true
+      },
+      {
+        "block_time": 1793782887,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [
+          {
+            "expo": -8,
+            "first": 16,
+            "instruction": 1,
+            "last": 16,
+            "price": "9316890016",
+            "publish_time": 1793782800
+          }
+        ],
+        "signature": "52EbUZ1SjAnRy8RLfW1SuwS1X9U9RsgsxoAbZ5ptxcuWDMzsesahtywiXiWrzvHwmVtbQDJR4T4ER7GrsTgzTLq1",
+        "slot": 518524694,
+        "success": true
+      },
+      {
+        "block_time": 1793786496,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [
+          {
+            "expo": -8,
+            "first": 17,
+            "instruction": 1,
+            "last": 17,
+            "price": "9298485245",
+            "publish_time": 1793786400
+          }
+        ],
+        "signature": "KSS1BpJ55tmJLE6CjMiAFp21dAXYAJbfzAVmS2e4f5SQdMfGe4iAbaMuVaTLzgJGn4Fx79jzuX7GwFHDmqstsDx",
+        "slot": 518539764,
+        "success": true
+      },
+      {
+        "block_time": 1793790117,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [
+          {
+            "expo": -8,
+            "first": 18,
+            "instruction": 1,
+            "last": 18,
+            "price": "9347600191",
+            "publish_time": 1793790000
+          }
+        ],
+        "signature": "5nSR8os11Yh4nLfP16mnCBiME6H5SjEh9QzbCNEqrW3kF5mdPsZEbXhAgdUtPMovzCTHbrscUDBn2jbSJY3tPZLK",
+        "slot": 518554908,
+        "success": true
+      },
+      {
+        "block_time": 1793793726,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [
+          {
+            "expo": -8,
+            "first": 19,
+            "instruction": 1,
+            "last": 19,
+            "price": "9348158462",
+            "publish_time": 1793793600
+          }
+        ],
+        "signature": "bwLSBwTkCHUz8rwb3e6uJmH7PLzZRGR3qDLhc4LWsVPzKFze4PX1LNAUukkhUet9JuQkD6MX9XVRF1VpxfECCE2",
+        "slot": 518569995,
+        "success": true
+      },
+      {
+        "block_time": 1793797334,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [
+          {
+            "expo": -8,
+            "first": 20,
+            "instruction": 1,
+            "last": 20,
+            "price": "9248460797",
+            "publish_time": 1793797200
+          }
+        ],
+        "signature": "4r9L5bzY2kScWGDoKsZQ33gGciKGrsTHqU33ESd87ViemZgSZnNU7euXdAE5MFaCoFNuNZQmFT8Dr8hwra44MnbG",
+        "slot": 518585084,
+        "success": true
+      },
+      {
+        "block_time": 1793800943,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [
+          {
+            "expo": -8,
+            "first": 21,
+            "instruction": 1,
+            "last": 21,
+            "price": "9283872238",
+            "publish_time": 1793800800
+          }
+        ],
+        "signature": "1g736qV5oh8z4yECmDDCRGH7WvzMvXjVeM26PMpVpX4ZYEMDC8b9Sv8zQdt5wL1RFGFEgkBeLHDn56JjcToF7YN",
+        "slot": 518600177,
+        "success": true
+      },
+      {
+        "block_time": 1793804551,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [
+          {
+            "expo": -8,
+            "first": 22,
+            "instruction": 1,
+            "last": 22,
+            "price": "9507904520",
+            "publish_time": 1793804400
+          }
+        ],
+        "signature": "SVFgKQigw6s2wdZGa7gScoMTWQSPhDF7aALLvGUSXJpYXSgy72kJxrLMLNir3xXntiiaGYF2MGZpMm5fy6B2Y8k",
+        "slot": 518615255,
+        "success": true
+      },
+      {
+        "block_time": 1793808159,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [
+          {
+            "expo": -8,
+            "first": 23,
+            "instruction": 1,
+            "last": 23,
+            "price": "9660532298",
+            "publish_time": 1793808000
+          }
+        ],
+        "signature": "2LkCPw4dojTJJHjJSyu7UBEmex8osHZ4TZ24uFW6GSE3Q9x8kfcoBBiTNsEBtJyDZLzV9YNaw8a7TWdSovQikhoN",
+        "slot": 518630341,
+        "success": true
+      },
+      {
+        "block_time": 1793811768,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [
+          {
+            "expo": -8,
+            "first": 24,
+            "instruction": 1,
+            "last": 24,
+            "price": "9659988119",
+            "publish_time": 1793811600
+          }
+        ],
+        "signature": "2CPVzhGF9KmgeF5zaMcdDLa5x6dQGWh26jYgXBq9gbCCsnQdi2wtCNCt6iT5MATGpPhnub5tKhHdcT8YacGQF1DB",
+        "slot": 518645448,
+        "success": true
+      },
+      {
+        "block_time": 1793811769,
+        "creates_window": false,
+        "events_complete": true,
+        "samples": [],
+        "signature": "4ob9EwAWnUtP9XBFh8fjU9Tn2zm6DygfWfexsPP3VrwYYdWeZANLVHUsViNXiU1zSLQuThdeEfEMmvGMtiMTdkVc",
+        "slot": 518645453,
+        "success": true
+      }
+    ]
+  },
+  "program_id": "BWqsaXvASrbErApP1ovz7vSvBLYqXGaMaZANEYf1xrB9",
+  "version": 1,
+  "window": "CjtkCZY1BEzN8MFgrbViGtW9KEUqP6vMKu7CCPRqiATG"
+}
