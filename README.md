@@ -501,8 +501,7 @@ If you have any questions, issues, or would like to provide feedback, please fee
 
 
 ### **Contact Information**
-
-- **Author**: Joaquín Béjar García <https://joaquinbejar.capitaldelta.co/>
+- **Author**: Joaquín Béjar García
 - **Email**: jb@taunais.com
 - **Telegram**: [@joaquin_bejar](https://t.me/joaquin_bejar)
 - **Repository**: <https://github.com/joaquinbejar/varswap>
@@ -523,12 +522,13 @@ Repositories by the same author that this project depends on, and repositories t
 
 | Repository | Description |
 |------------|-------------|
-| [optfix](https://github.com/joaquinbejar/optfix) | Fixed-point option pricing for Solana programs: no_std, allocation-free Black-Scholes, greeks and implied volatility, measured in compute units. |
+| [optfix](https://github.com/joaquinbejar/optfix) | Provides the fixed-point math (ln, sqrt, scaling) used to accumulate realized variance on-chain. |
 
 ### Used by
 
 | Repository | Description |
 |------------|-------------|
-| [metalbook](https://github.com/joaquinbejar/metalbook) | Cash-settled European options on gold and silver (XAU, XAG) on Solana, settled in USDC from Pyth; reuses pyth-lite. |
+| [metalbook](https://github.com/joaquinbejar/metalbook) | Cash-settled European options on gold and silver on Solana; reuses varswap's pyth-lite price reader. |
+| [quotebook](https://github.com/joaquinbejar/quotebook) | RFQ on Solana: maker quotes signed off-chain with ed25519, verified and settled atomically on-chain. |
 
 <!-- related-projects:end -->
